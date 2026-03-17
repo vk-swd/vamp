@@ -1,7 +1,7 @@
-import { useState, useRef, useEffect, type FormEvent } from "react";
-import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
-import { YoutubePlayer } from "./YoutubePlayer";
+import { useState, useRef, type FormEvent } from "react";
+import { YoutubePlayerOwner } from "./YoutubePlayer";
 import { PlayerControls } from "./PlayerControls";
+import { usePlayerStore } from "./store";
 import "./App.css";
 
 // ── helpers ───────────────────────────────────────────────────────────────────
@@ -68,45 +68,18 @@ function LocalFileInfo() {
 
 interface NowPlayingTabProps {
   track: Track;
-  onPlayerReady: (player: YT.Player) => void;
-  webviewError: string | null;
-  onOpenWebview: (id: string) => void;
 }
 
-function NowPlayingTab({ track, onPlayerReady, webviewError, onOpenWebview }: NowPlayingTabProps) {
+function NowPlayingTab({ track }: NowPlayingTabProps) {
   return (
     <div className="now-playing-tab">
       <div className="player-container">
         {track.sourceType === "youtube" && (
-          <YoutubePlayer videoId={track.id} onPlayerReady={onPlayerReady} />
+          <YoutubePlayerOwner videoId={track.id} />
         )}
         {track.sourceType === "soundcloud" && <SoundCloudPlayer />}
         {track.sourceType === "localfile" && <LocalFileInfo />}
       </div>
-
-      {track.sourceType === "youtube" && (
-        <div className="player-actions">
-          <button
-            className="btn btn-secondary"
-            onClick={() => onOpenWebview(track.id)}
-          >
-            <svg viewBox="0 0 24 24" fill="currentColor" className="btn-icon">
-              <path d="M19 3H5a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2V5a2 2 0 00-2-2zm-1 14H6V7h12v10z" />
-            </svg>
-            Open in Webview Window
-          </button>
-          <a
-            href={`https://www.youtube.com/watch?v=${track.id}`}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="btn btn-ghost"
-          >
-            Open on YouTube ↗
-          </a>
-        </div>
-      )}
-
-      {webviewError && <p className="error-msg">{webviewError}</p>}
     </div>
   );
 }
@@ -118,41 +91,9 @@ export default function App() {
   const [track, setTrack] = useState<Track | null>(null);
   const [input, setInput] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [webviewError, setWebviewError] = useState<string | null>(null);
-  const [ytPlayer, setYtPlayer] = useState<YT.Player | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // Clear the player instance when no track is active
-  useEffect(() => {
-    if (!track) setYtPlayer(null);
-  }, [track]);
-
-  // ── open in dedicated webview window ──
-  const openWebviewWindow = async (id: string) => {
-    setWebviewError(null);
-    try {
-      const label = `yt-${id}`;
-      const existing = await WebviewWindow.getByLabel(label);
-      if (existing) {
-        await existing.setFocus();
-        return;
-      }
-      const win = new WebviewWindow(label, {
-        url: `https://www.youtube.com/watch?v=${id}`,
-        title: "YouTube – VampAgent",
-        width: 1280,
-        height: 760,
-        center: true,
-        resizable: true,
-        decorations: true,
-      });
-      win.once("tauri://error", (e: unknown) => {
-        setWebviewError(`Webview error: ${JSON.stringify(e)}`);
-      });
-    } catch (err) {
-      setWebviewError(`Failed to open webview: ${String(err)}`);
-    }
-  };
+  const ytPlayer = usePlayerStore((s) => s.ytPlayer);
 
   // ── load video ──
   const loadVideo = (raw: string) => {
@@ -160,7 +101,6 @@ export default function App() {
     if (id) {
       setTrack({ id, sourceType: "youtube" });
       setError(null);
-      setWebviewError(null);
       setActiveTab("now-playing");
     } else {
       setError("⚠️  Could not find a valid YouTube video ID.");
@@ -267,12 +207,7 @@ export default function App() {
         */}
         {track && (
           <div className={activeTab !== "now-playing" ? "tab-panel--hidden" : ""}>
-            <NowPlayingTab
-              track={track}
-              onPlayerReady={setYtPlayer}
-              webviewError={webviewError}
-              onOpenWebview={(id) => void openWebviewWindow(id)}
-            />
+            <NowPlayingTab track={track} />
           </div>
         )}
 

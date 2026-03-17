@@ -1,103 +1,110 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
+import { loadYouTubeApi } from "./youtubeApi";
+import { usePlayerStore } from "./store";
 
-// @types/youtube provides the global YT namespace — only extend Window for the callback.
-declare global {
-  interface Window {
-    onYouTubeIframeAPIReady?: () => void;
-  }
+// ── Loading widget (YOW) ──────────────────────────────────────────────────────
+
+interface LoadingWidgetProps {
+  failed: boolean;
+  attempt: number;
 }
 
-// ── Singleton: load the API script once, return a promise that resolves when ready
-let apiReady: Promise<void> | null = null;
-
-function loadYouTubeApi(): Promise<void> {
-
-    console.log("loadYouTubeApi");
-  if (apiReady) return apiReady;
-
-  apiReady = new Promise((resolve) => {
-    // Already loaded (e.g. hot-reload)
-    if (window.YT?.Player) {
-      resolve();
-      return;
-    }
-
-    // Chain onto any previously set callback
-    const prev = window.onYouTubeIframeAPIReady;
-    window.onYouTubeIframeAPIReady = () => {
-      if (typeof prev === "function") prev();
-      resolve();
-    };
-
-    if (!document.querySelector('script[src="https://www.youtube.com/iframe_api"]')) {
-      const tag = document.createElement("script");
-      tag.src = "https://www.youtube.com/iframe_api";
-      const first = document.getElementsByTagName("script")[0];
-      first.parentNode!.insertBefore(tag, first);
-    }
-  });
-
-  return apiReady;
+function YoutubePlayerLoadingWidget({ failed, attempt }: LoadingWidgetProps) {
+  return (
+    <div className="yt-loading-widget">
+      <div className="yt-loading-spinner" />
+      <p className="yt-loading-msg">
+        {failed
+          ? `YouTube API unavailable – retrying… (attempt ${attempt})`
+          : "Loading YouTube player…"}
+      </p>
+    </div>
+  );
 }
 
-// ── Component ─────────────────────────────────────────────────────────────────
+// ── Core player (YT) ─────────────────────────────────────────────────────────
+// Only rendered by YoutubePlayerOwner once the IFrame API is confirmed ready.
 
-interface YoutubePlayerProps {
-  videoId: string;
-  onPlayerReady?: (player: YT.Player) => void;
-}
-
-export function YoutubePlayer({ videoId, onPlayerReady }: YoutubePlayerProps) {
+function YoutubePlayerCore({ videoId }: { videoId: string }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const playerRef = useRef<YT.Player | null>(null);
-  // Keep refs so async callbacks always see the latest values
   const videoIdRef = useRef(videoId);
   videoIdRef.current = videoId;
-  const onPlayerReadyRef = useRef(onPlayerReady);
-  onPlayerReadyRef.current = onPlayerReady;
 
-  // Create the player once the API and the DOM node are both ready
+  const setYtPlayer = usePlayerStore((s) => s.setYtPlayer);
+
+  // Create the YT.Player exactly once — API is guaranteed ready at this point.
   useEffect(() => {
-    let destroyed = false;
+    if (!containerRef.current) return;
 
-    loadYouTubeApi().then(() => {
-      if (destroyed || !containerRef.current) return;
-
-      playerRef.current = new YT.Player(containerRef.current, {
-        videoId: videoIdRef.current,
-        playerVars: {
-          autoplay: 1,
-          playsinline: 1,
-          rel: 0,
-          modestbranding: 1,
+    playerRef.current = new YT.Player(containerRef.current, {
+      videoId: videoIdRef.current,
+      playerVars: { autoplay: 1, playsinline: 1, rel: 0, modestbranding: 1 },
+      events: {
+        onReady: (e) => {
+          e.target.playVideo();
+          setYtPlayer(e.target as YT.Player);
         },
-        events: {
-          onReady: (e) => {
-            e.target.playVideo();
-            onPlayerReadyRef.current?.(e.target as YT.Player);
-          },
-          onError: (e) => {
-            console.error("YouTube Player Error:", e.data);
-          },
-          onStateChange: (e) => {
-            console.log("Player state changed:", e.data);
-          }
-        },
-      });
+        onError: (e) => console.error("YouTube Player Error:", e.data),
+        onStateChange: (e) => console.log("Player state changed:", e.data),
+      },
     });
 
     return () => {
-      destroyed = true;
       playerRef.current?.destroy();
       playerRef.current = null;
+      setYtPlayer(null);
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // intentionally run once – video changes handled below
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // run once per mount lifetime
 
-  // When videoId changes after the player is already created, cue the new video
+  // When videoId changes, cue the new video without remounting the IFrame.
   useEffect(() => {
     playerRef.current?.loadVideoById(videoId);
   }, [videoId]);
 
   return <div ref={containerRef} className="yt-api-player" />;
+}
+
+// ── Owner (YO) ────────────────────────────────────────────────────────────────
+// Manages API loading. Shows the loading widget while waiting or retrying,
+// then swaps in YoutubePlayerCore once the API is ready.
+// Retries every second on failure, stopping cleanly when unmounted.
+
+type ApiState = "loading" | "ready" | "failed";
+
+export function YoutubePlayerOwner({ videoId }: { videoId: string }) {
+  const [apiState, setApiState] = useState<ApiState>("loading");
+  const [attempt, setAttempt] = useState(1);
+
+  useEffect(() => {
+    let cancelled = false;
+    let retryTimer = 0 as unknown as ReturnType<typeof setTimeout>;
+
+    function tryLoad() {
+      if (cancelled) return;
+      setApiState("loading");
+      loadYouTubeApi()
+        .then(() => {
+          if (!cancelled) setApiState("ready");
+        })
+        .catch(() => {
+          if (!cancelled) {
+            setApiState("failed");
+            setAttempt((n) => n + 1);
+            retryTimer = setTimeout(tryLoad, 1000);
+          }
+        });
+    }
+
+    tryLoad();
+
+    return () => {
+      cancelled = true;
+      clearTimeout(retryTimer);
+    };
+  }, []); // run once per mount lifetime
+
+  if (apiState === "ready") return <YoutubePlayerCore videoId={videoId} />;
+  return <YoutubePlayerLoadingWidget failed={apiState === "failed"} attempt={attempt} />;
 }

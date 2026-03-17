@@ -250,6 +250,39 @@
   border: none;
 }
 
+/* ── YouTube loading widget (YOW) ────────────────────────────────────────── */
+
+.yt-loading-widget {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  background: #000;
+}
+
+.yt-loading-spinner {
+  width: 40px;
+  height: 40px;
+  border: 3px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: yt-spin 0.9s linear infinite;
+}
+
+@keyframes yt-spin {
+  to { transform: rotate(360deg); }
+}
+
+.yt-loading-msg {
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  text-align: center;
+  padding: 0 16px;
+}
+
 .player-actions {
   display: flex;
   gap: 10px;
