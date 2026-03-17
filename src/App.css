@@ -1,12 +1,13 @@
 /* ── Layout ──────────────────────────────────────────────────────────────── */
 
 .app {
-  min-height: 100vh;
+  height: 100vh;
   display: flex;
   flex-direction: column;
   max-width: 960px;
   margin: 0 auto;
-  padding: 0 20px 48px;
+  padding: 0 20px;
+  overflow: hidden;
 }
 
 /* ── Header ─────────────────────────────────────────────────────────────── */
@@ -134,13 +135,88 @@
   height: 16px;
 }
 
-/* ── Player ──────────────────────────────────────────────────────────────── */
+/* ── Tabs ───────────────────────────────────────────────────────────────── */
 
-.player-section {
+.tab-bar {
+  display: flex;
+  gap: 2px;
+  border-bottom: 1.5px solid var(--border);
+  margin-bottom: 20px;
+  flex-shrink: 0;
+}
+
+.tab-btn {
+  background: transparent;
+  border: none;
+  border-bottom: 2.5px solid transparent;
+  margin-bottom: -1.5px;
+  border-radius: var(--radius) var(--radius) 0 0;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 0.9rem;
+  font-weight: 600;
+  padding: 10px 20px;
+  transition: color 0.18s, border-color 0.18s;
+}
+
+.tab-btn:hover:not(.tab-btn--disabled) {
+  color: var(--text);
+}
+
+.tab-btn--active {
+  color: var(--text);
+  border-bottom-color: var(--accent);
+}
+
+.tab-btn--disabled {
+  opacity: 0.38;
+  cursor: default;
+}
+
+/* ── Tab content area ────────────────────────────────────────────────────── */
+
+.tab-content {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.tab-panel--hidden {
+  display: none;
+}
+
+/* ── Now Playing tab ─────────────────────────────────────────────────────── */
+
+.now-playing-tab {
   display: flex;
   flex-direction: column;
   gap: 16px;
 }
+
+/* ── Placeholder panels ──────────────────────────────────────────────────── */
+
+.placeholder-panel {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 160px;
+  background: var(--surface);
+  border: 1.5px dashed var(--border);
+  border-radius: var(--radius);
+  color: var(--text-muted);
+  font-size: 0.95rem;
+}
+
+/* ── Persistent bottom bar ───────────────────────────────────────────────── */
+
+.bottom-bar {
+  flex-shrink: 0;
+  border-top: 1.5px solid var(--border);
+  padding: 12px 0;
+  background: var(--bg);
+}
+
+/* ── Player (shared container used inside now-playing-tab) ──────────────── */
 
 .player-container {
   position: relative;

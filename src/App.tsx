@@ -4,15 +4,15 @@ import { YoutubePlayer } from "./YoutubePlayer";
 import { PlayerControls } from "./PlayerControls";
 import "./App.css";
 
-// ── helpers ──────────────────────────────────────────────────────────────────
+// ── helpers ───────────────────────────────────────────────────────────────────
 
 function extractVideoId(raw: string): string | null {
   const patterns = [
-    /[?&]v=([a-zA-Z0-9_-]{11})/,          // ?v=ID  or  &v=ID
-    /youtu\.be\/([a-zA-Z0-9_-]{11})/,      // youtu.be/ID
-    /youtube\.com\/embed\/([a-zA-Z0-9_-]{11})/, // embed/ID
-    /youtube\.com\/shorts\/([a-zA-Z0-9_-]{11})/, // shorts/ID
-    /^([a-zA-Z0-9_-]{11})$/,               // bare 11-char ID
+    /[?&]v=([a-zA-Z0-9_-]{11})/,
+    /youtu\.be\/([a-zA-Z0-9_-]{11})/,
+    /youtube\.com\/embed\/([a-zA-Z0-9_-]{11})/,
+    /youtube\.com\/shorts\/([a-zA-Z0-9_-]{11})/,
+    /^([a-zA-Z0-9_-]{11})$/,
   ];
   for (const p of patterns) {
     const m = raw.match(p);
@@ -44,20 +44,88 @@ const FEATURED: { id: string; title: string; thumb: string }[] = [
   },
 ];
 
-// ── component ────────────────────────────────────────────────────────────────
+// ── types ─────────────────────────────────────────────────────────────────────
+
+type TabId = "library" | "now-playing" | "playlist";
+type SourceType = "youtube" | "soundcloud" | "localfile";
+
+interface Track {
+  id: string;
+  sourceType: SourceType;
+}
+
+// ── placeholder sub-components ────────────────────────────────────────────────
+
+function SoundCloudPlayer() {
+  return <div className="placeholder-panel">SoundCloud player coming soon</div>;
+}
+
+function LocalFileInfo() {
+  return <div className="placeholder-panel">Local file info coming soon</div>;
+}
+
+// ── Now Playing tab content ───────────────────────────────────────────────────
+
+interface NowPlayingTabProps {
+  track: Track;
+  onPlayerReady: (player: YT.Player) => void;
+  webviewError: string | null;
+  onOpenWebview: (id: string) => void;
+}
+
+function NowPlayingTab({ track, onPlayerReady, webviewError, onOpenWebview }: NowPlayingTabProps) {
+  return (
+    <div className="now-playing-tab">
+      <div className="player-container">
+        {track.sourceType === "youtube" && (
+          <YoutubePlayer videoId={track.id} onPlayerReady={onPlayerReady} />
+        )}
+        {track.sourceType === "soundcloud" && <SoundCloudPlayer />}
+        {track.sourceType === "localfile" && <LocalFileInfo />}
+      </div>
+
+      {track.sourceType === "youtube" && (
+        <div className="player-actions">
+          <button
+            className="btn btn-secondary"
+            onClick={() => onOpenWebview(track.id)}
+          >
+            <svg viewBox="0 0 24 24" fill="currentColor" className="btn-icon">
+              <path d="M19 3H5a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2V5a2 2 0 00-2-2zm-1 14H6V7h12v10z" />
+            </svg>
+            Open in Webview Window
+          </button>
+          <a
+            href={`https://www.youtube.com/watch?v=${track.id}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="btn btn-ghost"
+          >
+            Open on YouTube ↗
+          </a>
+        </div>
+      )}
+
+      {webviewError && <p className="error-msg">{webviewError}</p>}
+    </div>
+  );
+}
+
+// ── main component ────────────────────────────────────────────────────────────
 
 export default function App() {
+  const [activeTab, setActiveTab] = useState<TabId>("library");
+  const [track, setTrack] = useState<Track | null>(null);
   const [input, setInput] = useState("");
-  const [videoId, setVideoId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [webviewError, setWebviewError] = useState<string | null>(null);
   const [ytPlayer, setYtPlayer] = useState<YT.Player | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // Clear the player instance when no video is active
+  // Clear the player instance when no track is active
   useEffect(() => {
-    if (!videoId) setYtPlayer(null);
-  }, [videoId]);
+    if (!track) setYtPlayer(null);
+  }, [track]);
 
   // ── open in dedicated webview window ──
   const openWebviewWindow = async (id: string) => {
@@ -86,16 +154,17 @@ export default function App() {
     }
   };
 
-  // ── load: extract ID then immediately open native window ──
+  // ── load video ──
   const loadVideo = (raw: string) => {
     const id = extractVideoId(raw.trim());
     if (id) {
-      setVideoId(id);
+      setTrack({ id, sourceType: "youtube" });
       setError(null);
       setWebviewError(null);
+      setActiveTab("now-playing");
     } else {
       setError("⚠️  Could not find a valid YouTube video ID.");
-      setVideoId(null);
+      setTrack(null);
     }
   };
 
@@ -103,6 +172,12 @@ export default function App() {
     e.preventDefault();
     loadVideo(input);
   };
+
+  const tabs: { id: TabId; label: string; disabled?: boolean }[] = [
+    { id: "library",     label: "Library" },
+    { id: "now-playing", label: "Now Playing", disabled: !track },
+    { id: "playlist",    label: "Playlist" },
+  ];
 
   return (
     <div className="app">
@@ -117,82 +192,101 @@ export default function App() {
         <span className="brand-sub">YouTube Viewer</span>
       </header>
 
-      {/* ── Search bar ── */}
-      <section className="search-section">
-        <form onSubmit={handleSubmit} className="search-form">
-          <input
-            ref={inputRef}
-            type="text"
-            className={`search-input ${error ? "search-input--error" : ""}`}
-            placeholder="Paste a YouTube URL or video ID…"
-            value={input}
-            onChange={(e) => {
-              setInput(e.target.value);
-              if (error) setError(null);
-            }}
-          />
-          <button type="submit" className="btn btn-primary">
-            ▶ Play
+      {/* ── Tab bar ── */}
+      <nav className="tab-bar">
+        {tabs.map((t) => (
+          <button
+            key={t.id}
+            className={[
+              "tab-btn",
+              activeTab === t.id ? "tab-btn--active" : "",
+              t.disabled        ? "tab-btn--disabled" : "",
+            ].filter(Boolean).join(" ")}
+            disabled={t.disabled}
+            onClick={() => setActiveTab(t.id)}
+          >
+            {t.label}
           </button>
-        </form>
-        {error && <p className="error-msg">{error}</p>}
-      </section>
+        ))}
+      </nav>
 
-      {/* ── Player ── */}
-      {videoId && (
-        <section className="player-section">
-          <div className="player-container">
-            <YoutubePlayer videoId={videoId} onPlayerReady={(p) => setYtPlayer(p)} />
+      {/* ── Tab content ── */}
+      <main className="tab-content">
+
+        {/* Library */}
+        {activeTab === "library" && (
+          <div className="library-tab">
+            <section className="search-section">
+              <form onSubmit={handleSubmit} className="search-form">
+                <input
+                  ref={inputRef}
+                  type="text"
+                  className={`search-input${error ? " search-input--error" : ""}`}
+                  placeholder="Paste a YouTube URL or video ID…"
+                  value={input}
+                  onChange={(e) => {
+                    setInput(e.target.value);
+                    if (error) setError(null);
+                  }}
+                />
+                <button type="submit" className="btn btn-primary">
+                  ▶ Play
+                </button>
+              </form>
+              {error && <p className="error-msg">{error}</p>}
+            </section>
+
+            <section className="featured-section">
+              <h2 className="featured-heading">Featured Videos</h2>
+              <div className="featured-grid">
+                {FEATURED.map((v) => (
+                  <button
+                    key={v.id}
+                    className="thumb-card"
+                    onClick={() => {
+                      setInput(v.id);
+                      loadVideo(v.id);
+                    }}
+                  >
+                    <img src={v.thumb} alt={v.title} className="thumb-img" />
+                    <p className="thumb-title">{v.title}</p>
+                  </button>
+                ))}
+              </div>
+              <p className="hint">
+                Paste any YouTube URL or video ID in the bar above, or pick a
+                featured video.
+              </p>
+            </section>
           </div>
+        )}
 
-          <div className="player-actions">
-            <button className="btn btn-secondary" onClick={() => void openWebviewWindow(videoId)}>
-              <svg viewBox="0 0 24 24" fill="currentColor" className="btn-icon">
-                <path d="M19 3H5a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2V5a2 2 0 00-2-2zm-1 14H6V7h12v10z" />
-              </svg>
-              Open in Webview Window
-            </button>
-            <a
-              href={`https://www.youtube.com/watch?v=${videoId}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="btn btn-ghost"
-            >
-              Open on YouTube ↗
-            </a>
+        {/*
+          Now Playing — kept mounted whenever a track is active so the player
+          stays alive while the user browses other tabs. Hidden via CSS only.
+        */}
+        {track && (
+          <div className={activeTab !== "now-playing" ? "tab-panel--hidden" : ""}>
+            <NowPlayingTab
+              track={track}
+              onPlayerReady={setYtPlayer}
+              webviewError={webviewError}
+              onOpenWebview={(id) => void openWebviewWindow(id)}
+            />
           </div>
+        )}
 
-          {webviewError && <p className="error-msg">{webviewError}</p>}
+        {/* Playlist */}
+        {activeTab === "playlist" && (
+          <div className="placeholder-panel">Playlist coming soon</div>
+        )}
 
-          <PlayerControls player={ytPlayer} />
-        </section>
-      )}
+      </main>
 
-      {/* ── Featured / Placeholder ── */}
-      {!videoId && (
-        <section className="featured-section">
-          <h2 className="featured-heading">Featured Videos</h2>
-          <div className="featured-grid">
-            {FEATURED.map((v) => (
-              <button
-                key={v.id}
-                className="thumb-card"
-                onClick={() => {
-                  setInput(v.id);
-                  loadVideo(v.id);
-                }}
-              >
-                <img src={v.thumb} alt={v.title} className="thumb-img" />
-                <p className="thumb-title">{v.title}</p>
-              </button>
-            ))}
-          </div>
-          <p className="hint">
-            Paste any YouTube URL or video ID in the bar above, or pick a
-            featured video.
-          </p>
-        </section>
-      )}
+      {/* ── Persistent bottom bar ── */}
+      <footer className="bottom-bar">
+        <PlayerControls player={ytPlayer} />
+      </footer>
     </div>
   );
 }
