@@ -1,6 +1,7 @@
-import { useState, useRef, type FormEvent } from "react";
+import { useState, useRef, useEffect, type FormEvent } from "react";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { YoutubePlayer } from "./YoutubePlayer";
+import { PlayerControls } from "./PlayerControls";
 import "./App.css";
 
 // ── helpers ──────────────────────────────────────────────────────────────────
@@ -50,7 +51,13 @@ export default function App() {
   const [videoId, setVideoId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [webviewError, setWebviewError] = useState<string | null>(null);
+  const [ytPlayer, setYtPlayer] = useState<YT.Player | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  // Clear the player instance when no video is active
+  useEffect(() => {
+    if (!videoId) setYtPlayer(null);
+  }, [videoId]);
 
   // ── open in dedicated webview window ──
   const openWebviewWindow = async (id: string) => {
@@ -135,7 +142,7 @@ export default function App() {
       {videoId && (
         <section className="player-section">
           <div className="player-container">
-            <YoutubePlayer videoId={videoId} />
+            <YoutubePlayer videoId={videoId} onPlayerReady={(p) => setYtPlayer(p)} />
           </div>
 
           <div className="player-actions">
@@ -156,6 +163,8 @@ export default function App() {
           </div>
 
           {webviewError && <p className="error-msg">{webviewError}</p>}
+
+          <PlayerControls player={ytPlayer} />
         </section>
       )}
 

@@ -241,3 +241,88 @@
   text-align: center;
   margin-top: 8px;
 }
+
+/* ── Player Controls ─────────────────────────────────────────────────────── */
+
+.player-controls {
+  background: var(--surface);
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.ctrl-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.ctrl-buttons {
+  gap: 8px;
+}
+
+.ctrl-btn {
+  min-width: 90px;
+  padding: 8px 16px;
+}
+
+.ctrl-slider {
+  flex: 1;
+  -webkit-appearance: none;
+  appearance: none;
+  height: 4px;
+  background: var(--border);
+  border-radius: 2px;
+  outline: none;
+  cursor: pointer;
+}
+
+.ctrl-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--accent);
+  cursor: pointer;
+  transition: transform 0.1s;
+}
+
+.ctrl-slider::-webkit-slider-thumb:hover {
+  transform: scale(1.2);
+}
+
+.ctrl-slider::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--accent);
+  cursor: pointer;
+  border: none;
+}
+
+.ctrl-slider:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.ctrl-slider:disabled::-webkit-slider-thumb {
+  cursor: default;
+}
+
+.ctrl-time {
+  font-variant-numeric: tabular-nums;
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  min-width: 36px;
+  text-align: center;
+}
+
+.ctrl-label {
+  font-size: 1rem;
+  width: 20px;
+  text-align: center;
+}

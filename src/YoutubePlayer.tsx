@@ -44,14 +44,17 @@ function loadYouTubeApi(): Promise<void> {
 
 interface YoutubePlayerProps {
   videoId: string;
+  onPlayerReady?: (player: YT.Player) => void;
 }
 
-export function YoutubePlayer({ videoId }: YoutubePlayerProps) {
+export function YoutubePlayer({ videoId, onPlayerReady }: YoutubePlayerProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const playerRef = useRef<YT.Player | null>(null);
-  // Keep a ref so the async API-ready callback always sees the latest videoId
+  // Keep refs so async callbacks always see the latest values
   const videoIdRef = useRef(videoId);
   videoIdRef.current = videoId;
+  const onPlayerReadyRef = useRef(onPlayerReady);
+  onPlayerReadyRef.current = onPlayerReady;
 
   // Create the player once the API and the DOM node are both ready
   useEffect(() => {
@@ -69,13 +72,14 @@ export function YoutubePlayer({ videoId }: YoutubePlayerProps) {
           modestbranding: 1,
         },
         events: {
-          onReady: (e) => e.target.playVideo(),
+          onReady: (e) => {
+            e.target.playVideo();
+            onPlayerReadyRef.current?.(e.target as YT.Player);
+          },
           onError: (e) => {
             console.error("YouTube Player Error:", e.data);
-            // Optionally, you could set some error state here to display in the UI
           },
           onStateChange: (e) => {
-            // Auto-close the player when the video ends
             console.log("Player state changed:", e.data);
           }
         },
