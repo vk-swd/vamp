@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { loadYouTubeApi } from "./youtubeApi";
 import { usePlayerStore } from "./store";
+import { log } from "./logger";
 
 // ── Loading widget (YOW) ──────────────────────────────────────────────────────
 
@@ -11,7 +12,8 @@ interface LoadingWidgetProps {
 }
 
 function YoutubePlayerLoadingWidget({ failed, attempt, onRetry }: LoadingWidgetProps) {
-  return (
+  log(`current failed state ${failed} attempt ${attempt}`)
+    return (
     <div className="yt-loading-widget">
       {!failed && <div className="yt-loading-spinner" />}
       <p className="yt-loading-msg">
@@ -38,9 +40,9 @@ function YoutubePlayerCore({ videoId }: { videoId: string }) {
   videoIdRef.current = videoId;
 
   const setYtPlayer = usePlayerStore((s) => s.setYtPlayer);
-
   // Create the YT.Player exactly once — API is guaranteed ready at this point.
   useEffect(() => {
+    log(`YoutubePlayerCore mounted (videoId=${videoIdRef.current})`);
     if (!containerRef.current) return;
 
     playerRef.current = new YT.Player(containerRef.current, {
@@ -51,8 +53,8 @@ function YoutubePlayerCore({ videoId }: { videoId: string }) {
           e.target.playVideo();
           setYtPlayer(e.target as YT.Player);
         },
-        onError: (e) => console.error("YouTube Player Error:", e.data),
-        onStateChange: (e) => console.log("Player state changed:", e.data),
+        onError: (e) => log(`YouTube Player Error: ${e.data}`),
+        onStateChange: (e) => log(`Player state changed: ${e.data}`),
       },
     });
 
@@ -87,34 +89,36 @@ export function YoutubePlayerOwner({ videoId }: { videoId: string }) {
 
   // 1. Check the store — if a player instance is already live, API is ready.
   const ytPlayer = usePlayerStore((s) => s.ytPlayer);
-
+    log(`YoutubePlayerOwner called 1`);
+  // 1.1: player in store → API is definitely ready, keep core mounted.
+    if (ytPlayer !== null) return <YoutubePlayerCore videoId={videoId} />;
+    log(`YoutubePlayerOwner called 2`);
   useEffect(() => {
     let cancelled = false;
-    setApiState("loading");
-    loadYouTubeApi()
-      .then(() => {
-        if (!cancelled) setApiState("ready");
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setApiState("failed");
-          setAttempt((n) => n + 1);
-        }
-      });
+    log(`YoutubePlayerOwner called 3. checking yt player state ${JSON.stringify(ytPlayer)}`);
+    if (ytPlayer) {
+      setApiState("ready");
+    } else {
+        setApiState("loading");
+        loadYouTubeApi()
+        .then(() => {
+            log(`YoutubePlayerOwner called 4 ${cancelled}`);
+            if (!cancelled) setApiState("ready");
+        })
+        .catch(() => {
+            if (!cancelled) {
+                setApiState("failed");
+                setAttempt((n) => n + 1);
+            }
+        });
+    }
+    
     return () => {
       cancelled = true;
     };
   }, [retryKey]); // re-runs on manual retry
 
   const retry = () => setRetryKey((n) => n + 1);
-
-  // 1.1: player in store → API is definitely ready, keep core mounted.
-  if (ytPlayer !== null) return <YoutubePlayerCore videoId={videoId} />;
-
-  // 1.2.3: "ready" → API script loaded, no special widget needed;
-  //         let YoutubePlayerCore mount and initialise the player.
-  if (apiState === "ready") return <YoutubePlayerCore videoId={videoId} />;
-
   // 1.2.1 / 1.2.2: API is loading or has failed — show the widget.
   return (
     <YoutubePlayerLoadingWidget
