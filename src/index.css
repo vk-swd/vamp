@@ -1,0 +1,31 @@
+/* Reset & base */
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+:root {
+  --bg:          #0f0f0f;
+  --surface:     #1a1a1a;
+  --surface-2:   #242424;
+  --border:      #2e2e2e;
+  --accent:      #ff0000;
+  --accent-dim:  #cc0000;
+  --text:        #f1f1f1;
+  --text-muted:  #aaa;
+  --radius:      10px;
+  --shadow:      0 4px 24px rgba(0, 0, 0, .45);
+}
+
+html, body, #root {
+  height: 100%;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+  font-size: 15px;
+  line-height: 1.5;
+}
