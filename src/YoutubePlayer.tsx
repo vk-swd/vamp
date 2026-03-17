@@ -7,17 +7,23 @@ import { usePlayerStore } from "./store";
 interface LoadingWidgetProps {
   failed: boolean;
   attempt: number;
+  onRetry?: () => void;
 }
 
-function YoutubePlayerLoadingWidget({ failed, attempt }: LoadingWidgetProps) {
+function YoutubePlayerLoadingWidget({ failed, attempt, onRetry }: LoadingWidgetProps) {
   return (
     <div className="yt-loading-widget">
-      <div className="yt-loading-spinner" />
+      {!failed && <div className="yt-loading-spinner" />}
       <p className="yt-loading-msg">
         {failed
-          ? `YouTube API unavailable – retrying… (attempt ${attempt})`
-          : "Loading YouTube player…"}
+          ? `YouTube API failed to load (attempt ${attempt})`
+          : "Loading YouTube player\u2026"}
       </p>
+      {failed && onRetry && (
+        <button className="btn btn-secondary ctrl-btn" onClick={onRetry}>
+          &#8635; Retry
+        </button>
+      )}
     </div>
   );
 }
@@ -75,36 +81,46 @@ type ApiState = "loading" | "ready" | "failed";
 
 export function YoutubePlayerOwner({ videoId }: { videoId: string }) {
   const [apiState, setApiState] = useState<ApiState>("loading");
-  const [attempt, setAttempt] = useState(1);
+  const [attempt, setAttempt] = useState(0);
+  // Incrementing retryKey re-triggers the loading effect.
+  const [retryKey, setRetryKey] = useState(0);
+
+  // 1. Check the store — if a player instance is already live, API is ready.
+  const ytPlayer = usePlayerStore((s) => s.ytPlayer);
 
   useEffect(() => {
     let cancelled = false;
-    let retryTimer = 0 as unknown as ReturnType<typeof setTimeout>;
-
-    function tryLoad() {
-      if (cancelled) return;
-      setApiState("loading");
-      loadYouTubeApi()
-        .then(() => {
-          if (!cancelled) setApiState("ready");
-        })
-        .catch(() => {
-          if (!cancelled) {
-            setApiState("failed");
-            setAttempt((n) => n + 1);
-            retryTimer = setTimeout(tryLoad, 1000);
-          }
-        });
-    }
-
-    tryLoad();
-
+    setApiState("loading");
+    loadYouTubeApi()
+      .then(() => {
+        if (!cancelled) setApiState("ready");
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setApiState("failed");
+          setAttempt((n) => n + 1);
+        }
+      });
     return () => {
       cancelled = true;
-      clearTimeout(retryTimer);
     };
-  }, []); // run once per mount lifetime
+  }, [retryKey]); // re-runs on manual retry
 
+  const retry = () => setRetryKey((n) => n + 1);
+
+  // 1.1: player in store → API is definitely ready, keep core mounted.
+  if (ytPlayer !== null) return <YoutubePlayerCore videoId={videoId} />;
+
+  // 1.2.3: "ready" → API script loaded, no special widget needed;
+  //         let YoutubePlayerCore mount and initialise the player.
   if (apiState === "ready") return <YoutubePlayerCore videoId={videoId} />;
-  return <YoutubePlayerLoadingWidget failed={apiState === "failed"} attempt={attempt} />;
+
+  // 1.2.1 / 1.2.2: API is loading or has failed — show the widget.
+  return (
+    <YoutubePlayerLoadingWidget
+      failed={apiState === "failed"}
+      attempt={attempt}
+      onRetry={apiState === "failed" ? retry : undefined}
+    />
+  );
 }
