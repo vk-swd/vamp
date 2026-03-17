@@ -1,130 +1,33 @@
-import { useEffect, useRef, useState } from "react";
-import { loadYouTubeApi } from "./youtubeApi";
+import { useEffect } from "react";
+import YouTube, { YouTubeEvent, YouTubeProps } from "react-youtube";
 import { usePlayerStore } from "./store";
 import { log } from "./logger";
 
-// ── Loading widget (YOW) ──────────────────────────────────────────────────────
-
-interface LoadingWidgetProps {
-  failed: boolean;
-  attempt: number;
-  onRetry?: () => void;
-}
-
-function YoutubePlayerLoadingWidget({ failed, attempt, onRetry }: LoadingWidgetProps) {
-  log(`current failed state ${failed} attempt ${attempt}`)
-    return (
-    <div className="yt-loading-widget">
-      {!failed && <div className="yt-loading-spinner" />}
-      <p className="yt-loading-msg">
-        {failed
-          ? `YouTube API failed to load (attempt ${attempt})`
-          : "Loading YouTube player\u2026"}
-      </p>
-      {failed && onRetry && (
-        <button className="btn btn-secondary ctrl-btn" onClick={onRetry}>
-          &#8635; Retry
-        </button>
-      )}
-    </div>
-  );
-}
-
-// ── Core player (YT) ─────────────────────────────────────────────────────────
-// Only rendered by YoutubePlayerOwner once the IFrame API is confirmed ready.
-
-function YoutubePlayerCore({ videoId }: { videoId: string }) {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const playerRef = useRef<YT.Player | null>(null);
-  const videoIdRef = useRef(videoId);
-  videoIdRef.current = videoId;
-
-  const setYtPlayer = usePlayerStore((s) => s.setYtPlayer);
-  // Create the YT.Player exactly once — API is guaranteed ready at this point.
-  useEffect(() => {
-    log(`YoutubePlayerCore mounted (videoId=${videoIdRef.current})`);
-    if (!containerRef.current) return;
-
-    playerRef.current = new YT.Player(containerRef.current, {
-      videoId: videoIdRef.current,
-      playerVars: { autoplay: 1, playsinline: 1, rel: 0, modestbranding: 1 },
-      events: {
-        onReady: (e) => {
-          e.target.playVideo();
-          setYtPlayer(e.target as YT.Player);
-        },
-        onError: (e) => log(`YouTube Player Error: ${e.data}`),
-        onStateChange: (e) => log(`Player state changed: ${e.data}`),
-      },
-    });
-
-    return () => {
-      playerRef.current?.destroy();
-      playerRef.current = null;
-      setYtPlayer(null);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // run once per mount lifetime
-
-  // When videoId changes, cue the new video without remounting the IFrame.
-  useEffect(() => {
-    playerRef.current?.loadVideoById(videoId);
-  }, [videoId]);
-
-  return <div ref={containerRef} className="yt-api-player" />;
-}
-
-// ── Owner (YO) ────────────────────────────────────────────────────────────────
-// Manages API loading. Shows the loading widget while waiting or retrying,
-// then swaps in YoutubePlayerCore once the API is ready.
-// Retries every second on failure, stopping cleanly when unmounted.
-
-type ApiState = "loading" | "ready" | "failed";
-
 export function YoutubePlayerOwner({ videoId }: { videoId: string }) {
-  const [apiState, setApiState] = useState<ApiState>("loading");
-  const [attempt, setAttempt] = useState(0);
-  // Incrementing retryKey re-triggers the loading effect.
-  const [retryKey, setRetryKey] = useState(0);
+  const setYtPlayer = usePlayerStore((s) => s.setYtPlayer);
 
-  // 1. Check the store — if a player instance is already live, API is ready.
-  const ytPlayer = usePlayerStore((s) => s.ytPlayer);
-    log(`YoutubePlayerOwner called 1`);
-  // 1.1: player in store → API is definitely ready, keep core mounted.
-    if (ytPlayer !== null) return <YoutubePlayerCore videoId={videoId} />;
-    log(`YoutubePlayerOwner called 2`);
   useEffect(() => {
-    let cancelled = false;
-    log(`YoutubePlayerOwner called 3. checking yt player state ${JSON.stringify(ytPlayer)}`);
-    if (ytPlayer) {
-      setApiState("ready");
-    } else {
-        setApiState("loading");
-        loadYouTubeApi()
-        .then(() => {
-            log(`YoutubePlayerOwner called 4 ${cancelled}`);
-            if (!cancelled) setApiState("ready");
-        })
-        .catch(() => {
-            if (!cancelled) {
-                setApiState("failed");
-                setAttempt((n) => n + 1);
-            }
-        });
-    }
-    
-    return () => {
-      cancelled = true;
-    };
-  }, [retryKey]); // re-runs on manual retry
+    return () => setYtPlayer(null);
+  }, []);
+  log(`Loading YouTube video: ${videoId}`);
+  const opts: YouTubeProps["opts"] = {
+    playerVars: { autoplay: 1, playsinline: 1, rel: 0, modestbranding: 1 },
+  };
 
-  const retry = () => setRetryKey((n) => n + 1);
-  // 1.2.1 / 1.2.2: API is loading or has failed — show the widget.
+  const onReady: YouTubeProps["onReady"] = (e) => {
+    log("YouTube player ready");
+    e.target.playVideo();
+    setYtPlayer(e.target as YT.Player);
+  };
+
   return (
-    <YoutubePlayerLoadingWidget
-      failed={apiState === "failed"}
-      attempt={attempt}
-      onRetry={apiState === "failed" ? retry : undefined}
+    <YouTube
+      videoId={videoId}
+      opts={opts}
+      onReady={onReady}
+      onError={(e: YouTubeEvent<number>) => log(`YouTube Player Error: ${e.data}`)}
+      onStateChange={(e: YouTubeEvent<number>) => log(`Player state changed: ${e.data}`)}
+      className="yt-api-player"
     />
   );
 }
