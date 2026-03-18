@@ -52,8 +52,8 @@ fn main() {
                 .unwrap();
 
             // Open DevTools only in debug builds
-            // #[cfg(debug_assertions)]
-            // window.open_devtools();
+            #[cfg(debug_assertions)]
+            window.open_devtools();
 
             Ok(())
         })

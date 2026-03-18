@@ -10,3 +10,8 @@ export const usePlayerStore = create<PlayerStore>((set) => ({
   ytPlayer: null,
   setYtPlayer: (player) => set({ ytPlayer: player }),
 }));
+
+export const loadedPlayerStore = create<PlayerStore>((set) => ({
+  ytPlayer: null,
+  setYtPlayer: (player) => set({ ytPlayer: player }),
+}));

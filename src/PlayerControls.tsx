@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-
+import { loadedPlayerStore } from "./store";
 interface PlayerControlsProps {
   player: YT.Player | null;
 }
@@ -16,26 +16,29 @@ export function PlayerControls({ player }: PlayerControlsProps) {
   const [duration, setDuration] = useState(0);
   const [volume, setVolume] = useState(100);
   const isDraggingRef = useRef(false);
-
+  const ytPlayerState = loadedPlayerStore((state) => state);
   // Sync initial volume and poll time/duration while player is available
   useEffect(() => {
-    if (!player) {
+    if (!ytPlayerState.ytPlayer) {
       setCurrentTime(0);
       setDuration(0);
       return;
     }
 
-    setVolume(player.getVolume());
+    setVolume(ytPlayerState.ytPlayer.getVolume());
 
     const id = setInterval(() => {
-      if (!isDraggingRef.current) {
-        setCurrentTime(player.getCurrentTime() ?? 0);
+      if (!ytPlayerState.ytPlayer) {
+        return;
       }
-      setDuration(player.getDuration() ?? 0);
+      if (!isDraggingRef.current) {
+        setCurrentTime(ytPlayerState.ytPlayer.getCurrentTime() ?? 0);
+      }
+      setDuration(ytPlayerState.ytPlayer.getDuration() ?? 0);
     }, 250);
 
     return () => clearInterval(id);
-  }, [player]);
+  }, [ytPlayerState.ytPlayer]);
 
   const handleSeekChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setCurrentTime(parseFloat(e.target.value));
@@ -43,13 +46,13 @@ export function PlayerControls({ player }: PlayerControlsProps) {
 
   const commitSeek = (e: React.SyntheticEvent<HTMLInputElement>) => {
     isDraggingRef.current = false;
-    player?.seekTo(parseFloat((e.target as HTMLInputElement).value), true);
+    ytPlayerState.ytPlayer?.seekTo(parseFloat((e.target as HTMLInputElement).value), true);
   };
 
   const handleVolumeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const v = parseInt(e.target.value, 10);
     setVolume(v);
-    player?.setVolume(v);
+    ytPlayerState.ytPlayer?.setVolume(v);
   };
 
   const volumeIcon = volume === 0 ? "🔇" : volume < 50 ? "🔉" : "🔊";
@@ -60,15 +63,15 @@ export function PlayerControls({ player }: PlayerControlsProps) {
       <div className="ctrl-row ctrl-buttons">
         <button
           className="btn btn-primary ctrl-btn"
-          disabled={!player}
-          onClick={() => player?.playVideo()}
+          disabled={!ytPlayerState.ytPlayer}
+          onClick={() => ytPlayerState.ytPlayer?.playVideo()}
         >
           ▶ Play
         </button>
         <button
           className="btn btn-secondary ctrl-btn"
-          disabled={!player}
-          onClick={() => player?.stopVideo()}
+          disabled={!ytPlayerState.ytPlayer}
+          onClick={() => ytPlayerState.ytPlayer?.stopVideo()}
         >
           ■ Stop
         </button>
@@ -84,7 +87,7 @@ export function PlayerControls({ player }: PlayerControlsProps) {
           max={duration > 0 ? duration : 0}
           step={0.5}
           value={currentTime}
-          disabled={!player || duration === 0}
+          disabled={!ytPlayerState.ytPlayer || duration === 0}
           onMouseDown={() => { isDraggingRef.current = true; }}
           onTouchStart={() => { isDraggingRef.current = true; }}
           onChange={handleSeekChange}

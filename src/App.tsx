@@ -3,6 +3,7 @@ import { YoutubePlayerOwner } from "./YoutubePlayer";
 import { PlayerControls } from "./PlayerControls";
 import { usePlayerStore } from "./store";
 import "./App.css";
+import { log } from "./logger";
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -23,25 +24,10 @@ function extractVideoId(raw: string): string | null {
 
 const FEATURED: { id: string; title: string; thumb: string }[] = [
   {
-    id: "dQw4w9WgXcQ",
-    title: "Never Gonna Give You Up",
-    thumb: "https://img.youtube.com/vi/dQw4w9WgXcQ/mqdefault.jpg",
-  },
-  {
-    id: "9bZkp7q19f0",
-    title: "Gangnam Style",
-    thumb: "https://img.youtube.com/vi/9bZkp7q19f0/mqdefault.jpg",
-  },
-  {
-    id: "JGwWNGJdvx8",
-    title: "Shape of You",
-    thumb: "https://img.youtube.com/vi/JGwWNGJdvx8/mqdefault.jpg",
-  },
-  {
-    id: "kJQP7kiw5Fk",
-    title: "Despacito",
-    thumb: "https://img.youtube.com/vi/kJQP7kiw5Fk/mqdefault.jpg",
-  },
+    id: "R8MWKsheHxk",
+    title: "dnb",
+    thumb: "https://img.youtube.com/vi/R8MWKsheHxk/mqdefault.jpg",
+  }
 ];
 
 // ── types ─────────────────────────────────────────────────────────────────────
@@ -71,12 +57,18 @@ interface NowPlayingTabProps {
 }
 
 function NowPlayingTab({ track }: NowPlayingTabProps) {
+  const [mountKey, setMountKey] = useState(0);
+  const updated = () => {
+    setMountKey((k) => k + 1);
+    log(`update owner`)
+  }
   return (
     <div className="now-playing-tab">
       <div className="player-container">
         {track.sourceType === "youtube" && (
-          <YoutubePlayerOwner videoId={track.id} />
+          <YoutubePlayerOwner key={mountKey} videoId={track.id} />
         )}
+        {/* <button onClick={updated}>hello</button> */}
         {track.sourceType === "soundcloud" && <SoundCloudPlayer />}
         {track.sourceType === "localfile" && <LocalFileInfo />}
       </div>

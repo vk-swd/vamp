@@ -219,12 +219,9 @@
 /* ── Player (shared container used inside now-playing-tab) ──────────────── */
 
 .player-container {
-  position: relative;
   width: 100%;
-  aspect-ratio: 16 / 9;
   background: #000;
   border-radius: var(--radius);
-  overflow: hidden;
   box-shadow: var(--shadow);
 }
 
@@ -253,13 +250,12 @@
 /* ── YouTube loading widget (YOW) ────────────────────────────────────────── */
 
 .yt-loading-widget {
-  position: absolute;
-  inset: 0;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   gap: 16px;
+  padding: 24px;
   background: #000;
 }
 
