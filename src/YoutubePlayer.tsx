@@ -12,6 +12,9 @@ declare global {
 
 function startWaitForHangup(timerRef: any, setShowReload: any) {
   setShowReload(false);
+  if (timerRef.current) {
+    clearTimeout(timerRef.current);
+  }
   timerRef.current = setTimeout(() => {
     log(`Timer expired, still loading, show button to reload`)
     setShowReload(true);
@@ -37,6 +40,7 @@ function setUpPlayer(scriptId: () => string, timerRef: MutableRefObject<ReturnTy
               timerRef.current = null;
             }
             e.target.playVideo();
+            e.target.getIframe().style.display = "block";
             log(`Player ready ${e.target.getVideoData().title}`)
             setLoadedPlayer(e.target);
           },
@@ -75,6 +79,7 @@ export function YoutubePlayerOwner({ videoId }: { videoId: string }) {
       if (!ytPlayerState.ytPlayer) {
         ytPlayerState.setYtPlayer(setUpPlayer(makeIframeName, timerRef, videoId, lPlayerStore.setYtPlayer));
         startWaitForHangup(timerRef, setShowReload);
+        log(`made a player ${makeIframeName()}`)
       } else {
         log("Should be impossible - using effect with player.");
       }
@@ -113,25 +118,20 @@ export function YoutubePlayerOwner({ videoId }: { videoId: string }) {
     ytPlayerState.ytPlayer?.destroy();
     ytPlayerState.setYtPlayer(null);
     lPlayerStore.setYtPlayer(null);
-    log(`1`)
     if (window.YT?.Player == undefined) {
       window.onYouTubeIframeAPIReady = undefined;
-    log(`2`)
       const alreadyInserted = document.head.querySelector('script[src="https://www.youtube.com/iframe_api"]');
-      
-    log(`3`)
       if (alreadyInserted) {
         document.head.removeChild(alreadyInserted);
       }
     }
-    log(`wtf`)
     setMountKey(mountKey + 1);
+    log(`Updated mount key to ${mountKey}, should trigger reload`)
   };
-  
   return (
     <div>
-      <div id={makeIframeName()} style={{ display: showReload ? "none" : "block" }} />
-      <button onClick={handleReload}  style={{ display: showReload ? "block" :"none" }}>Reload</button>
+      <div id={makeIframeName()} />
+      <button onClick={handleReload}  style={{ display: showReload ? "block" : "none" }}>Reload</button>
     </div>
   );
 }
