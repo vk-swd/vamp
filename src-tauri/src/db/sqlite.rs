@@ -44,6 +44,14 @@ impl AppRepository for SqliteRepository {
     // ------------------------------------------------------------------
 
     async fn add_track(&self, t: NewTrack) -> Result<i64, sqlx::Error> {
+        if t.sources.is_empty() {
+            return Err(sqlx::Error::Protocol(
+                "add_track: at least one source URL is required".into(),
+            ));
+        }
+
+        let mut tx = self.pool.begin().await?;
+
         let row = sqlx::query(
             "INSERT INTO track_info
                  (artist, track_name, length_seconds, bitrate_kbps, tempo_bpm, addition_time)
@@ -55,10 +63,21 @@ impl AppRepository for SqliteRepository {
         .bind(t.bitrate_kbps)
         .bind(t.tempo_bpm)
         .bind(t.addition_time)
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await?;
 
-        Ok(row.last_insert_rowid())
+        let track_id = row.last_insert_rowid();
+
+        for url in t.sources {
+            sqlx::query("INSERT INTO track_sources (track_id, url) VALUES (?, ?)")
+                .bind(track_id)
+                .bind(url)
+                .execute(&mut *tx)
+                .await?;
+        }
+
+        tx.commit().await?;
+        Ok(track_id)
     }
 
     async fn update_track(&self, id: i64, u: TrackUpdate) -> Result<(), sqlx::Error> {

@@ -6,9 +6,9 @@ pub struct TrackRow {
     pub id: i64,
     pub artist: String,
     pub track_name: String,
-    pub length_seconds: i32,
-    pub bitrate_kbps: i32,
-    pub tempo_bpm: f32,
+    pub length_seconds: Option<i32>,
+    pub bitrate_kbps: Option<i32>,
+    pub tempo_bpm: Option<f32>,
     pub addition_time: String,
 }
 
@@ -25,9 +25,9 @@ pub struct TrackAddConflict {
     pub id: i64,
     pub artist: String,
     pub track_name: String,
-    pub length_seconds: i32,
-    pub bitrate_kbps: i32,
-    pub tempo_bpm: f32,
+    pub length_seconds: Option<i32>,
+    pub bitrate_kbps: Option<i32>,
+    pub tempo_bpm: Option<f32>,
     pub addition_time: String,
     pub conflict_reason: String,
     pub same_track_id: i64,
@@ -71,10 +71,11 @@ pub struct TrackMeta {
 pub struct NewTrack {
     pub artist: String,
     pub track_name: String,
-    pub length_seconds: i32,
-    pub bitrate_kbps: i32,
-    pub tempo_bpm: f32,
+    pub length_seconds: Option<i32>,
+    pub bitrate_kbps: Option<i32>,
+    pub tempo_bpm: Option<f32>,
     pub addition_time: String,
+    pub sources: Vec<String>,
 }
 
 /// Partial update — only `Some` fields are written to the database.
@@ -101,9 +102,9 @@ pub struct NewError {
 pub struct NewTrackConflict {
     pub artist: String,
     pub track_name: String,
-    pub length_seconds: i32,
-    pub bitrate_kbps: i32,
-    pub tempo_bpm: f32,
+    pub length_seconds: Option<i32>,
+    pub bitrate_kbps: Option<i32>,
+    pub tempo_bpm: Option<f32>,
     pub addition_time: String,
     pub conflict_reason: String,
     pub same_track_id: i64,
