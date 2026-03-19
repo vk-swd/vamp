@@ -1,5 +1,10 @@
+
+
+
 // Prevents an extra console window on Windows in release. DO NOT REMOVE!
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+mod commands;
+mod db;
 use tauri::Manager;
 
 #[tauri::command]
@@ -10,13 +15,18 @@ fn log_from_ui(message: String) {
 fn main() {
     tauri::Builder::default()
         .setup(|app| {
+            match tauri::async_runtime::block_on(
+                commands::setup_database(app.handle().clone())
+            ) {
+                Ok(_) => { println!("weirdly"); } // continue
+                Err(e) => return Err(e.into()) // propagate error
+            }
             let window = app.get_webview_window("main").unwrap();
 
             // Apply webkit settings for ALL builds (debug + release)
-            window
-                .with_webview(|webview| {
-                    #[cfg(target_os = "linux")]
-                    
+        
+            #[cfg(target_os = "linux")]
+            window.with_webview(|webview| {
                     use webkit2gtk::{SettingsExt, WebViewExt};
 
                     let w = webview.inner();
@@ -48,16 +58,23 @@ fn main() {
                     // MediaStream – suppresses the enumerate-devices console errors
                     settings.set_enable_media_stream(true);
                   
-                })
-                .unwrap();
-
+                }).unwrap();
             // Open DevTools only in debug builds
             #[cfg(debug_assertions)]
             window.open_devtools();
-
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![log_from_ui])
+        .invoke_handler(tauri::generate_handler![log_from_ui,
+            commands::add_track,        commands::update_track,
+            commands::get_tracks,       commands::get_track,
+            commands::delete_track,
+            commands::add_listen,       commands::get_listens_for_track,
+            commands::add_tag,          commands::edit_tag,
+            commands::delete_tag,       commands::get_all_tags,
+            commands::assign_tag,       commands::remove_tag,
+            commands::get_tags_for_track,
+            commands::add_meta,         commands::update_meta,
+            commands::delete_meta,      commands::get_meta_for_track])
         .plugin(tauri_plugin_opener::init())
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
