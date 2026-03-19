@@ -5,7 +5,10 @@ use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use sqlx::SqlitePool;
 
 use crate::db::repository::AppRepository;
-use crate::db::schema::{ListenInfo, NewTrack, Tag, TrackMeta, TrackRow, TrackSource, TrackUpdate};
+use crate::db::schema::{
+    ListenInfo, NewError, NewTrack, NewTrackConflict, Tag, TrackMeta, TrackRow, TrackSource,
+    TrackUpdate,
+};
 
 /// Concrete SQLite-backed implementation of [`AppRepository`].
 pub struct SqliteRepository {
@@ -42,14 +45,16 @@ impl AppRepository for SqliteRepository {
 
     async fn add_track(&self, t: NewTrack) -> Result<i64, sqlx::Error> {
         let row = sqlx::query(
-            "INSERT INTO track_info (artist, track_name, length_seconds, bitrate_kbps, tempo_bpm)
-             VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO track_info
+                 (artist, track_name, length_seconds, bitrate_kbps, tempo_bpm, addition_time)
+             VALUES (?, ?, ?, ?, ?, ?)",
         )
         .bind(t.artist)
         .bind(t.track_name)
         .bind(t.length_seconds)
         .bind(t.bitrate_kbps)
         .bind(t.tempo_bpm)
+        .bind(t.addition_time)
         .execute(&self.pool)
         .await?;
 
@@ -65,6 +70,7 @@ impl AppRepository for SqliteRepository {
         if u.length_seconds.is_some()  { cols.push("length_seconds = ?"); }
         if u.bitrate_kbps.is_some()    { cols.push("bitrate_kbps = ?"); }
         if u.tempo_bpm.is_some()       { cols.push("tempo_bpm = ?"); }
+        if u.addition_time.is_some()   { cols.push("addition_time = ?"); }
 
         if cols.is_empty() {
             return Ok(());
@@ -77,6 +83,7 @@ impl AppRepository for SqliteRepository {
         if let Some(v) = u.length_seconds { q = q.bind(v); }
         if let Some(v) = u.bitrate_kbps   { q = q.bind(v); }
         if let Some(v) = u.tempo_bpm      { q = q.bind(v); }
+        if let Some(v) = u.addition_time  { q = q.bind(v); }
         q = q.bind(id);
 
         q.execute(&self.pool).await?;
@@ -321,5 +328,42 @@ impl AppRepository for SqliteRepository {
         .bind(track_id)
         .fetch_all(&self.pool)
         .await
+    }
+
+    // ------------------------------------------------------------------
+    // Errors
+    // ------------------------------------------------------------------
+
+    async fn add_error(&self, e: NewError) -> Result<String, sqlx::Error> {
+        sqlx::query("INSERT INTO errors (key, error_text) VALUES (?, ?)")
+            .bind(&e.key)
+            .bind(e.error_text)
+            .execute(&self.pool)
+            .await?;
+        Ok(e.key)
+    }
+
+    // ------------------------------------------------------------------
+    // Track-add conflicts
+    // ------------------------------------------------------------------
+
+    async fn add_track_conflict(&self, c: NewTrackConflict) -> Result<i64, sqlx::Error> {
+        let row = sqlx::query(
+            "INSERT INTO track_add_conflicts
+                 (artist, track_name, length_seconds, bitrate_kbps, tempo_bpm,
+                  addition_time, conflict_reason, same_track_id)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(c.artist)
+        .bind(c.track_name)
+        .bind(c.length_seconds)
+        .bind(c.bitrate_kbps)
+        .bind(c.tempo_bpm)
+        .bind(c.addition_time)
+        .bind(c.conflict_reason)
+        .bind(c.same_track_id)
+        .execute(&self.pool)
+        .await?;
+        Ok(row.last_insert_rowid())
     }
 }

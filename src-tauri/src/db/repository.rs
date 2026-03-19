@@ -1,7 +1,10 @@
 use async_trait::async_trait;
 use std::sync::Arc;
 
-use crate::db::schema::{ListenInfo, NewTrack, Tag, TrackMeta, TrackRow, TrackSource, TrackUpdate};
+use crate::db::schema::{
+    ListenInfo, NewError, NewTrack, NewTrackConflict, Tag, TrackMeta, TrackRow, TrackSource,
+    TrackUpdate,
+};
 
 /// Shared-ownership, type-erased repository handle used as Tauri managed state.
 pub type ArcRepo = Arc<dyn AppRepository + Send + Sync>;
@@ -104,4 +107,18 @@ pub trait AppRepository: Send + Sync {
         &self,
         track_id: i64,
     ) -> Result<Vec<TrackSource>, sqlx::Error>;
+
+    // ------------------------------------------------------------------
+    // Errors
+    // ------------------------------------------------------------------
+
+    /// Insert an error record; returns the key on success.
+    async fn add_error(&self, error: NewError) -> Result<String, sqlx::Error>;
+
+    // ------------------------------------------------------------------
+    // Track-add conflicts
+    // ------------------------------------------------------------------
+
+    /// Record a track-add conflict and return its generated `id`.
+    async fn add_track_conflict(&self, conflict: NewTrackConflict) -> Result<i64, sqlx::Error>;
 }

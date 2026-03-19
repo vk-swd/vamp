@@ -18,7 +18,7 @@ fn main() {
             match tauri::async_runtime::block_on(
                 commands::setup_database(app.handle().clone())
             ) {
-                Ok(_) => { println!("weirdly"); } // continue
+                Ok(_) => { println!("weirdly ok"); } // continue
                 Err(e) => return Err(e.into()) // propagate error
             }
             let window = app.get_webview_window("main").unwrap();

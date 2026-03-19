@@ -4,7 +4,8 @@ CREATE TABLE IF NOT EXISTS track_info (
     track_name      TEXT    NOT NULL,
     length_seconds  INTEGER NOT NULL,
     bitrate_kbps    INTEGER NOT NULL,
-    tempo_bpm       REAL    NOT NULL
+    tempo_bpm       REAL    NOT NULL,
+    addition_time   TEXT    NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS track_sources (
@@ -38,4 +39,21 @@ CREATE TABLE IF NOT EXISTS track_meta (
     track_id  INTEGER NOT NULL REFERENCES track_info(id) ON DELETE CASCADE,
     key       TEXT    NOT NULL,
     value     TEXT    NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS errors (
+    key         INTEGER PRIMARY KEY AUTOINCREMENT,
+    error_text  TEXT    NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS track_add_conflicts (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    artist          TEXT    NOT NULL,
+    track_name      TEXT    NOT NULL,
+    length_seconds  INTEGER NOT NULL,
+    bitrate_kbps    INTEGER NOT NULL,
+    tempo_bpm       REAL    NOT NULL,
+    addition_time   TEXT    NOT NULL,
+    conflict_reason TEXT    NOT NULL,
+    same_track_id   INTEGER NOT NULL REFERENCES track_info(id) ON DELETE CASCADE
 );

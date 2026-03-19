@@ -57,7 +57,7 @@ pub async fn setup_database(handle: tauri::AppHandle) -> Result<(), String> {
 
     std::fs::create_dir_all(&data_dir).map_err(|e| e.to_string())?;
 
-    let db_path = data_dir.join("vampagent.db");
+    let db_path = data_dir.join("vampagent1.db");
 
     let repo = crate::db::sqlite::SqliteRepository::new(&db_path)
         .await
