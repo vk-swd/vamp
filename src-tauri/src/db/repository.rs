@@ -62,6 +62,8 @@ pub trait AppRepository: Send + Sync {
 
     async fn get_all_tags(&self) -> Result<Vec<Tag>, sqlx::Error>;
 
+    async fn get_tags(&self, pattern: String) -> Result<Vec<Tag>, sqlx::Error>;
+
     async fn assign_tag(&self, track_id: i64, tag_id: i64) -> Result<(), sqlx::Error>;
 
     async fn remove_tag(&self, track_id: i64, tag_id: i64) -> Result<(), sqlx::Error>;

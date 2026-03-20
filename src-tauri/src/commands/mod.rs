@@ -57,7 +57,7 @@ pub async fn setup_database(handle: tauri::AppHandle) -> Result<(), String> {
 
     std::fs::create_dir_all(&data_dir).map_err(|e| e.to_string())?;
 
-    let db_path = data_dir.join("vampagent1.db");
+    let db_path = data_dir.join("vampagent3.db");
 
     let repo = crate::db::sqlite::SqliteRepository::new(&db_path)
         .await
@@ -154,6 +154,11 @@ pub async fn delete_tag(repo: Repo<'_>, id: i64) -> Result<(), String> {
 #[tauri::command]
 pub async fn get_all_tags(repo: Repo<'_>) -> Result<Vec<Tag>, String> {
     repo.get_all_tags().await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn get_tags(repo: Repo<'_>, pattern: String) -> Result<Vec<Tag>, String> {
+    repo.get_tags(pattern).await.map_err(|e| e.to_string())
 }
 
 #[tauri::command]

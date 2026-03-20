@@ -3,7 +3,7 @@ import { YoutubePlayerOwner } from "./YoutubePlayer";
 import { PlayerControls } from "./PlayerControls";
 import { usePlayerStore } from "./store";
 import "./App.css";
-import { log } from "./logger";
+import { LibraryWidget } from "./db/LibraryWidget";
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -32,7 +32,7 @@ const FEATURED: { id: string; title: string; thumb: string }[] = [
 
 // ── types ─────────────────────────────────────────────────────────────────────
 
-type TabId = "library" | "now-playing" | "playlist";
+type TabId = "library" | "now-playing" | "playlist" | "database";
 type SourceType = "youtube" | "soundcloud" | "localfile";
 
 interface Track {
@@ -57,11 +57,7 @@ interface NowPlayingTabProps {
 }
 
 function NowPlayingTab({ track }: NowPlayingTabProps) {
-  const [mountKey, setMountKey] = useState(0);
-  const updated = () => {
-    setMountKey((k) => k + 1);
-    log(`update owner`)
-  }
+  const [mountKey] = useState(0);
   return (
     <div className="now-playing-tab">
       <div className="player-container">
@@ -109,6 +105,7 @@ export default function App() {
     { id: "library",     label: "Library" },
     { id: "now-playing", label: "Now Playing", disabled: !track },
     { id: "playlist",    label: "Playlist" },
+    { id: "database",    label: "Database" },
   ];
 
   return (
@@ -206,6 +203,13 @@ export default function App() {
         {/* Playlist */}
         {activeTab === "playlist" && (
           <div className="placeholder-panel">Playlist coming soon</div>
+        )}
+
+        {/* Database */}
+        {activeTab === "database" && (
+          <div>
+            <LibraryWidget/>
+          </div>
         )}
 
       </main>

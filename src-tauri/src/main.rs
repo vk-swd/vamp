@@ -60,8 +60,8 @@ fn main() {
                   
                 }).unwrap();
             // Open DevTools only in debug builds
-            #[cfg(debug_assertions)]
-            window.open_devtools();
+            // #[cfg(debug_assertions)]
+            // window.open_devtools();
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![log_from_ui,
@@ -71,6 +71,7 @@ fn main() {
             commands::add_listen,       commands::get_listens_for_track,
             commands::add_tag,          commands::edit_tag,
             commands::delete_tag,       commands::get_all_tags,
+            commands::get_tags,
             commands::assign_tag,       commands::remove_tag,
             commands::get_tags_for_track,
             commands::add_meta,         commands::update_meta,

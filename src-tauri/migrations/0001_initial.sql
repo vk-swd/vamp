@@ -2,7 +2,7 @@ CREATE TABLE IF NOT EXISTS track_info (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     artist          TEXT    NOT NULL,
     track_name      TEXT    NOT NULL,
-    length_seconds  INTEGER,
+    length_seconds  INTEGER NOT NULL,
     bitrate_kbps    INTEGER,
     tempo_bpm       REAL,
     addition_time   TEXT    NOT NULL

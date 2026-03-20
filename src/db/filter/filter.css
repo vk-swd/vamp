@@ -1,0 +1,190 @@
+/* ── Filter / Search Widget ──────────────────────────────────────────────── */
+
+.filter-widget {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  background: var(--surface);
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+}
+
+/* ── Input row ───────────────────────────────────────────────────────────── */
+
+.filter-input-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+
+.filter-criteria-select {
+  flex-shrink: 0;
+}
+
+.filter-op-select {
+  width: 64px;
+  flex-shrink: 0;
+  padding: 7px 6px;
+}
+
+.filter-value-control {
+  flex: 1;
+  min-width: 180px;
+}
+
+.filter-input {
+  width: 100%;
+  background: var(--surface-2);
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-size: 0.88rem;
+  padding: 7px 10px;
+  outline: none;
+  transition: border-color 0.2s;
+}
+
+.filter-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(255, 0, 0, 0.15);
+}
+
+.filter-input::placeholder {
+  color: var(--text-muted);
+}
+
+/* ── Number selector ─────────────────────────────────────────────────────── */
+
+.filter-number-selector {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.filter-number-input {
+  width: 100px;
+  flex: 1;
+}
+
+/* ── Add button ──────────────────────────────────────────────────────────── */
+
+.filter-add-btn {
+  flex-shrink: 0;
+  padding: 7px 16px;
+  font-size: 0.88rem;
+}
+
+/* ── Pills area ──────────────────────────────────────────────────────────── */
+
+.filter-pills-area {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  max-height: calc(3 * (28px + 6px));
+  overflow-y: auto;
+  padding: 4px 2px;
+  min-height: 38px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+
+.filter-pills-area::-webkit-scrollbar {
+  width: 6px;
+}
+
+.filter-pills-area::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.filter-pills-area::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 3px;
+}
+
+.filter-pills-empty {
+  align-items: center;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  display: flex;
+}
+
+.filter-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--surface-2);
+  border: 1.5px solid var(--border);
+  border-radius: 20px;
+  padding: 3px 6px 3px 10px;
+  font-size: 0.82rem;
+  color: var(--text);
+  cursor: pointer;
+  transition: border-color 0.18s, background 0.18s;
+  max-width: 220px;
+  height: 28px;
+  user-select: none;
+}
+
+.filter-pill:hover {
+  border-color: #555;
+}
+
+.filter-pill--selected {
+  border-color: var(--accent);
+  background: rgba(255, 0, 0, 0.1);
+}
+
+.filter-pill-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.filter-pill-remove {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 1rem;
+  line-height: 1;
+  padding: 0 2px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  transition: color 0.18s, background 0.18s;
+}
+
+.filter-pill-remove:hover {
+  color: var(--accent);
+  background: rgba(255, 0, 0, 0.15);
+}
+
+/* ── Criteria browser ────────────────────────────────────────────────────── */
+
+.filter-criteria-browser {
+  background: var(--surface-2);
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius);
+  padding: 8px 12px;
+  min-height: 36px;
+  display: flex;
+  align-items: center;
+}
+
+.filter-criteria-browser-text {
+  font-size: 0.88rem;
+  color: var(--text);
+}
+
+.filter-criteria-browser-hint {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  font-style: italic;
+}

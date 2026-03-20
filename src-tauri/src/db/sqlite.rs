@@ -290,6 +290,16 @@ impl AppRepository for SqliteRepository {
         .await
     }
 
+    async fn get_tags(&self, pattern: String) -> Result<Vec<Tag>, sqlx::Error> {
+        self.try_log(
+            "get_tags",
+            sqlx::query_as::<_, Tag>("SELECT * FROM tags WHERE tag_name LIKE ? ORDER BY id ASC")
+                .bind(format!("%{}%", pattern))
+                .fetch_all(&self.pool)
+                .await,
+        )
+        .await
+    }
     async fn assign_tag(&self, track_id: i64, tag_id: i64) -> Result<(), sqlx::Error> {
         self.try_log(
             "assign_tag",
