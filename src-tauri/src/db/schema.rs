@@ -132,6 +132,9 @@ pub enum SearchParam {
     TextLike          { pattern: String, case_sensitive: bool },
     TextIn            { values: Vec<String> },
     NullCheck         { is_null: bool },
+    /// Filter tracks by tag IDs. Use with `column_name = "tags"`.
+    /// Returns tracks that have at least one of the provided tag IDs assigned.
+    TagsIn            { tag_ids: Vec<i64> },
 }
 
 #[derive(Debug, Clone, Deserialize)]

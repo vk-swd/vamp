@@ -13,3 +13,6 @@
 pub mod repository;
 pub mod schema;
 pub mod sqlite;
+
+#[cfg(test)]
+mod testdb;

@@ -180,60 +180,113 @@ impl AppRepository for SqliteRepository {
         ];
 
         let after = cursor.unwrap_or(0);
-        let mut conditions: Vec<String> = vec!["id > ?".to_string()];
+        // All column conditions use the `ti.` alias so they remain unambiguous
+        // whether or not the tag JOIN is added later.
+        let mut conditions: Vec<String> = vec!["ti.id > ?".to_string()];
         let mut bind_vals: Vec<BindVal> = vec![BindVal::Int(after)];
+        // Tag IDs are collected separately; they define whether a JOIN is done.
+        let mut tag_filter: Option<Vec<i64>> = None;
+
         if let Some(criteria_list) = criteria {
             for sc in &criteria_list {
                 let col = &sc.column_name;
-                if !ALLOWED_COLUMNS.contains(&col.as_str()) {
-                    return Err(sqlx::Error::Protocol(
-                        format!("get_tracks: unknown column '{}'", col).into(),
-                    ));
-                }
-                for param in &sc.criteria {
-                    match param {
-                        SearchParam::NumericComparison { operator, value } => {
-                            conditions.push(format!("{} {} ?", col, operator.as_sql()));
-                            bind_vals.push(BindVal::Float(*value));
-                        }
-                        SearchParam::NumericBetween { min, max } => {
-                            conditions.push(format!("{} BETWEEN ? AND ?", col));
-                            bind_vals.push(BindVal::Float(*min));
-                            bind_vals.push(BindVal::Float(*max));
-                        }
-                        SearchParam::TextLike { pattern, .. } => {
-                            conditions.push(format!("{} LIKE ?", col));
-                            bind_vals.push(BindVal::Text(pattern.clone()));
-                        }
-                        SearchParam::TextIn { values } => {
-                            if values.is_empty() {
-                                conditions.push("1 = 0".to_string());
-                            } else {
-                                let placeholders = vec!["?"; values.len()].join(", ");
-                                conditions.push(format!("{} IN ({})", col, placeholders));
-                                for v in values {
-                                    bind_vals.push(BindVal::Text(v.clone()));
+                if col == "tags" {
+                    for param in &sc.criteria {
+                        match param {
+                            SearchParam::TagsIn { tag_ids } => {
+                                if tag_ids.is_empty() {
+                                    conditions.push("1 = 0".to_string());
+                                } else {
+                                    tag_filter = Some(tag_ids.clone());
                                 }
                             }
+                            _ => {
+                                return Err(sqlx::Error::Protocol(
+                                    "get_tracks: 'tags' column only supports TagsIn criteria".into(),
+                                ));
+                            }
                         }
-                        SearchParam::NullCheck { is_null } => {
-                            if *is_null {
-                                conditions.push(format!("{} IS NULL", col));
-                            } else {
-                                conditions.push(format!("{} IS NOT NULL", col));
+                    }
+                } else {
+                    if !ALLOWED_COLUMNS.contains(&col.as_str()) {
+                        return Err(sqlx::Error::Protocol(
+                            format!("get_tracks: unknown column '{}'", col).into(),
+                        ));
+                    }
+                    for param in &sc.criteria {
+                        match param {
+                            SearchParam::NumericComparison { operator, value } => {
+                                conditions.push(format!("ti.{} {} ?", col, operator.as_sql()));
+                                bind_vals.push(BindVal::Float(*value));
+                            }
+                            SearchParam::NumericBetween { min, max } => {
+                                conditions.push(format!("ti.{} BETWEEN ? AND ?", col));
+                                bind_vals.push(BindVal::Float(*min));
+                                bind_vals.push(BindVal::Float(*max));
+                            }
+                            SearchParam::TextLike { pattern, .. } => {
+                                conditions.push(format!("ti.{} LIKE ?", col));
+                                bind_vals.push(BindVal::Text(pattern.clone()));
+                            }
+                            SearchParam::TextIn { values } => {
+                                if values.is_empty() {
+                                    conditions.push("1 = 0".to_string());
+                                } else {
+                                    let placeholders = vec!["?"; values.len()].join(", ");
+                                    conditions.push(format!("ti.{} IN ({})", col, placeholders));
+                                    for v in values {
+                                        bind_vals.push(BindVal::Text(v.clone()));
+                                    }
+                                }
+                            }
+                            SearchParam::NullCheck { is_null } => {
+                                if *is_null {
+                                    conditions.push(format!("ti.{} IS NULL", col));
+                                } else {
+                                    conditions.push(format!("ti.{} IS NOT NULL", col));
+                                }
+                            }
+                            SearchParam::TagsIn { .. } => {
+                                return Err(sqlx::Error::Protocol(
+                                    "get_tracks: TagsIn is only valid for column 'tags'".into(),
+                                ));
                             }
                         }
                     }
                 }
             }
         }
-        bind_vals.push(BindVal::Int(limit as i64));
-        let sql = format!(
-            "SELECT * FROM track_info WHERE {} ORDER BY id ASC LIMIT ?",
-            conditions.join(" AND ")
-        );
+
+        let sql = match &tag_filter {
+            None => {
+                bind_vals.push(BindVal::Int(limit as i64));
+                format!(
+                    "SELECT ti.* FROM track_info ti WHERE {} ORDER BY ti.id ASC LIMIT ?",
+                    conditions.join(" AND ")
+                )
+            }
+            Some(tag_ids) => {
+                let placeholders = vec!["?"; tag_ids.len()].join(", ");
+                bind_vals.push(BindVal::Int(limit as i64));
+                format!(
+                    "SELECT ti.* \
+                     FROM (SELECT DISTINCT track_id FROM tag_assignments WHERE tag_id IN ({placeholders}) AND track_id > ?) ta \
+                     INNER JOIN track_info ti ON ti.id = ta.track_id \
+                     WHERE {cond} \
+                     ORDER BY ti.id ASC LIMIT ?",
+                    placeholders = placeholders,
+                    cond = conditions.join(" AND ")
+                )
+            }
+        };
 
         let mut q = sqlx::query_as::<_, TrackRow>(&sql);
+        if let Some(tag_ids) = tag_filter {
+            for id in tag_ids {
+                q = q.bind(id);
+            }
+            q = q.bind(after); // cursor pushed into the subquery
+        }
         for bv in bind_vals {
             q = match bv {
                 BindVal::Int(v)   => q.bind(v),
