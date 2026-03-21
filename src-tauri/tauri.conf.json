@@ -13,8 +13,22 @@
     "withGlobalTauri": false,
     "windows": [
       {
+        "create": false,
         "label": "main",
         "title": "VampAgent – YouTube Viewer",
+        "width": 1000,
+        "height": 720,
+        "minWidth": 640,
+        "minHeight": 480,
+        "center": true,
+        "resizable": true,
+        "decorations": true
+      },
+      {
+        "create": false,
+        "label": "test",
+        "url": "../src/test/dbTest/mockPage.html",
+        "title": "VampAgent – test",
         "width": 1000,
         "height": 720,
         "minWidth": 640,

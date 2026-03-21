@@ -6,23 +6,43 @@
 mod commands;
 mod db;
 use tauri::Manager;
+use webkit2gtk::glib::DateTime;
+
+use crate::commands::default_dir;
 
 #[tauri::command]
 fn log_from_ui(message: String) {
     println!("[UI] {}", message);
 }
+struct AppConfig {
+    db_path: std::path::PathBuf,
+    db_filename: String,
+    window_idx: usize,
+}
 
 fn main() {
     tauri::Builder::default()
         .setup(|app| {
-            match tauri::async_runtime::block_on(
-                commands::setup_database(app.handle().clone())
-            ) {
-                Ok(_) => { println!("weirdly ok"); } // continue
-                Err(e) => return Err(e.into()) // propagate error
-            }
-            let window = app.get_webview_window("main").unwrap();
-
+            let test_dir_env = std::env::var("TEST_DIR");
+            let config = if let Ok(test_dir) = test_dir_env {
+                AppConfig { 
+                    db_path: std::path::PathBuf::from(test_dir), 
+                    db_filename: chrono::Local::now().format("%Y%m%d_%H%M%S").to_string() + "_test.db",
+                    window_idx: 1 
+                }
+            } else {
+                AppConfig { 
+                    db_path: default_dir(app.handle())?, 
+                    db_filename: "vampagent3.db".to_string(),
+                    window_idx: 0 
+                }
+            };
+            std::fs::create_dir_all(&config.db_path).map_err(|e| e.to_string())?;
+            let db_full_path = config.db_path.join(&config.db_filename);
+            tauri::async_runtime::block_on(
+                commands::setup_database(app.handle().clone(), db_full_path)
+            ).map_err(|e| e.to_string())?;
+            let window = tauri::WebviewWindowBuilder::from_config(app.handle(), &app.config().app.windows[config.window_idx])?.build()?;
             // Apply webkit settings for ALL builds (debug + release)
         
             #[cfg(target_os = "linux")]

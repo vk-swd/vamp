@@ -6,13 +6,6 @@ const host = process.env.TAURI_DEV_HOST;
 export default defineConfig(async () => ({
   plugins: [react()],
   clearScreen: false,
-  test: {
-    environment: 'jsdom',
-    globals: true,
-    // Only the mocked unit tests run under vitest; the integration tests
-    // (testDb.tsx / testMain.tsx) run inside the Tauri webview.
-    include: ['src/test/**/*.unit.test.{ts,tsx}'],
-  },
   build: {
     rollupOptions: {
       input: {

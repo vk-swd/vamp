@@ -49,23 +49,20 @@ type Repo<'a> = tauri::State<'a, ArcRepo>;
 /// run pending migrations, and register the repository as Tauri managed state.
 ///
 /// Call this once from inside the `.setup()` closure in `main.rs`.
-pub async fn setup_database(handle: tauri::AppHandle) -> Result<(), String> {
-    let data_dir = handle
+
+pub fn default_dir(handle: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
+    return handle
         .path()
         .app_data_dir()
-        .map_err(|e| e.to_string())?;
-
-    std::fs::create_dir_all(&data_dir).map_err(|e| e.to_string())?;
-
-    let db_path = data_dir.join("vampagent3.db");
-
-    let repo = crate::db::sqlite::SqliteRepository::new(&db_path)
+        .map_err(|e| e.to_string())
+}
+pub async fn setup_database(handle: tauri::AppHandle, db_full_path: std::path::PathBuf) -> Result<(), String> {
+    let repo = crate::db::sqlite::SqliteRepository::new(db_full_path)
         .await
         .map_err(|e| e.to_string())?;
-
+    // Managing a single database connection because SQLite is used.
     let repo: ArcRepo = std::sync::Arc::new(repo);
     handle.manage(repo);
-
     Ok(())
 }
 

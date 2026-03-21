@@ -1,29 +1,3 @@
-/**
- * testDb.tsx — in-webview integration test runner
- *
- * This component runs INSIDE the Tauri webview so every call to tauriDb.ts
- * goes through the real invoke() IPC and hits the live SQLite backend.
- *
- * Test layout mirrors src-tauri/src/db/testdb.rs:
- *   - CRUD round-trips for tracks, tags, meta, sources, listens
- *   - Tag-filter queries (single-tag, multi-tag, paginated full scan)
- *     using the same seeded dataset as testdb.rs
- *
- * Seed dataset (same constants as testdb.rs)
- * ──────────────────────────────────────────
- *   N            = 5 000   tracks
- *   TN           = 200     tags
- *   SHIFTS       = 10      tag-assignment rounds
- *   BATCH        = 25      tracks per tag-batch  (N / TN)
- *   ARTIST_COUNT = 5       distinct artists      (N / 1000)
- *
- *   Every track gets SHIFTS = 10 tags.
- *   Every tag covers SHIFTS × BATCH = 250 tracks.
- *
- * Each test run uses uniquely-prefixed names so multiple runs don't collide.
- * All inserted rows are cleaned up at the end of each test group.
- */
-
 import { useEffect, useReducer, useRef } from 'react';
 import {
   addTrack, deleteTrack, getTrack, updateTrack, getTracks,
@@ -512,6 +486,8 @@ async function runFilterQueries(dispatch: Dispatcher, gIdx: number, prefix: stri
   });
 }
 
+
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Main runner
 // ─────────────────────────────────────────────────────────────────────────────
@@ -553,6 +529,9 @@ const statusIcon: Record<TestStatus, string> = {
   pass:    '✓',
   fail:    '✗',
 };
+
+
+
 
 export default function TestRunner() {
   const [state, dispatch] = useReducer(reducer, { groups: [], running: false, done: false });
