@@ -97,6 +97,49 @@ pub struct NewError {
     pub error_text: String,
 }
 
+// ---------------------------------------------------------------------------
+// Search / filter types (mirror of the TypeScript SearchParam / SearchCriteria)
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Deserialize)]
+pub enum NumericOperator {
+    #[serde(rename = "<")]  Lt,
+    #[serde(rename = ">")]  Gt,
+    #[serde(rename = "=")]  Eq,
+    #[serde(rename = "<=")] Lte,
+    #[serde(rename = ">=")] Gte,
+    #[serde(rename = "!=")] Ne,
+}
+
+impl NumericOperator {
+    pub fn as_sql(&self) -> &'static str {
+        match self {
+            Self::Lt  => "<",
+            Self::Gt  => ">",
+            Self::Eq  => "=",
+            Self::Lte => "<=",
+            Self::Gte => ">=",
+            Self::Ne  => "!=",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(tag = "mode", rename_all = "snake_case")]
+pub enum SearchParam {
+    NumericComparison { operator: NumericOperator, value: f64 },
+    NumericBetween    { min: f64, max: f64 },
+    TextLike          { pattern: String, case_sensitive: bool },
+    TextIn            { values: Vec<String> },
+    NullCheck         { is_null: bool },
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct SearchCriteria {
+    pub column_name: String,
+    pub criteria: Vec<SearchParam>,
+}
+
 /// Input for inserting a new track-add conflict record.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct NewTrackConflict {

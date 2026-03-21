@@ -29,6 +29,10 @@ export type CriteriaState = {
   op?: ComparisonOp;
   options?: string[];
 };
+
+// numeric state | multiselect | single select
+
+
 type CriteriaStateMap = Record<CriteriaType, CriteriaState>;
 
 const ALL_CRITERIA = Object.keys(CRITERIA_LABELS) as CriteriaType[];
@@ -128,6 +132,9 @@ export function CriteriaInput({ onSelectedChange }: CriteriaInputProps) {
     setStateMap(prev => ({ ...prev, [type]: { ...prev[type], ...patch } }));
 
   const handleAdd = () => {
+    // get all input values
+    // assign thies value to the search state map
+    // rerender pills based on the result
     if (!stateToValue(type, stateMap[type])) return;
     if (!activePills.has(type)) {
       setActivePills(prev => new Map(prev).set(type, String(_nextId++)));

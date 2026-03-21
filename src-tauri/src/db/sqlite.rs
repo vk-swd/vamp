@@ -6,9 +6,16 @@ use sqlx::SqlitePool;
 
 use crate::db::repository::AppRepository;
 use crate::db::schema::{
-    ListenInfo, NewError, NewTrack, NewTrackConflict, Tag, TrackMeta, TrackRow, TrackSource,
-    TrackUpdate,
+    ListenInfo, NewError, NewTrack, NewTrackConflict, SearchCriteria, SearchParam, Tag, TrackMeta,
+    TrackRow, TrackSource, TrackUpdate,
 };
+
+/// Private helper: a type-erased bind value for dynamic query building.
+enum BindVal {
+    Int(i64),
+    Float(f64),
+    Text(String),
+}
 
 // ---------------------------------------------------------------------------
 // Error-logging helper
@@ -164,20 +171,78 @@ impl AppRepository for SqliteRepository {
     async fn get_tracks(
         &self,
         cursor: Option<i64>,
+        criteria: Option<Vec<SearchCriteria>>,
         limit: u32,
     ) -> Result<Vec<TrackRow>, sqlx::Error> {
+        const ALLOWED_COLUMNS: &[&str] = &[
+            "id", "artist", "track_name", "length_seconds",
+            "bitrate_kbps", "tempo_bpm", "addition_time",
+        ];
+
         let after = cursor.unwrap_or(0);
-        self.try_log(
-            "get_tracks",
-            sqlx::query_as::<_, TrackRow>(
-                "SELECT * FROM track_info WHERE id > ? ORDER BY id ASC LIMIT ?",
-            )
-            .bind(after)
-            .bind(limit as i64)
-            .fetch_all(&self.pool)
-            .await,
-        )
-        .await
+        let mut conditions: Vec<String> = vec!["id > ?".to_string()];
+        let mut bind_vals: Vec<BindVal> = vec![BindVal::Int(after)];
+        if let Some(criteria_list) = criteria {
+            for sc in &criteria_list {
+                let col = &sc.column_name;
+                if !ALLOWED_COLUMNS.contains(&col.as_str()) {
+                    return Err(sqlx::Error::Protocol(
+                        format!("get_tracks: unknown column '{}'", col).into(),
+                    ));
+                }
+                for param in &sc.criteria {
+                    match param {
+                        SearchParam::NumericComparison { operator, value } => {
+                            conditions.push(format!("{} {} ?", col, operator.as_sql()));
+                            bind_vals.push(BindVal::Float(*value));
+                        }
+                        SearchParam::NumericBetween { min, max } => {
+                            conditions.push(format!("{} BETWEEN ? AND ?", col));
+                            bind_vals.push(BindVal::Float(*min));
+                            bind_vals.push(BindVal::Float(*max));
+                        }
+                        SearchParam::TextLike { pattern, .. } => {
+                            conditions.push(format!("{} LIKE ?", col));
+                            bind_vals.push(BindVal::Text(pattern.clone()));
+                        }
+                        SearchParam::TextIn { values } => {
+                            if values.is_empty() {
+                                conditions.push("1 = 0".to_string());
+                            } else {
+                                let placeholders = vec!["?"; values.len()].join(", ");
+                                conditions.push(format!("{} IN ({})", col, placeholders));
+                                for v in values {
+                                    bind_vals.push(BindVal::Text(v.clone()));
+                                }
+                            }
+                        }
+                        SearchParam::NullCheck { is_null } => {
+                            if *is_null {
+                                conditions.push(format!("{} IS NULL", col));
+                            } else {
+                                conditions.push(format!("{} IS NOT NULL", col));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        bind_vals.push(BindVal::Int(limit as i64));
+        let sql = format!(
+            "SELECT * FROM track_info WHERE {} ORDER BY id ASC LIMIT ?",
+            conditions.join(" AND ")
+        );
+
+        let mut q = sqlx::query_as::<_, TrackRow>(&sql);
+        for bv in bind_vals {
+            q = match bv {
+                BindVal::Int(v)   => q.bind(v),
+                BindVal::Float(v) => q.bind(v),
+                BindVal::Text(v)  => q.bind(v),
+            };
+        }
+
+        self.try_log("get_tracks", q.fetch_all(&self.pool).await).await
     }
 
     async fn get_track(&self, id: i64) -> Result<TrackRow, sqlx::Error> {

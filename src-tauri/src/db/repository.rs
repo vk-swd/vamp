@@ -2,8 +2,8 @@ use async_trait::async_trait;
 use std::sync::Arc;
 
 use crate::db::schema::{
-    ListenInfo, NewError, NewTrack, NewTrackConflict, Tag, TrackMeta, TrackRow, TrackSource,
-    TrackUpdate,
+    ListenInfo, NewError, NewTrack, NewTrackConflict, SearchCriteria, Tag, TrackMeta, TrackRow,
+    TrackSource, TrackUpdate,
 };
 
 /// Shared-ownership, type-erased repository handle used as Tauri managed state.
@@ -28,9 +28,11 @@ pub trait AppRepository: Send + Sync {
 
     /// Cursor-based pagination ordered by `id ASC`.
     /// Returns rows with `id > cursor`; pass `None` to start from the beginning.
+    /// `criteria` is an optional list of column filters received from the frontend.
     async fn get_tracks(
         &self,
         cursor: Option<i64>,
+        criteria: Option<Vec<SearchCriteria>>,
         limit: u32,
     ) -> Result<Vec<TrackRow>, sqlx::Error>;
 
