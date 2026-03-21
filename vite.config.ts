@@ -9,7 +9,19 @@ export default defineConfig(async () => ({
   test: {
     environment: 'jsdom',
     globals: true,
-    include: ['src/test/**/*.{ts,tsx}'],
+    // Only the mocked unit tests run under vitest; the integration tests
+    // (testDb.tsx / testMain.tsx) run inside the Tauri webview.
+    include: ['src/test/**/*.unit.test.{ts,tsx}'],
+  },
+  build: {
+    rollupOptions: {
+      input: {
+        main: './index.html',
+        // Second entry: the in-webview DB integration test page.
+        // Open via Tauri dev server: http://localhost:1420/src/test/dbTest/mockPage.html
+        dbTest: './src/test/dbTest/mockPage.html',
+      },
+    },
   },
   server: {
     port: 1420,
