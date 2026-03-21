@@ -10,7 +10,7 @@ mod perf {
     use crate::db::sqlite::SqliteRepository;
 
     // ── dataset constants ───────────────────────────────────────────────────
-    const N: usize = 50_000;          // total tracks
+    const N: usize = 50_00;          // total tracks
     const TN: usize = 200;            // total tags
     const SHIFTS: usize = 10;         // how many tag-offset rounds
     const BATCH: usize = N / TN;      // 250 tracks per tag-batch
