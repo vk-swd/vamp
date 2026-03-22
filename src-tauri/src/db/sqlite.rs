@@ -182,7 +182,7 @@ impl AppRepository for SqliteRepository {
         let after = cursor.unwrap_or(0);
         // All column conditions use the `ti.` alias so they remain unambiguous
         // whether or not the tag JOIN is added later.
-        let mut conditions: Vec<String> = vec!["ti.id > ?".to_string()];
+        let mut conditions: Vec<String> = vec!["ti.id >= ?".to_string()];
         let mut bind_vals: Vec<BindVal> = vec![BindVal::Int(after)];
         // Tag IDs are collected separately; they define whether a JOIN is done.
         let mut tag_filter: Option<Vec<i64>> = None;
@@ -270,7 +270,7 @@ impl AppRepository for SqliteRepository {
                 bind_vals.push(BindVal::Int(limit as i64));
                 format!(
                     "SELECT ti.* \
-                     FROM (SELECT DISTINCT track_id FROM tag_assignments WHERE tag_id IN ({placeholders}) AND track_id > ?) ta \
+                     FROM (SELECT DISTINCT track_id FROM tag_assignments WHERE tag_id IN ({placeholders}) AND track_id >= ?) ta \
                      INNER JOIN track_info ti ON ti.id = ta.track_id \
                      WHERE {cond} \
                      ORDER BY ti.id ASC LIMIT ?",
@@ -363,7 +363,7 @@ impl AppRepository for SqliteRepository {
 
     async fn add_tag(&self, name: String) -> Result<i64, sqlx::Error> {
         self.try_log(
-            "add_tag",
+            &format!("add_tag had name {}", name),
             sqlx::query("INSERT INTO tags (tag_name) VALUES (?)")
                 .bind(name)
                 .execute(&self.pool)

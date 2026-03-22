@@ -24,12 +24,12 @@ export type ListenInfo = {
   listened_to: number;
 };
 
-export type TrackMeta = {
-  id: number;
-  track_id: number;
-  key: string;
-  value: string;
-};
+// export type TrackMeta = {
+//   id: number;
+//   track_id: number;
+//   key: string;
+//   value: string;
+// };
 
 export type TrackSource = {
   id: number;
@@ -37,24 +37,11 @@ export type TrackSource = {
   url: string;
 };
 
-export type NewTrack = {
-  artist: string;
-  track_name: string;
-  length_seconds: number | null;
-  bitrate_kbps: number | null;
-  tempo_bpm: number | null;
-  addition_time: string;
+export type NewTrack = Omit<TrackRow, 'id'> & {
   sources: string[];
 };
 
-export type TrackUpdate = {
-  artist?: string | null;
-  track_name?: string | null;
-  length_seconds?: number | null;
-  bitrate_kbps?: number | null;
-  tempo_bpm?: number | null;
-  addition_time?: string | null;
-};
+export type TrackUpdate = Partial<TrackRow>;
 
 // ─── Search / filter types (mirror of SearchParam / SearchCriteria in schema.rs)
 
@@ -62,16 +49,55 @@ export type TrackUpdate = {
 // The `mode` tag matches the Rust #[serde(tag = "mode", rename_all = "snake_case")]
 // enum variants.
 
-export type SearchParam =
-  | { mode: 'numeric_comparison'; operator: '<' | '>' | '=' | '<=' | '>=' | '!='; value: number }
-  | { mode: 'numeric_between'; min: number; max: number }
-  | { mode: 'text_like'; pattern: string; case_sensitive: boolean }
-  | { mode: 'text_in'; values: string[] }
-  | { mode: 'null_check'; is_null: boolean }
-  | { mode: 'tags_in'; tag_ids: number[] };
+type NumericComparison = {
+  mode: 'numeric_comparison';
+  operator: '<' | '>' | '=' | '<=' | '>=' | '!=';
+  value: number;
+};
+
+export type NumericBetween = {
+  mode: 'numeric_between';
+  min: number;
+  max: number;  // inclusive on both ends
+};
+
+// --- Text searches ---
+
+export type TextLike = {
+  mode: 'text_like';
+  pattern: string;       // e.g. "%rock%", "The%", "%band"
+  caseSensitive: boolean;
+};
+
+export type TextIn = {
+  mode: 'text_in';
+  values: string[];
+};
+
+export type TagsIn = {
+  mode: 'tags_in';
+  /** Tag IDs to match (snake_case matches Rust's serde field). */
+  tag_ids: number[];
+};
+
+// --- Null search ---
+
+export type NullCheck = {
+  mode: 'null_check';
+  isNull: boolean;  // true = IS NULL, false = IS NOT NULL
+};
+
+// --- Union ---
+
+export type SearchParam = NumericComparison
+  | NumericBetween
+  | TextLike
+  | TextIn
+  | TagsIn
+  | NullCheck;
 
 export type SearchCriteria = {
-  column_name: string;
+  columnName: string;
   criteria: SearchParam[];
 };
 
@@ -139,9 +165,6 @@ export const updateMeta = (id: number, value: string): Promise<void> =>
 
 export const deleteMeta = (id: number): Promise<void> =>
   invoke('delete_meta', { id });
-
-export const getMetaForTrack = (trackId: number): Promise<TrackMeta[]> =>
-  invoke('get_meta_for_track', { trackId });
 
 // Track sources
 export const addTrackSource = (trackId: number, url: string): Promise<number> =>
