@@ -1,4 +1,4 @@
-import { SearchCriteria, TextIn, TagsIn, NumericBetween, NullCheck } from '../../db/tauriDb';
+import { SearchCriteria, TextIn, TagsIn, NumericBetween, NullCheck, TagsAll } from '../../db/tauriDb';
 // // ── mock @tauri-apps/api/core BEFORE any import that depends on it ────────────
 import {
   getTracks,
@@ -9,13 +9,14 @@ import { log } from '../../logger';
 import { useState, useEffect, useRef } from 'react';
 
 
-import { expectedRegularRetrievalRes, seedFilterDataset, tagName } from './helpers/seed';
+import { expectedRegularRetrievalRes as expectedResults, MIN_CURSOR, seedFilterDataset, SelectorForExpected, tagName } from './helpers/seed';
 import equal from 'fast-deep-equal';
 
-const SEED_N = 500;
-const PAGE_SIZE = 10;
-const SEED_TAG_COUNT = 20;
-const SEED_SHIFTS = 3;
+const SEED_N = 5000;
+const PAGE_SIZE = 100;
+const SEED_TAG_COUNT = 200
+const TRACKS_WITH_SAME_TAGS = SEED_N / SEED_TAG_COUNT // 25 x 5 = 125 tags per track on average, with a specific pattern of distribution
+const SEED_SHIFTS = 5;
 
 log('Starting tauriDb tests...');
 
@@ -30,7 +31,7 @@ const diffAt = (a: any, b: any) => {
   const strA = JSON.stringify(a);
   const strB = JSON.stringify(b);
   const i = [...strA].findIndex((ch, idx) => ch !== strB[idx]);
-  return `Diff at index ${i}: ...${strA}... vs ...${strB}...`;
+  return `Diff at index ${i}: ...${a.length}... vs ...${b.length}...`;
 };
 
 export default function TestPage() {
@@ -41,30 +42,16 @@ export default function TestPage() {
    * Page through ALL results for `criteria`, verifying each page against the
    * expected values computed by `expectedRegularRetrievalRes`.
    *
-   * 
-   * #	Name	What it tests
-1	regular	All 500 tracks, no filter
-2	tags_in:[1]	Tracks with tag_1 (batches 0, 18, 19 → sparse IDs)
-3	tags_in:[1,2,3]	Tracks with any of tag_1/2/3
-4	artist_text_in	TextIn on artist (5 specific values)
-5	bitrate_between_155_165	NumericBetween matching all 500 tracks
-6	bitrate_between_200_300_empty	NumericBetween matching zero tracks (empty-page case)
-7	tempo_not_null	NullCheck IS NOT NULL matching all 500 tracks
-8	tags_in_page2	Spot-check: starts at cursor=11 (non-1) within a sparse set
-
-
-   * Cursor advances to lastReturnedId+1 so sparse filtered result sets are
-   * handled correctly (vs the old page+PAGE_SIZE approach which broke on gaps).
-   * Stops when a page has fewer than PAGE_SIZE rows (last page).
    */
   const runPaginatedTest = (
     testName: string,
     criteria: SearchCriteria[] | undefined,
-    compareCriteria?: (row: TrackRow, tags: string[], sources: string[]) => boolean,
+    selectorForExpected?: SelectorForExpected,
   ): Promise<void> => {
-    const go = (cursor: number): Promise<void> => {
-      const expected = expectedRegularRetrievalRes(
-        cursor, PAGE_SIZE, SEED_N, SEED_TAG_COUNT, SEED_SHIFTS, compareCriteria,
+    setLogs(prev => [...prev, `Start ${testName} test.`]);
+    const runTestForPageAt = (cursor: number): Promise<void> => {
+      const expected = expectedResults(
+        cursor, PAGE_SIZE, SEED_N, SEED_TAG_COUNT, SEED_SHIFTS, selectorForExpected,
       );
       return getTracks(cursor, criteria ?? null, PAGE_SIZE).then(res => {
         if (!equal(res, expected)) {
@@ -72,22 +59,73 @@ export default function TestPage() {
           log(error);
           throw new Error(error);
         }
-        setLogs(prev => [...prev, `[${testName}] cursor=${cursor} ✓ (${res.length} rows)`]);
+        setLogs(prev => prev.slice(0, -1).concat(`[${testName}] cursor=${cursor} ✓ (${res.length} rows)`));
         if (res.length < PAGE_SIZE) {
-          setLogs(prev => [...prev, `[${testName}] PASSED`]);
+          setLogs(prev => prev.slice(0, -1).concat(`[${testName}] PASSED`));
           return;
         }
-        return go(res[res.length - 1].id + 1);
+        return runTestForPageAt(res[res.length - 1].id + 1);
       });
     };
-    return go(1);
+    return runTestForPageAt(1);
   };
 
+  /*  
+    Constructs different tag combinations to verify that the tag filtering logic correctly identifies tracks with various tag configurations. 
+    Also tast paginated output for each combination.
+  */
+  const testTagCombinations = (
+    startTag: number, // for 5 tags it is the first tag
+    size: number, // min number of tags to be assigned to tracks
+    ) : Promise<void> => {
+    log(`Testing tag combination with startTag=${startTag}, size=${size}`);
+    if (size <= 0) {
+      return testTagCombinations(startTag + 1, SEED_SHIFTS);
+    }
+    if (startTag > SEED_TAG_COUNT) {
+      return Promise.resolve();
+    }
+
+    const lastTag = (startTag + size - MIN_CURSOR - 1) % SEED_TAG_COUNT + MIN_CURSOR;
+    const firstTrackId = ((
+      ((startTag - MIN_CURSOR) * TRACKS_WITH_SAME_TAGS
+      -
+      (SEED_SHIFTS - size) * TRACKS_WITH_SAME_TAGS)
+    ) 
+    + SEED_N) % SEED_N + MIN_CURSOR;
+    const lastTrackId = (firstTrackId + (SEED_SHIFTS - size + 1) * TRACKS_WITH_SAME_TAGS - MIN_CURSOR - 1) % SEED_N + MIN_CURSOR;
+    log(`Testing tags [${Array.from({ length: size }, (_, i) => tagName((startTag + i - MIN_CURSOR) % SEED_TAG_COUNT + MIN_CURSOR)).join(', ')}], expected track IDs between ${firstTrackId} and ${lastTrackId}`);
+    
+    
+    const tagsToCheck: number[] = [startTag];
+    for (let i = 1; i < size; i++) {
+      tagsToCheck.push(((startTag + i - MIN_CURSOR) % SEED_TAG_COUNT) + MIN_CURSOR);
+    }
+
+    const overFlownTracks = lastTrackId < firstTrackId;
+    let checkTracks = overFlownTracks ? (tId: number) => {
+      return tId >= firstTrackId && tId <= SEED_N || tId <= lastTrackId && tId >= MIN_CURSOR;
+    } : (tId: number) => tId >= firstTrackId && tId <= lastTrackId;
+ 
+    return runPaginatedTest(`tags [${tagsToCheck.join(', ')}]`,
+      [{
+        column_name: 'tags',
+        criteria: [{ mode: 'tags_all', tag_ids: tagsToCheck } as TagsAll],
+    }], (row: TrackRow, tags: string[], sources: string[]) => {
+        const tagChecks = tagsToCheck.map(t => tags.includes(tagName(t)));
+        return tagChecks.every(Boolean) && checkTracks(row.id)
+      })
+    .then(() => {
+      const newSize = size - 1;
+      return testTagCombinations(startTag, newSize);
+    })
+  };
   const effectsCalled = useRef(false);
-  const seedingLog = (msg: string) => {
-    setLogs(prev => [...prev, msg]);
+  const seedingLog = (msg: string, add: boolean) => {
+    setLogs(prev => add ? [...prev, msg] : prev.slice(0, -1).concat(msg));
   };
 
+  const criteria = useRef<SearchCriteria[]>([]);
   useEffect(() => {
     if (effectsCalled.current) return;
     effectsCalled.current = true;
@@ -95,7 +133,6 @@ export default function TestPage() {
     seedFilterDataset(SEED_N, SEED_TAG_COUNT, SEED_SHIFTS, seedingLog)
       // ── Test 1: regular pagination – no filter, all SEED_N tracks ────────
       .then(() => {
-        log('Dataset seeded.');
         return runPaginatedTest('regular', undefined);
       })
       // ── Test 2: TagsIn – tracks carrying tag_id=1 ────────────────────────
@@ -103,26 +140,26 @@ export default function TestPage() {
       // Batch 18 (IDs 451-475): shift-2 tag = 1
       // Batch 19 (IDs 476-500): shift-1 tag = 1
       .then(() => {
-        const criteria: SearchCriteria[] = [{
-          columnName: 'tags',
+        criteria.current = [{
+          column_name: 'tags',
           criteria: [{ mode: 'tags_in', tag_ids: [1] } as TagsIn],
         }];
         return runPaginatedTest(
           'tags_in:[1]',
-          criteria,
+          criteria.current,
           (_row, tags) => tags.includes(tagName(1)),
         );
       })
       // ── Test 3: TagsIn – tracks carrying any of tag_ids [1,2,3] ──────────
       // Batches 0-2 (IDs 1-75) and batches 18-19 (IDs 451-500).
       .then(() => {
-        const criteria: SearchCriteria[] = [{
-          columnName: 'tags',
+        criteria.current = [{
+          column_name: 'tags',
           criteria: [{ mode: 'tags_in', tag_ids: [1, 2, 3] } as TagsIn],
         }];
         return runPaginatedTest(
           'tags_in:[1,2,3]',
-          criteria,
+          criteria.current,
           (_row, tags) => tags.some(t => [tagName(1), tagName(2), tagName(3)].includes(t)),
         );
       })
@@ -130,52 +167,52 @@ export default function TestPage() {
       // artistIdx(i, 500) = i+1, so A_2 → track 1, A_3 → track 2, etc.
       .then(() => {
         const artists = ['A_2', 'A_3', 'A_4', 'A_5', 'A_6'];
-        const criteria: SearchCriteria[] = [{
-          columnName: 'artist',
+        criteria.current = [{
+          column_name: 'artist',
           criteria: [{ mode: 'text_in', values: artists } as TextIn],
         }];
         return runPaginatedTest(
           'artist_text_in',
-          criteria,
+          criteria.current,
           (row) => artists.includes(row.artist),
         );
       })
       // ── Test 5: NumericBetween on bitrate_kbps (all seeded = 160) ────────
       // Range [155, 165] should match all 500 tracks.
       .then(() => {
-        const criteria: SearchCriteria[] = [{
-          columnName: 'bitrate_kbps',
+        criteria.current = [{
+          column_name: 'bitrate_kbps',
           criteria: [{ mode: 'numeric_between', min: 155, max: 165 } as NumericBetween],
         }];
         return runPaginatedTest(
           'bitrate_between_155_165',
-          criteria,
+          criteria.current,
           (row) => row.bitrate_kbps !== null && row.bitrate_kbps >= 155 && row.bitrate_kbps <= 165,
         );
       })
       // ── Test 6: NumericBetween on bitrate_kbps (empty range) ─────────────
       // Range [200, 300] matches no seeded track – verifies empty-page case.
       .then(() => {
-        const criteria: SearchCriteria[] = [{
-          columnName: 'bitrate_kbps',
+        criteria.current = [{
+          column_name: 'bitrate_kbps',
           criteria: [{ mode: 'numeric_between', min: 200, max: 300 } as NumericBetween],
         }];
         return runPaginatedTest(
           'bitrate_between_200_300_empty',
-          criteria,
+          criteria.current,
           (row) => row.bitrate_kbps !== null && row.bitrate_kbps >= 200 && row.bitrate_kbps <= 300,
         );
       })
       // ── Test 7: NullCheck IS NOT NULL on tempo_bpm ───────────────────────
       // All seeded tracks have tempo_bpm=120, so this should match all 500.
       .then(() => {
-        const criteria: SearchCriteria[] = [{
-          columnName: 'tempo_bpm',
-          criteria: [{ mode: 'null_check', isNull: false } as NullCheck],
+        criteria.current = [{
+          column_name: 'tempo_bpm',
+          criteria: [{ mode: 'null_check', is_null: false } as NullCheck],
         }];
         return runPaginatedTest(
           'tempo_not_null',
-          criteria,
+          criteria.current,
           (row) => row.tempo_bpm !== null,
         );
       })
@@ -184,16 +221,16 @@ export default function TestPage() {
       // a sparse filtered set (tag_ids=[1], block 0 has IDs 1-25, so page 2
       // starts at cursor=11 and should return IDs 11-20).
       .then(() => {
-        const criteria: SearchCriteria[] = [{
-          columnName: 'tags',
+        criteria.current = [{
+          column_name: 'tags',
           criteria: [{ mode: 'tags_in', tag_ids: [1] } as TagsIn],
         }];
         const cursor2 = 1 + PAGE_SIZE; // 11
-        const expected = expectedRegularRetrievalRes(
+        const expected = expectedResults(
           cursor2, PAGE_SIZE, SEED_N, SEED_TAG_COUNT, SEED_SHIFTS,
           (_row, tags) => tags.includes(tagName(1)),
         );
-        return getTracks(cursor2, criteria, PAGE_SIZE).then(res => {
+        return getTracks(cursor2, criteria.current, PAGE_SIZE).then(res => {
           if (!equal(res, expected)) {
             const error = `[tags_in_page2] cursor=${cursor2} FAILED! ${diffAt(res, expected)}`;
             log(error);
@@ -202,6 +239,8 @@ export default function TestPage() {
           setLogs(prev => [...prev, `[tags_in_page2] cursor=${cursor2} ✓ PASSED`]);
         });
       })
+      .then(() => testTagCombinations(MIN_CURSOR, SEED_SHIFTS))
+
       // The expectedRegularRetrievalRes spot-check above uses tagName(1) = 'tag_1'
       // as the filter string, matching what the seed function stores in `tags`.
       .then(() => {

@@ -2,8 +2,8 @@ use async_trait::async_trait;
 use std::sync::Arc;
 
 use crate::db::schema::{
-    ListenInfo, NewError, NewTrack, NewTrackConflict, SearchCriteria, Tag, TrackMeta, TrackRow,
-    TrackSource, TrackUpdate,
+    ListenInfo, NewError, NewTrack, NewTrackConflict, SearchCriteria, Tag, TagAssignment,
+    TrackMeta, TrackRow, TrackSource, TrackUpdate,
 };
 
 /// Shared-ownership, type-erased repository handle used as Tauri managed state.
@@ -22,6 +22,9 @@ pub trait AppRepository: Send + Sync {
 
     /// Insert a new track and return its generated `id`.
     async fn add_track(&self, track: NewTrack) -> Result<i64, sqlx::Error>;
+
+    /// Insert multiple tracks in a single transaction; returns all generated IDs in order.
+    async fn add_tracks(&self, tracks: Vec<NewTrack>) -> Result<Vec<i64>, sqlx::Error>;
 
     /// Apply a partial update; only `Some` fields are written to the row.
     async fn update_track(&self, id: i64, update: TrackUpdate) -> Result<(), sqlx::Error>;
@@ -67,6 +70,9 @@ pub trait AppRepository: Send + Sync {
     async fn get_tags(&self, pattern: String) -> Result<Vec<Tag>, sqlx::Error>;
 
     async fn assign_tag(&self, track_id: i64, tag_id: i64) -> Result<(), sqlx::Error>;
+
+    /// Assign multiple tags to multiple tracks in a single transaction.
+    async fn assign_tags(&self, assignments: Vec<TagAssignment>) -> Result<(), sqlx::Error>;
 
     async fn remove_tag(&self, track_id: i64, tag_id: i64) -> Result<(), sqlx::Error>;
 

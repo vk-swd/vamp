@@ -35,7 +35,7 @@ use tauri::Manager;
 
 use crate::db::{
     repository::ArcRepo,
-    schema::{ListenInfo, NewTrack, SearchCriteria, Tag, TrackMeta, TrackRow, TrackUpdate},
+    schema::{ListenInfo, NewTrack, SearchCriteria, Tag, TagAssignment, TrackMeta, TrackRow, TrackUpdate},
 };
 
 /// Convenience alias: the Tauri State wrapper around the repository handle.
@@ -73,6 +73,11 @@ pub async fn setup_database(handle: tauri::AppHandle, db_full_path: std::path::P
 #[tauri::command]
 pub async fn add_track(repo: Repo<'_>, track: NewTrack) -> Result<i64, String> {
     repo.add_track(track).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn add_tracks(repo: Repo<'_>, tracks: Vec<NewTrack>) -> Result<Vec<i64>, String> {
+    repo.add_tracks(tracks).await.map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -168,6 +173,16 @@ pub async fn assign_tag(
     tag_id: i64,
 ) -> Result<(), String> {
     repo.assign_tag(track_id, tag_id)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn assign_tags(
+    repo: Repo<'_>,
+    assignments: Vec<TagAssignment>,
+) -> Result<(), String> {
+    repo.assign_tags(assignments)
         .await
         .map_err(|e| e.to_string())
 }

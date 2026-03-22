@@ -76,7 +76,13 @@ export type TextIn = {
 
 export type TagsIn = {
   mode: 'tags_in';
-  /** Tag IDs to match (snake_case matches Rust's serde field). */
+  /** Track must have AT LEAST ONE of these tag IDs. */
+  tag_ids: number[];
+};
+
+export type TagsAll = {
+  mode: 'tags_all';
+  /** Track must have ALL of these tag IDs. */
   tag_ids: number[];
 };
 
@@ -84,7 +90,7 @@ export type TagsIn = {
 
 export type NullCheck = {
   mode: 'null_check';
-  isNull: boolean;  // true = IS NULL, false = IS NOT NULL
+  is_null: boolean;  // true = IS NULL, false = IS NOT NULL
 };
 
 // --- Union ---
@@ -94,11 +100,18 @@ export type SearchParam = NumericComparison
   | TextLike
   | TextIn
   | TagsIn
+  | TagsAll
   | NullCheck;
 
 export type SearchCriteria = {
-  columnName: string;
+  column_name: string;
   criteria: SearchParam[];
+};
+
+/** Input for `assign_tags`: one track paired with its tag IDs. */
+export type TagAssignment = {
+  track_id: number;
+  tag_ids: number[];
 };
 
 // ─── Tauri command wrappers ──────────────────────────────────────────────────
@@ -107,6 +120,10 @@ export type SearchCriteria = {
 // Tracks
 export const addTrack = (track: NewTrack): Promise<number> =>
   invoke('add_track', { track });
+
+
+export const addTracks = (tracks: NewTrack[]): Promise<number[]> =>
+  invoke('add_tracks', { tracks });
 
 export const updateTrack = (id: number, update: TrackUpdate): Promise<void> =>
   invoke('update_track', { id, update });
@@ -149,6 +166,9 @@ export const getTagsByPattern = (pattern: string): Promise<Tag[]> =>
 
 export const assignTag = (trackId: number, tagId: number): Promise<void> =>
   invoke('assign_tag', { trackId, tagId });
+
+export const assignTags = (assignments: TagAssignment[]): Promise<void> =>
+  invoke('assign_tags', { assignments });
 
 export const removeTagFromTrack = (trackId: number, tagId: number): Promise<void> =>
   invoke('remove_tag', { trackId, tagId });

@@ -6,8 +6,8 @@ use sqlx::SqlitePool;
 
 use crate::db::repository::AppRepository;
 use crate::db::schema::{
-    ListenInfo, NewError, NewTrack, NewTrackConflict, SearchCriteria, SearchParam, Tag, TrackMeta,
-    TrackRow, TrackSource, TrackUpdate,
+    ListenInfo, NewError, NewTrack, NewTrackConflict, SearchCriteria, SearchParam, Tag,
+    TagAssignment, TrackMeta, TrackRow, TrackSource, TrackUpdate,
 };
 
 /// Private helper: a type-erased bind value for dynamic query building.
@@ -84,6 +84,32 @@ impl SqliteRepository {
     }
 }
 
+fn add_track_bind(t: &NewTrack) -> sqlx::query::Query<'_, sqlx::Sqlite, sqlx::sqlite::SqliteArguments<'_>> {
+    return sqlx::query(
+                    "INSERT INTO track_info
+                         (artist, track_name, length_seconds, bitrate_kbps, tempo_bpm, addition_time)
+                     VALUES (?, ?, ?, ?, ?, ?)",
+                )
+        .bind(&t.artist)
+        .bind(&t.track_name)
+        .bind(t.length_seconds)
+        .bind(t.bitrate_kbps)
+        .bind(t.tempo_bpm)
+        .bind(&t.addition_time)
+}
+
+fn add_track_source_bind(track_id: i64, url: &String) -> sqlx::query::Query<'_, sqlx::Sqlite, sqlx::sqlite::SqliteArguments<'_>> {
+    return sqlx::query("INSERT INTO track_sources (track_id, url) VALUES (?, ?)")
+        .bind(track_id)
+        .bind(url)
+}
+
+fn assign_tag_bind(track_id: i64, tag_id: i64) -> sqlx::query::Query<'static, sqlx::Sqlite, sqlx::sqlite::SqliteArguments<'static>> {
+    return sqlx::query("INSERT OR IGNORE INTO tag_assignments (track_id, tag_id) VALUES (?, ?)")
+        .bind(track_id)
+        .bind(tag_id)
+}
+
 #[async_trait]
 impl AppRepository for SqliteRepository {
     // ------------------------------------------------------------------
@@ -91,12 +117,6 @@ impl AppRepository for SqliteRepository {
     // ------------------------------------------------------------------
 
     async fn add_track(&self, t: NewTrack) -> Result<i64, sqlx::Error> {
-        if t.sources.is_empty() {
-            return Err(sqlx::Error::Protocol(
-                "add_track: at least one source URL is required".into(),
-            ));
-        }
-
         let mut tx = self
             .try_log("add_track: begin transaction", self.pool.begin().await)
             .await?;
@@ -104,17 +124,7 @@ impl AppRepository for SqliteRepository {
         let row = self
             .try_log(
                 "add_track: insert track_info",
-                sqlx::query(
-                    "INSERT INTO track_info
-                         (artist, track_name, length_seconds, bitrate_kbps, tempo_bpm, addition_time)
-                     VALUES (?, ?, ?, ?, ?, ?)",
-                )
-                .bind(t.artist)
-                .bind(t.track_name)
-                .bind(t.length_seconds)
-                .bind(t.bitrate_kbps)
-                .bind(t.tempo_bpm)
-                .bind(t.addition_time)
+                add_track_bind(&t)
                 .execute(&mut *tx)
                 .await,
             )
@@ -125,9 +135,7 @@ impl AppRepository for SqliteRepository {
         for url in t.sources {
             self.try_log(
                 "add_track: insert track_sources",
-                sqlx::query("INSERT INTO track_sources (track_id, url) VALUES (?, ?)")
-                    .bind(track_id)
-                    .bind(url)
+                add_track_source_bind(track_id, &url)
                     .execute(&mut *tx)
                     .await,
             )
@@ -136,6 +144,64 @@ impl AppRepository for SqliteRepository {
 
         self.try_log("add_track: commit", tx.commit().await).await?;
         Ok(track_id)
+    }
+
+    async fn add_tracks(&self, t: Vec<NewTrack>) -> Result<Vec<i64>, sqlx::Error> {
+        let mut tx = self
+            .try_log("add_tracks: begin transaction", self.pool.begin().await)
+            .await?;
+
+        let mut ids: Vec<i64> = Vec::with_capacity(t.len());
+        for track in &t {
+            let row = self
+                .try_log(
+                    "add_tracks: insert track_info",
+                    add_track_bind(track).execute(&mut *tx).await,
+                )
+                .await?;
+            ids.push(row.last_insert_rowid());
+        }
+
+        for (track, &track_id) in t.iter().zip(ids.iter()) {
+            for url in &track.sources {
+                self.try_log(
+                    "add_tracks: insert track_sources",
+                    add_track_source_bind(track_id, url).execute(&mut *tx).await,
+                )
+                .await?;
+            }
+        }
+
+        self.try_log("add_tracks: commit", tx.commit().await).await?;
+        Ok(ids)
+    }
+
+    async fn assign_tag(&self, track_id: i64, tag_id: i64) -> Result<(), sqlx::Error> {
+        self.try_log(
+            "assign_tag",
+            assign_tag_bind(track_id, tag_id)
+                .execute(&self.pool)
+                .await,
+        )
+        .await
+        .map(|_| ())
+    }
+
+    async fn assign_tags(&self, assignments: Vec<TagAssignment>) -> Result<(), sqlx::Error> {
+        let mut tx = self
+            .try_log("assign_tags: begin transaction", self.pool.begin().await)
+            .await?;
+        for a in &assignments {
+            for &tag_id in &a.tag_ids {
+                self.try_log(
+                    "assign_tags",
+                    assign_tag_bind(a.track_id, tag_id).execute(&mut *tx).await,
+                )
+                .await?;
+            }
+        }
+        self.try_log("assign_tags: commit", tx.commit().await).await?;
+        Ok(())
     }
 
     async fn update_track(&self, id: i64, u: TrackUpdate) -> Result<(), sqlx::Error> {
@@ -185,7 +251,8 @@ impl AppRepository for SqliteRepository {
         let mut conditions: Vec<String> = vec!["ti.id >= ?".to_string()];
         let mut bind_vals: Vec<BindVal> = vec![BindVal::Int(after)];
         // Tag IDs are collected separately; they define whether a JOIN is done.
-        let mut tag_filter: Option<Vec<i64>> = None;
+        enum TagFilter { Any(Vec<i64>), All(Vec<i64>) }
+        let mut tag_filter: Option<TagFilter> = None;
 
         if let Some(criteria_list) = criteria {
             for sc in &criteria_list {
@@ -197,12 +264,19 @@ impl AppRepository for SqliteRepository {
                                 if tag_ids.is_empty() {
                                     conditions.push("1 = 0".to_string());
                                 } else {
-                                    tag_filter = Some(tag_ids.clone());
+                                    tag_filter = Some(TagFilter::Any(tag_ids.clone()));
+                                }
+                            }
+                            SearchParam::TagsAll { tag_ids } => {
+                                if tag_ids.is_empty() {
+                                    conditions.push("1 = 0".to_string());
+                                } else {
+                                    tag_filter = Some(TagFilter::All(tag_ids.clone()));
                                 }
                             }
                             _ => {
                                 return Err(sqlx::Error::Protocol(
-                                    "get_tracks: 'tags' column only supports TagsIn criteria".into(),
+                                    "get_tracks: 'tags' column only supports TagsIn/TagsAll criteria".into(),
                                 ));
                             }
                         }
@@ -246,9 +320,9 @@ impl AppRepository for SqliteRepository {
                                     conditions.push(format!("ti.{} IS NOT NULL", col));
                                 }
                             }
-                            SearchParam::TagsIn { .. } => {
+                            SearchParam::TagsIn { .. } | SearchParam::TagsAll { .. } => {
                                 return Err(sqlx::Error::Protocol(
-                                    "get_tracks: TagsIn is only valid for column 'tags'".into(),
+                                    "get_tracks: TagsIn/TagsAll are only valid for column 'tags'".into(),
                                 ));
                             }
                         }
@@ -265,7 +339,7 @@ impl AppRepository for SqliteRepository {
                     conditions.join(" AND ")
                 )
             }
-            Some(tag_ids) => {
+            Some(TagFilter::Any(tag_ids)) => {
                 let placeholders = vec!["?"; tag_ids.len()].join(", ");
                 bind_vals.push(BindVal::Int(limit as i64));
                 format!(
@@ -278,14 +352,40 @@ impl AppRepository for SqliteRepository {
                     cond = conditions.join(" AND ")
                 )
             }
+            Some(TagFilter::All(tag_ids)) => {
+                let placeholders = vec!["?"; tag_ids.len()].join(", ");
+                bind_vals.push(BindVal::Int(limit as i64));
+                format!(
+                    "SELECT ti.* \
+                     FROM (SELECT track_id FROM tag_assignments \
+                           WHERE tag_id IN ({placeholders}) AND track_id >= ? \
+                           GROUP BY track_id HAVING COUNT(DISTINCT tag_id) = ?) ta \
+                     INNER JOIN track_info ti ON ti.id = ta.track_id \
+                     WHERE {cond} \
+                     ORDER BY ti.id ASC LIMIT ?",
+                    placeholders = placeholders,
+                    cond = conditions.join(" AND ")
+                )
+            }
         };
 
         let mut q = sqlx::query_as::<_, TrackRow>(&sql);
-        if let Some(tag_ids) = tag_filter {
-            for id in tag_ids {
-                q = q.bind(id);
+        match tag_filter {
+            Some(TagFilter::Any(tag_ids)) => {
+                for id in tag_ids {
+                    q = q.bind(id);
+                }
+                q = q.bind(after); // cursor pushed into the subquery
             }
-            q = q.bind(after); // cursor pushed into the subquery
+            Some(TagFilter::All(tag_ids)) => {
+                let n = tag_ids.len() as i64;
+                for id in tag_ids {
+                    q = q.bind(id);
+                }
+                q = q.bind(after); // cursor pushed into the subquery
+                q = q.bind(n);     // HAVING COUNT(DISTINCT tag_id) = ?
+            }
+            None => {}
         }
         for bv in bind_vals {
             q = match bv {
@@ -417,20 +517,6 @@ impl AppRepository for SqliteRepository {
                 .await,
         )
         .await
-    }
-    async fn assign_tag(&self, track_id: i64, tag_id: i64) -> Result<(), sqlx::Error> {
-        self.try_log(
-            "assign_tag",
-            sqlx::query(
-                "INSERT OR IGNORE INTO tag_assignments (track_id, tag_id) VALUES (?, ?)",
-            )
-            .bind(track_id)
-            .bind(tag_id)
-            .execute(&self.pool)
-            .await,
-        )
-        .await
-        .map(|_| ())
     }
 
     async fn remove_tag(&self, track_id: i64, tag_id: i64) -> Result<(), sqlx::Error> {

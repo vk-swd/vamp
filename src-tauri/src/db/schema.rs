@@ -135,12 +135,21 @@ pub enum SearchParam {
     /// Filter tracks by tag IDs. Use with `column_name = "tags"`.
     /// Returns tracks that have at least one of the provided tag IDs assigned.
     TagsIn            { tag_ids: Vec<i64> },
+    /// Like TagsIn, but only returns tracks that have ALL of the provided tag IDs assigned.
+    TagsAll           { tag_ids: Vec<i64> },
 }
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct SearchCriteria {
     pub column_name: String,
     pub criteria: Vec<SearchParam>,
+}
+
+/// Input for `assign_tags`: one track paired with the tag IDs to assign to it.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct TagAssignment {
+    pub track_id: i64,
+    pub tag_ids: Vec<i64>,
 }
 
 /// Input for inserting a new track-add conflict record.
