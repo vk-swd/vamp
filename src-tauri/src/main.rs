@@ -24,11 +24,18 @@ fn main() {
     tauri::Builder::default()
         .setup(|app| {
             let test_dir_env = std::env::var("TEST_DIR");
+            let app_dir_env = std::env::var("VAMP_DIR");
             let config = if let Ok(test_dir) = test_dir_env {
                 AppConfig { 
                     db_path: std::path::PathBuf::from(test_dir), 
                     db_filename: chrono::Local::now().format("%Y%m%d_%H%M%S").to_string() + "_test.db",
                     window_idx: 1 
+                }
+            } else if let Ok(app_dir) = app_dir_env {
+                AppConfig { 
+                    db_path: std::path::PathBuf::from(app_dir),
+                    db_filename: "vampa.db".to_string(),
+                    window_idx: 0 
                 }
             } else {
                 AppConfig { 
