@@ -1,0 +1,140 @@
+/* ── Backdrop ────────────────────────────────────────────────────────────── */
+.ti-backdrop {
+  position:        fixed;
+  inset:           0;
+  background:      rgba(0, 0, 0, 0.65);
+  display:         flex;
+  align-items:     center;
+  justify-content: center;
+  z-index:         1000;
+  backdrop-filter: blur(2px);
+  animation:       ui-fade-in 150ms ease;
+}
+
+/* ── Dialog card ─────────────────────────────────────────────────────────── */
+.ti-dialog {
+  background:     var(--ui-surface);
+  border:         1px solid var(--ui-border);
+  border-radius:  var(--ui-r-xl);
+  box-shadow:     var(--ui-shadow-lg);
+  display:        flex;
+  flex-direction: column;
+  max-height:     90vh;
+  overflow:       hidden;
+  width:          min(580px, 96vw);
+}
+
+/* ── Header ──────────────────────────────────────────────────────────────── */
+.ti-header {
+  align-items:   center;
+  border-bottom: 1px solid var(--ui-border-subtle);
+  display:       flex;
+  padding:       var(--ui-sp-4) var(--ui-sp-6);
+}
+
+.ti-title {
+  color:       var(--ui-text);
+  font-size:   var(--ui-fs-lg);
+  font-weight: var(--ui-fw-semibold);
+}
+
+/* ── Tabs ────────────────────────────────────────────────────────────────── */
+.ti-tabs {
+  border-bottom: 1px solid var(--ui-border-subtle);
+  display:       flex;
+  padding:       0 var(--ui-sp-6);
+}
+
+.ti-tab {
+  background:    transparent;
+  border:        none;
+  border-bottom: 2px solid transparent;
+  color:         var(--ui-text-muted);
+  cursor:        pointer;
+  font-family:   inherit;
+  font-size:     var(--ui-fs-sm);
+  font-weight:   var(--ui-fw-medium);
+  margin-bottom: -1px;
+  padding:       var(--ui-sp-3) var(--ui-sp-4);
+  transition:    color var(--ui-t-fast), border-color var(--ui-t-fast);
+}
+
+.ti-tab:hover {
+  color: var(--ui-text);
+}
+
+.ti-tab--active {
+  border-bottom-color: var(--ui-accent);
+  color:               var(--ui-accent);
+}
+
+/* ── Content area ────────────────────────────────────────────────────────── */
+.ti-content {
+  flex:       1;
+  overflow-y: auto;
+  padding:    var(--ui-sp-5) var(--ui-sp-6);
+}
+
+/* ── Fields stack ────────────────────────────────────────────────────────── */
+.ti-fields {
+  display:        flex;
+  flex-direction: column;
+  gap:            var(--ui-sp-4);
+}
+
+/* ── Row of 3 inline fields ──────────────────────────────────────────────── */
+.ti-row {
+  display:               grid;
+  gap:                   var(--ui-sp-4);
+  grid-template-columns: repeat(3, 1fr);
+}
+
+/* ── YouTube section ─────────────────────────────────────────────────────── */
+.ti-yt-section {
+  display:        flex;
+  flex-direction: column;
+  gap:            var(--ui-sp-3);
+}
+
+.ti-yt-row {
+  align-items: flex-end;
+  display:     flex;
+  gap:         var(--ui-sp-3);
+}
+
+.ti-yt-row > .ui-field {
+  flex: 1;
+}
+
+.ti-yt-preview {
+  background:    var(--ui-surface-2);
+  border:        1px solid var(--ui-border);
+  border-radius: var(--ui-r);
+  overflow:      hidden;
+}
+
+/* Force the YouTube iframe to fill the preview box */
+.ti-yt-preview iframe {
+  display: block;
+  height:  240px !important;
+  width:   100% !important;
+}
+
+.ti-yt-placeholder {
+  background:    var(--ui-surface-2);
+  border:        1px dashed var(--ui-border);
+  border-radius: var(--ui-r);
+  color:         var(--ui-text-dim);
+  font-size:     var(--ui-fs-sm);
+  padding:       var(--ui-sp-5);
+  text-align:    center;
+}
+
+/* ── Action buttons ──────────────────────────────────────────────────────── */
+.ti-actions {
+  border-top:      1px solid var(--ui-border-subtle);
+  display:         flex;
+  gap:             var(--ui-sp-3);
+  justify-content: flex-end;
+  padding:         var(--ui-sp-4) var(--ui-sp-6);
+}
