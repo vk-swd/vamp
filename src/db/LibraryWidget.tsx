@@ -36,7 +36,6 @@ export function LibraryWidget() {
         <SearchWidget />
         <TrackList tracks={[]}></TrackList>
         <Button onClick={() => setDialogOpen(true)}>Add Track</Button>
-        <Button onClick={() => invoke('add_tag', { name: 'new tag' })}></Button>
       </div>
       {dialogOpen && (
         <TrackInfoDialog

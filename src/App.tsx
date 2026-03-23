@@ -1,4 +1,4 @@
-import { useState, useRef, type FormEvent } from "react";
+import { useState, useRef, useEffect, type FormEvent } from "react";
 import { YoutubePlayerOwner } from "./YoutubePlayer";
 import { PlayerControls } from "./PlayerControls";
 import { usePlayerStore } from "./store";
@@ -58,11 +58,20 @@ interface NowPlayingTabProps {
 
 function NowPlayingTab({ track }: NowPlayingTabProps) {
   const [mountKey] = useState(0);
+  const setYtPlayer = usePlayerStore((s) => s.setYtPlayer);
+
+  // Clear the global player reference when this tab unmounts.
+  useEffect(() => () => { setYtPlayer(null); }, []);
+
   return (
     <div className="now-playing-tab">
       <div className="player-container">
         {track.sourceType === "youtube" && (
-          <YoutubePlayerOwner key={mountKey} videoId={track.id} />
+          <YoutubePlayerOwner
+            key={mountKey}
+            videoId={track.id}
+            onPlayerReady={setYtPlayer}
+          />
         )}
         {/* <button onClick={updated}>hello</button> */}
         {track.sourceType === "soundcloud" && <SoundCloudPlayer />}

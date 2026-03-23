@@ -135,8 +135,7 @@ export function TrackInfoDialog({
         <div className="ti-content">
 
           {/* ── General tab ── */}
-          {activeTab === 'general' && (
-            <div className="ti-fields">
+          <div className="ti-fields" style={{ display: activeTab === 'general' ? 'flex' : 'none' }}>
               <LineEdit
                 label="Artist"
                 placeholder="Artist name"
@@ -188,12 +187,10 @@ export function TrackInfoDialog({
                   noOptionsMessage={() => 'No tags available'}
                 />
               </div>
-            </div>
-          )}
+          </div>
 
           {/* ── Sources tab ── */}
-          {activeTab === 'sources' && (
-            <div className="ti-fields">
+          <div className="ti-fields" style={{ display: activeTab === 'sources' ? 'flex' : 'none' }}>
               <Selector
                 label="Source Type"
                 value={sourceType}
@@ -246,8 +243,7 @@ export function TrackInfoDialog({
                   onChange={setLocalPath}
                 />
               )}
-            </div>
-          )}
+          </div>
         </div>
 
         {/* ── Action buttons ── */}

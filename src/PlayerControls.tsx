@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { loadedPlayerStore } from "./store";
+import { usePlayerStore } from "./store";
 interface PlayerControlsProps {
   player: YT.Player | null;
 }
@@ -16,7 +16,7 @@ export function PlayerControls({ player }: PlayerControlsProps) {
   const [duration, setDuration] = useState(0);
   const [volume, setVolume] = useState(100);
   const isDraggingRef = useRef(false);
-  const ytPlayerState = loadedPlayerStore((state) => state);
+  const ytPlayerState = usePlayerStore((state) => state);
   // Sync initial volume and poll time/duration while player is available
   useEffect(() => {
     if (!ytPlayerState.ytPlayer) {
