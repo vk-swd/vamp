@@ -49,6 +49,7 @@ export function TrackItem({
   onSourceChange,
 }: TrackItemProps) {
   const setNowPlayingUrl = usePlayerStore((s) => s.setNowPlayingUrl);
+  const setNowPlayingDbId = usePlayerStore((s) => s.setNowPlayingDbId);
 
   return (
     <div
@@ -93,7 +94,7 @@ export function TrackItem({
         className="tracklist-item__play-btn"
         disabled={!activeSource}
         title={activeSource ? `Play: ${activeSource}` : 'No source available'}
-        onClick={() => { if (activeSource) setNowPlayingUrl(activeSource); }}
+        onClick={() => { if (activeSource) { setNowPlayingDbId(track.id); setNowPlayingUrl(activeSource); } }}
       >
         ▶
       </button>

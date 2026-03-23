@@ -38,6 +38,7 @@ export function TrackList({
   const [activeSources, setActiveSources] = useState<Record<number, string | null>>({});
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const setNowPlayingUrl = usePlayerStore((s) => s.setNowPlayingUrl);
+  const setNowPlayingDbId = usePlayerStore((s) => s.setNowPlayingDbId);
 
   // Close context menu on any outside click
   useEffect(() => {
@@ -124,7 +125,7 @@ export function TrackList({
             className="tracklist__context-menu-item"
             onClick={() => {
               const src = activeSources[contextTrack.id] ?? contextTrack.sources[0]?.url ?? null;
-              if (src) setNowPlayingUrl(src);
+              if (src) { setNowPlayingDbId(contextTrack.id); setNowPlayingUrl(src); }
               setContextMenu(null);
             }}
           >

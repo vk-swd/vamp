@@ -7,6 +7,9 @@ interface PlayerStore {
   /** Set this to a source URL to request playback from anywhere in the app. */
   nowPlayingUrl: string | null;
   setNowPlayingUrl: (url: string | null) => void;
+  /** Database track ID of the currently playing track, or null. */
+  nowPlayingDbId: number | null;
+  setNowPlayingDbId: (id: number | null) => void;
 }
 
 export const usePlayerStore = create<PlayerStore>((set) => ({
@@ -14,4 +17,6 @@ export const usePlayerStore = create<PlayerStore>((set) => ({
   setYtPlayer: (player) => set({ ytPlayer: player }),
   nowPlayingUrl: null,
   setNowPlayingUrl: (url) => set({ nowPlayingUrl: url }),
+  nowPlayingDbId: null,
+  setNowPlayingDbId: (id) => set({ nowPlayingDbId: id }),
 }));

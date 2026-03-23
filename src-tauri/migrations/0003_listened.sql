@@ -1,0 +1,1 @@
+ALTER TABLE track_info ADD COLUMN listened_seconds INTEGER NOT NULL DEFAULT 0;

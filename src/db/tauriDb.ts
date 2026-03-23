@@ -10,6 +10,7 @@ export type TrackRow = {
   bitrate_kbps: number | null;
   tempo_bpm: number | null;
   addition_time: string;
+  listened_seconds: number;
 };
 
 export type Tag = {
@@ -208,3 +209,7 @@ export const editTrackSource = (trackId: number, oldUrl: string, newUrl: string)
 
 export const getSourcesForTrack = (trackId: number): Promise<TrackSource[]> =>
   invoke('get_sources_for_track', { trackId });
+
+export const addListenedSeconds = (trackId: number, seconds: number): Promise<void> =>
+  invoke('add_listened_seconds', { trackId, seconds });
+

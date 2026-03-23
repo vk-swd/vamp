@@ -140,4 +140,11 @@ pub trait AppRepository: Send + Sync {
 
     /// Record a track-add conflict and return its generated `id`.
     async fn add_track_conflict(&self, conflict: NewTrackConflict) -> Result<i64, sqlx::Error>;
+
+    // ------------------------------------------------------------------
+    // Listened-time tracking
+    // ------------------------------------------------------------------
+
+    /// Add `seconds` to the `listened_seconds` counter for a track.
+    async fn add_listened_seconds(&self, track_id: i64, seconds: i64) -> Result<(), sqlx::Error>;
 }

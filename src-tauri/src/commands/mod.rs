@@ -149,6 +149,17 @@ pub async fn get_listens_for_track(
         .map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+pub async fn add_listened_seconds(
+    repo: Repo<'_>,
+    track_id: i64,
+    seconds: i64,
+) -> Result<(), String> {
+    repo.add_listened_seconds(track_id, seconds)
+        .await
+        .map_err(|e| e.to_string())
+}
+
 // ======================================================================
 // Tag commands
 // ======================================================================

@@ -3,6 +3,8 @@ import { YoutubePlayerOwner } from "./YoutubePlayer";
 import { PlayerControls } from "./PlayerControls";
 import { usePlayerStore } from "./store";
 import "./App.css";
+import { addListenedSeconds } from "./db/tauriDb";
+import { log } from "./logger";
 import { LibraryWidget } from "./db/LibraryWidget";
 
 // ── helpers ───────────────────────────────────────────────────────────────────
@@ -38,6 +40,7 @@ type SourceType = "youtube" | "soundcloud" | "localfile";
 interface Track {
   id: string;
   sourceType: SourceType;
+  dbTrackId?: number;
 }
 
 // ── placeholder sub-components ────────────────────────────────────────────────
@@ -70,6 +73,9 @@ function NowPlayingTab({ track }: NowPlayingTabProps) {
           <YoutubePlayerOwner
             key={mountKey}
             videoId={track.id}
+            onListenedSeconds={track.dbTrackId != null
+              ? (s) => addListenedSeconds(track.dbTrackId!, s).catch((e) => log(`addListenedSeconds: ${e}`))
+              : undefined}
             onPlayerReady={setYtPlayer}
           />
         )}
@@ -93,12 +99,14 @@ export default function App() {
   const ytPlayer = usePlayerStore((s) => s.ytPlayer);
   const nowPlayingUrl = usePlayerStore((s) => s.nowPlayingUrl);
   const setNowPlayingUrl = usePlayerStore((s) => s.setNowPlayingUrl);
+  const nowPlayingDbId = usePlayerStore((s) => s.nowPlayingDbId);
+  const setNowPlayingDbId = usePlayerStore((s) => s.setNowPlayingDbId);
 
   // ── load video ──
-  const loadVideo = (raw: string) => {
+  const loadVideo = (raw: string, dbTrackId?: number) => {
     const id = extractVideoId(raw.trim());
     if (id) {
-      setTrack({ id, sourceType: "youtube" });
+      setTrack({ id, sourceType: "youtube", dbTrackId });
       setError(null);
       setActiveTab("now-playing");
     } else {
@@ -110,8 +118,9 @@ export default function App() {
   // React to play requests coming from the library/tracklist.
   useEffect(() => {
     if (!nowPlayingUrl) return;
-    loadVideo(nowPlayingUrl);
+    loadVideo(nowPlayingUrl, nowPlayingDbId ?? undefined);
     setNowPlayingUrl(null);
+    setNowPlayingDbId(null);
   }, [nowPlayingUrl]);
 
   const handleSubmit = (e: FormEvent<HTMLFormElement>) => {

@@ -782,4 +782,42 @@ impl AppRepository for SqliteRepository {
         .await
         .map(|r| r.last_insert_rowid())
     }
+
+    async fn add_listened_seconds(&self, track_id: i64, seconds: i64) -> Result<(), sqlx::Error> {
+        let date = chrono::Local::now().format("%d-%m-%Y").to_string();
+
+        let mut tx = self
+            .try_log("add_listened_seconds: begin transaction", self.pool.begin().await)
+            .await?;
+
+        self.try_log(
+            "add_listened_seconds: update track_info",
+            sqlx::query(
+                "UPDATE track_info SET listened_seconds = listened_seconds + ? WHERE id = ?",
+            )
+            .bind(seconds)
+            .bind(track_id)
+            .execute(&mut *tx)
+            .await,
+        )
+        .await?;
+
+        self.try_log(
+            "add_listened_seconds: upsert listened_daily",
+            sqlx::query(
+                "INSERT INTO listened_daily (date, track_id, listened) VALUES (?, ?, ?)
+                 ON CONFLICT(date, track_id) DO UPDATE SET listened = listened + excluded.listened",
+            )
+            .bind(&date)
+            .bind(track_id)
+            .bind(seconds)
+            .execute(&mut *tx)
+            .await,
+        )
+        .await?;
+
+        self.try_log("add_listened_seconds: commit", tx.commit().await)
+            .await
+            .map(|_| ())
+    }
 }

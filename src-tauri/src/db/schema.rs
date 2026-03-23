@@ -10,6 +10,7 @@ pub struct TrackRow {
     pub bitrate_kbps: Option<i32>,
     pub tempo_bpm: Option<f32>,
     pub addition_time: String,
+    pub listened_seconds: i64,
 }
 
 /// Full row returned from the `errors` table.

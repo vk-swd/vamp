@@ -24,6 +24,7 @@ function setUpPlayer(
   timerRef: MutableRefObject<ReturnType<typeof setTimeout> | null>,
   videoId: string,
   onPlayerReady: (player: YT.Player) => void,
+  onStateChange: (state: number) => void,
 ) {
   const currentId = scriptId();
   return new YT.Player(currentId, {
@@ -50,6 +51,7 @@ function setUpPlayer(
           },
           'onStateChange': (s: any) => {
             log(`Player state changed ${s.data}`)
+            onStateChange(s.data);
           },
         }
       })
@@ -60,11 +62,13 @@ function setUpPlayer(
 //  "ready"   — onReady fired, player active, timer cleared
 export interface YoutubePlayerOwnerProps {
   videoId: string;
+  /** Called every 20 s while playback is active with how many seconds to credit. */
+  onListenedSeconds?: (seconds: number) => void;
   /** Called once the player is ready. Omit for preview-only instances. */
   onPlayerReady?: (player: YT.Player) => void;
 }
 
-export function YoutubePlayerOwner({ videoId, onPlayerReady }: YoutubePlayerOwnerProps) {
+export function YoutubePlayerOwner({ videoId, onListenedSeconds, onPlayerReady }: YoutubePlayerOwnerProps) {
   const [mountKey, setMountKey] = useState(0);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Stable random prefix unique per component instance — prevents colliding
@@ -75,15 +79,70 @@ export function YoutubePlayerOwner({ videoId, onPlayerReady }: YoutubePlayerOwne
   const initForKeyRef = useRef<number>(-1);
   // Local reference to the player — no Zustand dependency here.
   const playerRef = useRef<YT.Player | null>(null);
+  // Wall-clock timestamp (ms) when playback last started/resumed. null = not playing.
+  const playStartRef = useRef<number | null>(null);
+  // Seconds listened that haven't been flushed to the DB yet.
+  const accumulatedRef = useRef<number>(0);
+  // Interval that fires every 20 s as a safety net while playback is active.
+  const listenIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Keep callback accessible inside closures without re-creating them.
+  const onListenedSecondsRef = useRef<((s: number) => void) | undefined>(onListenedSeconds);
+  onListenedSecondsRef.current = onListenedSeconds;
 
-  const [showReload, setShowReload] = useState(false);
-  function makeIframeName() { 
-    return "yt-player-" + instanceIdRef.current + "-" + mountKey; 
+  /** Add elapsed time since last start to the accumulator. Resets the clock. */
+  function snapshotElapsed() {
+    if (playStartRef.current === null) return;
+    const elapsed = (Date.now() - playStartRef.current) / 1000;
+    playStartRef.current = Date.now(); // reset so the next snapshot doesn't double-count
+    accumulatedRef.current += elapsed;
+  }
+
+  /** Drain accumulated seconds in 20-second chunks via the callback. */
+  function drainAccumulated() {
+    while (accumulatedRef.current >= 20) {
+      accumulatedRef.current -= 20;
+      onListenedSecondsRef.current?.(20);
+    }
+  }
+
+  function stopListenTimer() {
+    if (listenIntervalRef.current !== null) {
+      clearInterval(listenIntervalRef.current);
+      listenIntervalRef.current = null;
+    }
+  }
+
+  function startListenTimer() {
+    stopListenTimer();
+    listenIntervalRef.current = setInterval(() => {
+      snapshotElapsed();
+      drainAccumulated();
+    }, 20_000);
+  }
+
+  function handleStateChange(state: number) {
+    // YT.PlayerState: PLAYING = 1, PAUSED = 2, ENDED = 0, BUFFERING = 3
+    if (state === 1) {
+      // Playback started/resumed — start clock and safety-net timer.
+      playStartRef.current = Date.now();
+      startListenTimer();
+    } else {
+      // Playback paused/ended/buffering — stop timer, snapshot and drain.
+      stopListenTimer();
+      snapshotElapsed();
+      playStartRef.current = null;
+      drainAccumulated();
+    }
   }
 
   function handlePlayerReady(player: YT.Player) {
     playerRef.current = player;
     onPlayerReady?.(player);
+  }
+
+  const [showReload, setShowReload] = useState(false);
+  function makeIframeName() {
+    return "yt-player-" + instanceIdRef.current + "-" + mountKey;
   }
 
   useEffect(() => {
@@ -111,7 +170,7 @@ export function YoutubePlayerOwner({ videoId, onPlayerReady }: YoutubePlayerOwne
     log(`useEffect triggered with mountKey ${mountKey}, videoId ${videoId}`)
     if (window.YT?.Player) {
       if (!playerRef.current) {
-        setUpPlayer(makeIframeName, timerRef, videoId, handlePlayerReady);
+        setUpPlayer(makeIframeName, timerRef, videoId, handlePlayerReady, handleStateChange);
         startWaitForHangup(timerRef, setShowReload);
         log(`made a player ${makeIframeName()}`)
       } else {
@@ -129,7 +188,7 @@ export function YoutubePlayerOwner({ videoId, onPlayerReady }: YoutubePlayerOwne
           return;
         }
         log(`Element is being created`)
-        setUpPlayer(makeIframeName, timerRef, videoId, handlePlayerReady);
+        setUpPlayer(makeIframeName, timerRef, videoId, handlePlayerReady, handleStateChange);
         startWaitForHangup(timerRef, setShowReload);
       }
       startWaitForHangup(timerRef, setShowReload);
@@ -144,6 +203,10 @@ export function YoutubePlayerOwner({ videoId, onPlayerReady }: YoutubePlayerOwne
     }
     return () => {
       log(`unmounted`)
+      stopListenTimer();
+      snapshotElapsed();
+      playStartRef.current = null;
+      drainAccumulated();
     }
   }, [mountKey]);
   

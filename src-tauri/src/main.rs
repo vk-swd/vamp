@@ -98,6 +98,7 @@ fn main() {
             commands::get_tracks_with_sources,
             commands::delete_track,
             commands::add_listen,       commands::get_listens_for_track,
+            commands::add_listened_seconds,
             commands::add_tag,          commands::edit_tag,
             commands::delete_tag,       commands::get_all_tags,
             commands::get_tags,
