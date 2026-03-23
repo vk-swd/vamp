@@ -1,8 +1,9 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import ReactSelect from 'react-select';
 
 import { Button, LineEdit, Selector, reactSelectStyles } from '../../ui/elements';
 import { YoutubePlayerOwner } from '../../YoutubePlayer';
+import { log } from '../../logger';
 import './TrackInfo.css';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -77,6 +78,9 @@ export function TrackInfoDialog({
   const [previewVideoId, setPreviewVideoId] = useState<string | null>(null);
   const [scUrl,          setScUrl]          = useState('');
   const [localPath,      setLocalPath]      = useState('');
+  // Ref to the preview player instance, populated via onPlayerReady.
+  const previewPlayerRef = useRef<YT.Player | null>(null);
+  const [previewPlayerReady, setPreviewPlayerReady] = useState(false);
 
   const tagOptions: TagOption[] = allTags.map(t => ({ value: t, label: t }));
 
@@ -98,7 +102,55 @@ export function TrackInfoDialog({
   }
 
   const handleShowPreview = () => {
+    previewPlayerRef.current = null; // reset on new load
+    setPreviewPlayerReady(false);
     setPreviewVideoId(extractYoutubeVideoId(ytUrl));
+  };
+
+  const handleImportData = () => {
+    const player = previewPlayerRef.current;
+    if (!player) {
+      log('[TrackInfo] Import Data: player not ready yet');
+      return;
+    }
+    try {
+      const videoData = player.getVideoData();
+      const duration  = player.getDuration();
+      const videoUrl  = player.getVideoUrl();
+
+      // Log everything the API exposes so we know what's available.
+      log('[TrackInfo] YouTube video data dump:');
+      log(`  video_id   : ${videoData.video_id}`);
+      log(`  title      : ${videoData.title}`);
+      log(`  author     : ${videoData.author}`);
+      log(`  duration   : ${duration}s`);
+      log(`  video_url  : ${videoUrl}`);
+      // getVideoData() may carry additional undocumented keys — log them too.
+      for (const [k, v] of Object.entries(videoData)) {
+        if (!['video_id', 'title', 'author'].includes(k)) {
+          log(`  [extra] ${k}: ${v}`);
+        }
+      }
+
+      // Populate general tab fields.
+      // Titles often follow "Artist – Track" or "Artist - Track" patterns.
+      const sep = videoData.title.match(/\s[–—-]\s/);
+      if (sep) {
+        const idx = videoData.title.indexOf(sep[0]);
+        setArtist(videoData.title.slice(0, idx).trim());
+        setTrackName(videoData.title.slice(idx + sep[0].length).trim());
+      } else {
+        // Fall back: put whole title in track name, channel as artist.
+        setArtist(videoData.author ?? '');
+        setTrackName(videoData.title ?? '');
+      }
+
+      if (duration > 0) {
+        setLengthSec(String(Math.round(duration)));
+      }
+    } catch (e) {
+      log(`[TrackInfo] Import Data failed: ${e}`);
+    }
   };
 
   const handleSourceTypeChange = (v: string) => {
@@ -213,10 +265,21 @@ export function TrackInfoDialog({
                     <Button variant="secondary" size="sm" onClick={handleShowPreview}>
                       Show
                     </Button>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      disabled={!previewPlayerReady}
+                      onClick={handleImportData}
+                    >
+                      Import Data
+                    </Button>
                   </div>
                   {previewVideoId ? (
                     <div className="ti-yt-preview">
-                      <YoutubePlayerOwner videoId={previewVideoId} />
+                      <YoutubePlayerOwner
+                        videoId={previewVideoId}
+                        onPlayerReady={p => { previewPlayerRef.current = p; setPreviewPlayerReady(true); }}
+                      />
                     </div>
                   ) : (
                     <div className="ti-yt-placeholder">
