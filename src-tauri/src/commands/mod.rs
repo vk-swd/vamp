@@ -35,7 +35,7 @@ use tauri::Manager;
 
 use crate::db::{
     repository::ArcRepo,
-    schema::{ListenInfo, NewTrack, SearchCriteria, Tag, TagAssignment, TrackMeta, TrackRow, TrackUpdate},
+    schema::{ListenInfo, NewTrack, SearchCriteria, Tag, TagAssignment, TrackMeta, TrackRow, TrackSource, TrackUpdate, TrackWithSources},
 };
 
 /// Convenience alias: the Tauri State wrapper around the repository handle.
@@ -97,6 +97,18 @@ pub async fn get_tracks(
     limit: u32,
 ) -> Result<Vec<TrackRow>, String> {
     repo.get_tracks(cursor, criteria, limit)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn get_tracks_with_sources(
+    repo: Repo<'_>,
+    cursor: Option<i64>,
+    criteria: Option<Vec<SearchCriteria>>,
+    limit: u32,
+) -> Result<Vec<TrackWithSources>, String> {
+    repo.get_tracks_with_sources(cursor, criteria, limit)
         .await
         .map_err(|e| e.to_string())
 }

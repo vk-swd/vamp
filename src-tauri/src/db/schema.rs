@@ -78,6 +78,15 @@ pub struct NewTrack {
     pub sources: Vec<String>,
 }
 
+/// A track row together with all its source URLs — returned by `get_tracks_with_sources`.
+/// Serialises with all `TrackRow` fields at the top level plus a `sources` array.
+#[derive(Debug, Clone, Serialize)]
+pub struct TrackWithSources {
+    #[serde(flatten)]
+    pub track: TrackRow,
+    pub sources: Vec<TrackSource>,
+}
+
 /// Partial update — only `Some` fields are written to the database.
 /// Pass `None` for any field that should remain unchanged.
 #[derive(Debug, Serialize, Deserialize)]

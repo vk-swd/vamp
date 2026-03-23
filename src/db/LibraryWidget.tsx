@@ -1,11 +1,14 @@
-import { createContext, useState } from 'react';
+import { createContext, useEffect, useState } from 'react';
 import { SearchWidget } from "./filter/SearchWidget";
 import { invoke } from '@tauri-apps/api/core';
 import { TrackList } from './data/TrackList';
 import { Button } from '../ui/elements';
 import { TrackInfoDialog, type TrackData } from './track/TrackInfo';
-import { addTrack } from './tauriDb';
+import { addTrack, getTracksWithSources } from './tauriDb';
+import type { TrackWithSources } from './data/TrackItem';
 import { log } from '../logger';
+
+const PAGE_SIZE = 20;
 
 class TagLookupContextValue {
   async getAllTags(): Promise<string[]> {
@@ -31,19 +34,59 @@ export const DataLookupContext = createContext(dataGetter);
 export function LibraryWidget() {
   const [dialogOpen, setDialogOpen] = useState(false);
 
+  const [tracks,      setTracks]      = useState<TrackWithSources[]>([]);
+  const [cursor,      setCursor]      = useState<number | null>(null);
+  const [prevCursors, setPrevCursors] = useState<(number | null)[]>([]);
+  const [hasNext,     setHasNext]     = useState(false);
+
+  function loadPage(fromCursor: number | null) {
+    getTracksWithSources(fromCursor, null, PAGE_SIZE)
+      .then((withSources: TrackWithSources[]) => {
+        setTracks(withSources);
+        setHasNext(withSources.length === PAGE_SIZE);
+      })
+      .catch(e => log(`Failed to load tracks: ${e}`));
+  }
+
+  // Load first page on mount.
+  useEffect(() => { loadPage(null); }, []);
+
+  function handlePageNext() {
+    if (!hasNext || tracks.length === 0) return;
+    const nextCursor = tracks[tracks.length - 1].id;
+    setPrevCursors(prev => [...prev, cursor]);
+    setCursor(nextCursor);
+    loadPage(nextCursor);
+  }
+
+  function handlePagePrev() {
+    if (prevCursors.length === 0) return;
+    const prevCursor = prevCursors[prevCursors.length - 1];
+    setPrevCursors(prev => prev.slice(0, -1));
+    setCursor(prevCursor);
+    loadPage(prevCursor);
+  }
+
   return (
     <DataLookupContext.Provider value={dataGetter}>
     <TagLookupContext.Provider value={tagGetter}>
       <div className="filter-widget">
         <SearchWidget />
-        <TrackList tracks={[]}></TrackList>
+        <TrackList
+          tracks={tracks}
+          onPagePrev={handlePagePrev}
+          onPageNext={handlePageNext}
+          hasPrev={prevCursors.length > 0}
+          hasNext={hasNext}
+        />
         <Button onClick={() => setDialogOpen(true)}>Add Track</Button>
+        <Button variant="secondary" onClick={() => loadPage(cursor)}>↻ Refresh</Button>
       </div>
       {dialogOpen && (
         <TrackInfoDialog
           mode="add"
-          onAdd={async (data: TrackData) => {
-            const id = await addTrack({
+          onAdd={(data: TrackData) =>
+            addTrack({
               artist:         data.artist,
               track_name:     data.track_name,
               length_seconds: data.length_seconds,
@@ -51,10 +94,13 @@ export function LibraryWidget() {
               tempo_bpm:      data.tempo_bpm    ?? null,
               addition_time:  new Date().toISOString(),
               sources:        data.sources,
-            });
-            log(`Track added with id ${id}`);
-            setDialogOpen(false);
-          }}
+            }).then(id => {
+              log(`Track added with id ${id}`);
+              // Reload the same page so the new track appears.
+              loadPage(cursor);
+              setDialogOpen(false);
+            })
+          }
           onClose={() => setDialogOpen(false)}
         />
       )}

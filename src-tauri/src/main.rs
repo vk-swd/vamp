@@ -95,6 +95,7 @@ fn main() {
             commands::add_track,        commands::add_tracks,
             commands::update_track,
             commands::get_tracks,       commands::get_track,
+            commands::get_tracks_with_sources,
             commands::delete_track,
             commands::add_listen,       commands::get_listens_for_track,
             commands::add_tag,          commands::edit_tag,

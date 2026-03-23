@@ -27,6 +27,10 @@ export function TrackList({
   tracks,
   selectionMode = false,
   onSelectionChange,
+  onPagePrev,
+  onPageNext,
+  hasPrev = false,
+  hasNext = false,
 }: TrackListProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
@@ -61,6 +65,8 @@ export function TrackList({
   const scroll = (dir: 'up' | 'down') => {
     scrollRef.current?.scrollBy({ top: dir === 'up' ? -240 : 240, behavior: 'smooth' });
   };
+  const handleUp   = onPagePrev ?? (() => scroll('up'));
+  const handleDown = onPageNext ?? (() => scroll('down'));
 
   const contextTrack = contextMenu
     ? tracks.find(t => t.id === contextMenu.trackId) ?? null
@@ -70,8 +76,9 @@ export function TrackList({
     <div className="tracklist">
       <button
         className="tracklist__nav-btn tracklist__nav-btn--top"
-        onClick={() => scroll('up')}
-        aria-label="Scroll up"
+        onClick={handleUp}
+        disabled={onPagePrev !== undefined && !hasPrev}
+        aria-label="Previous page"
       >▲</button>
 
       <div className="tracklist__scroll" ref={scrollRef}>
@@ -91,8 +98,9 @@ export function TrackList({
 
       <button
         className="tracklist__nav-btn tracklist__nav-btn--bottom"
-        onClick={() => scroll('down')}
-        aria-label="Scroll down"
+        onClick={handleDown}
+        disabled={onPageNext !== undefined && !hasNext}
+        aria-label="Next page"
       >▼</button>
 
       {contextMenu && contextTrack && (

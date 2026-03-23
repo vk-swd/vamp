@@ -695,6 +695,47 @@ impl AppRepository for SqliteRepository {
         .await
     }
 
+    async fn get_tracks_with_sources(
+        &self,
+        cursor: Option<i64>,
+        criteria: Option<Vec<SearchCriteria>>,
+        limit: u32,
+    ) -> Result<Vec<crate::db::schema::TrackWithSources>, sqlx::Error> {
+        let tracks = self.get_tracks(cursor, criteria, limit).await?;
+        if tracks.is_empty() {
+            return Ok(vec![]);
+        }
+
+        let ids: Vec<i64> = tracks.iter().map(|t| t.id).collect();
+        let placeholders = vec!["?"; ids.len()].join(", ");
+        let sql = format!(
+            "SELECT * FROM track_sources WHERE track_id IN ({}) ORDER BY id ASC",
+            placeholders
+        );
+        let mut q = sqlx::query_as::<_, TrackSource>(&sql);
+        for id in &ids {
+            q = q.bind(*id);
+        }
+
+        let all_sources = self
+            .try_log("get_tracks_with_sources: fetch sources", q.fetch_all(&self.pool).await)
+            .await?;
+
+        let mut sources_map: std::collections::HashMap<i64, Vec<TrackSource>> =
+            std::collections::HashMap::new();
+        for src in all_sources {
+            sources_map.entry(src.track_id).or_default().push(src);
+        }
+
+        Ok(tracks
+            .into_iter()
+            .map(|track| {
+                let sources = sources_map.remove(&track.id).unwrap_or_default();
+                crate::db::schema::TrackWithSources { track, sources }
+            })
+            .collect())
+    }
+
     // ------------------------------------------------------------------
     // Errors
     // ------------------------------------------------------------------

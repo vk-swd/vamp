@@ -118,6 +118,15 @@ pub trait AppRepository: Send + Sync {
         track_id: i64,
     ) -> Result<Vec<TrackSource>, sqlx::Error>;
 
+    /// Fetch a page of tracks together with their sources in two queries
+    /// (one for tracks, one IN-query for all their sources).
+    async fn get_tracks_with_sources(
+        &self,
+        cursor: Option<i64>,
+        criteria: Option<Vec<SearchCriteria>>,
+        limit: u32,
+    ) -> Result<Vec<crate::db::schema::TrackWithSources>, sqlx::Error>;
+
     // ------------------------------------------------------------------
     // Errors
     // ------------------------------------------------------------------

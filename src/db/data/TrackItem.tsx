@@ -1,10 +1,7 @@
 import React from 'react';
-import { TrackRow, TrackSource } from "../tauriDb";
+import { TrackRow, TrackSource, TrackWithSources } from "../tauriDb";
 
-
-export type TrackWithSources = TrackRow & {
-  sources: TrackSource[];
-};
+export type { TrackWithSources };
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -34,6 +31,10 @@ export interface TrackListProps {
   tracks: TrackWithSources[];
   selectionMode?: boolean;
   onSelectionChange?: (ids: number[]) => void;
+  onPagePrev?: () => void;
+  onPageNext?: () => void;
+  hasPrev?: boolean;
+  hasNext?: boolean;
 }
 
 

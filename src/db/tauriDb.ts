@@ -37,6 +37,9 @@ export type TrackSource = {
   url: string;
 };
 
+/** A TrackRow with all its source URLs bundled in — mirrors schema::TrackWithSources. */
+export type TrackWithSources = TrackRow & { sources: TrackSource[] };
+
 export type NewTrack = Omit<TrackRow, 'id'> & {
   sources: string[];
 };
@@ -134,6 +137,13 @@ export const getTracks = (
   limit: number,
 ): Promise<TrackRow[]> =>
   invoke('get_tracks', { cursor, criteria, limit });
+
+export const getTracksWithSources = (
+  cursor: number | null,
+  criteria: SearchCriteria[] | null,
+  limit: number,
+): Promise<TrackWithSources[]> =>
+  invoke('get_tracks_with_sources', { cursor, criteria, limit });
 
 export const getTrack = (id: number): Promise<TrackRow> =>
   invoke('get_track', { id });
