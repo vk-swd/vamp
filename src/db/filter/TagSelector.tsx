@@ -3,6 +3,7 @@ import { TagLookupContext } from '../LibraryWidget';
 import { log } from '../../logger';
 import { useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { TagLookupContext1 } from './CriteriaInput';
+import { reactSelectStyles } from '../../ui/elements';
 
 
 type Option = { value: string; label: string };
@@ -130,6 +131,6 @@ export function TagSelector() {
       onChange={(res) => { topCtx.setSelectedTags(res.map(o => o.value)); }}
       onInputChange={handleInputChange}
       placeholder={'Select...'}
-      styles={selectStyles}
+      styles={reactSelectStyles()}
     />
   );}

@@ -1,3 +1,18 @@
+/* ── Pills ──────────────────────────────────────────────────────────────── */
+
+.pill-row {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+}
+
+.pill-label {
+  max-width: 50%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* ── Filter / Search Widget ──────────────────────────────────────────────── */
 
 .filter-widget {

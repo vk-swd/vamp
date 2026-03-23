@@ -1,6 +1,7 @@
 import { createContext } from 'react';
 import { SearchWidget } from "./filter/SearchWidget";
 import { invoke } from '@tauri-apps/api/core';
+import { TrackList } from './track/TrackList';
 
 class TagLookupContextValue {
   async getAllTags(): Promise<string[]> {
@@ -31,6 +32,7 @@ export function LibraryWidget() {
     <TagLookupContext.Provider value={tagGetter}>
       <div className="filter-widget">
         <SearchWidget />
+        <TrackList tracks={[]}></TrackList>
       </div>
     </TagLookupContext.Provider>
     </DataLookupContext.Provider>

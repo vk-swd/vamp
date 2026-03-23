@@ -1,0 +1,231 @@
+/* ── TrackList container ─────────────────────────────────────────────────── */
+
+.tracklist {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: var(--ui-surface);
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-r-lg);
+  overflow: hidden;
+}
+
+/* ── Nav buttons ─────────────────────────────────────────────────────────── */
+
+.tracklist__nav-btn {
+  flex-shrink: 0;
+  width: 100%;
+  background: var(--ui-surface-2);
+  border: none;
+  color: var(--ui-text-muted);
+  cursor: pointer;
+  font-size: var(--ui-fs-xs);
+  line-height: 1;
+  padding: var(--ui-sp-1) 0;
+  transition: background var(--ui-t-fast), color var(--ui-t-fast);
+  user-select: none;
+}
+
+.tracklist__nav-btn--top {
+  border-bottom: 1px solid var(--ui-border);
+}
+
+.tracklist__nav-btn--bottom {
+  border-top: 1px solid var(--ui-border);
+}
+
+.tracklist__nav-btn:hover {
+  background: var(--ui-surface-3);
+  color: var(--ui-accent-hover);
+}
+
+.tracklist__nav-btn:active {
+  opacity: 0.7;
+}
+
+/* ── Scroll area ─────────────────────────────────────────────────────────── */
+
+.tracklist__scroll {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  min-height: 0;
+  scrollbar-width: thin;
+  scrollbar-color: var(--ui-border) transparent;
+}
+
+.tracklist__scroll::-webkit-scrollbar {
+  width: 6px;
+}
+
+.tracklist__scroll::-webkit-scrollbar-thumb {
+  background: var(--ui-border);
+  border-radius: var(--ui-r-full);
+}
+
+/* ── Track item ──────────────────────────────────────────────────────────── */
+
+.tracklist-item {
+  display: flex;
+  align-items: center;
+  gap: var(--ui-sp-3);
+  padding: var(--ui-sp-2) var(--ui-sp-4);
+  border-bottom: 1px solid var(--ui-border-subtle);
+  cursor: default;
+  transition: background var(--ui-t-fast);
+}
+
+.tracklist-item:last-child {
+  border-bottom: none;
+}
+
+.tracklist-item:hover {
+  background: var(--ui-surface-2);
+}
+
+.tracklist-item--selected {
+  background: var(--ui-accent-muted);
+}
+
+.tracklist-item--selected:hover {
+  background: color-mix(in srgb, var(--ui-accent-muted) 80%, var(--ui-surface-3));
+}
+
+/* ── Checkbox (hidden until selection mode) ──────────────────────────────── */
+
+.tracklist-item__checkbox {
+  flex-shrink: 0;
+  width: 0;
+  opacity: 0;
+  overflow: hidden;
+  transition: width var(--ui-t), opacity var(--ui-t);
+}
+
+.tracklist-item__checkbox--visible {
+  width: 18px;
+  opacity: 1;
+}
+
+.tracklist-item__checkbox input[type='checkbox'] {
+  accent-color: var(--ui-accent);
+  cursor: pointer;
+  display: block;
+}
+
+/* ── Info section ────────────────────────────────────────────────────────── */
+
+.tracklist-item__info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.tracklist-item__artist {
+  font-size: var(--ui-fs-xs);
+  color: var(--ui-text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 1.2;
+}
+
+.tracklist-item__name {
+  font-size: var(--ui-fs-sm);
+  color: var(--ui-text);
+  font-weight: var(--ui-fw-medium);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 1.2;
+}
+
+/* ── Duration ────────────────────────────────────────────────────────────── */
+
+.tracklist-item__duration {
+  flex-shrink: 0;
+  font-size: var(--ui-fs-xs);
+  color: var(--ui-text-dim);
+  font-variant-numeric: tabular-nums;
+  min-width: 56px;
+  text-align: right;
+  letter-spacing: 0.03em;
+}
+
+/* ── Source selector ─────────────────────────────────────────────────────── */
+
+.tracklist-item__source {
+  flex-shrink: 0;
+  width: 180px;
+}
+
+/* Native source select */
+
+.tracklist-src-select {
+  appearance:   none;
+  background:   var(--ui-surface-3);
+  border:       1px solid var(--ui-border);
+  border-radius: var(--ui-r-sm);
+  color:        var(--ui-text);
+  cursor:       pointer;
+  font-family:  inherit;
+  font-size:    var(--ui-fs-xs);
+  height:       28px;
+  padding:      0 6px;
+  width:        100%;
+  transition:   border-color var(--ui-t-fast), box-shadow var(--ui-t-fast);
+}
+
+.tracklist-src-select:hover:not(:disabled) {
+  border-color: var(--ui-border-hover);
+}
+
+.tracklist-src-select:focus {
+  border-color: var(--ui-accent);
+  box-shadow:   var(--ui-shadow-focus);
+  outline:      none;
+}
+
+.tracklist-src-select:disabled {
+  color:   var(--ui-text-disabled);
+  cursor:  not-allowed;
+  opacity: 0.5;
+}
+
+.tracklist-src-select option {
+  background: var(--ui-surface-2);
+  color:      var(--ui-text);
+}
+
+/* ── Context menu ────────────────────────────────────────────────────────── */
+
+.tracklist__context-menu {
+  position: fixed;
+  z-index: 900;
+  background:    var(--ui-surface-2);
+  border:        1px solid var(--ui-border);
+  border-radius: var(--ui-r);
+  box-shadow:    var(--ui-shadow);
+  list-style:    none;
+  margin:        0;
+  padding:       var(--ui-sp-1) 0;
+  min-width:     140px;
+  animation:     ui-fade-in 100ms ease;
+}
+
+.tracklist__context-menu-item {
+  padding:    var(--ui-sp-2) var(--ui-sp-4);
+  font-size:  var(--ui-fs-sm);
+  color:      var(--ui-text);
+  cursor:     pointer;
+  transition: background var(--ui-t-fast), color var(--ui-t-fast);
+  user-select: none;
+}
+
+.tracklist__context-menu-item:hover {
+  background: var(--ui-accent-muted);
+  color:      var(--ui-accent-hover);
+}

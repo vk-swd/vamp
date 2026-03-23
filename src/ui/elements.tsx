@@ -208,20 +208,31 @@ function v(name: string): string {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 }
 
+// Cached so every call returns the same object reference.
+// react-select compares the `styles` prop by reference and resets internal
+// state (including open-menu) when it changes — a new object on every render
+// causes the menu to collapse mid-click, making items unselectable.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let _reactSelectStylesCache: StylesConfig<any, any, any> | null = null;
+
 /**
- * Returns a react-select StylesConfig that reads from the same CSS variables
- * defined in styles.css, so react-select dropdowns are visually identical to
- * the native .ui-select.
+ * Returns a stable react-select StylesConfig that reads from the same CSS
+ * variables defined in styles.css, so react-select dropdowns are visually
+ * identical to the native .ui-select.
+ *
+ * The returned object is cached — every call returns the same reference, which
+ * is required for react-select to behave correctly.
  *
  * @example
  * <ReactSelect styles={reactSelectStyles()} ... />
  */
 export function reactSelectStyles<
   Option  = { value: string; label: string },
-  IsMulti extends boolean = false,
+  IsMulti extends boolean = boolean,
   Group   extends GroupBase<Option> = GroupBase<Option>,
 >(): StylesConfig<Option, IsMulti, Group> {
-  return {
+  if (_reactSelectStylesCache) return _reactSelectStylesCache as StylesConfig<Option, IsMulti, Group>;
+  _reactSelectStylesCache = {
     control: (base, state) => ({
       ...base,
       backgroundColor: v('--ui-surface-2'),
@@ -355,6 +366,7 @@ export function reactSelectStyles<
       fontSize: v('--ui-fs-sm'),
     }),
   };
+  return _reactSelectStylesCache as StylesConfig<Option, IsMulti, Group>;
 }
 
 // ─── injectGlobalStyles ───────────────────────────────────────────────────────

@@ -11,6 +11,7 @@ import {
 import { NumberSelector } from './NumberSelector';
 import { TagSelector } from './TagSelector';
 import { CriteriaPills } from './CriteriaPills';
+import { Button } from '../../ui/elements';
 
 // ── Context consumed by TagSelector ───────────────────────────────────────
 interface TagLookupContext1Value {
@@ -113,14 +114,10 @@ const CRITERIA_WIDGET: Record<CriteriaType, (p: WidgetProps) => React.ReactEleme
   tags:          p => <MultiWidget  {...p} />,
 };
 
-// ── CriteriaInput ─────────────────────────────────────────────────────────
-interface CriteriaInputProps {
-  onSelectedChange?: (pill: CriteriaPillData | null) => void;
-}
 
 let _nextId = 1;
 
-export function CriteriaInput({ onSelectedChange }: CriteriaInputProps) {
+export function CriteriaInput() {
   const [type, setType] = useState<CriteriaType>('artist');
   const [stateMap, setStateMap] = useState<CriteriaStateMap>(INITIAL_STATE_MAP);
   // activePills: type → stable pill ID (one pill per criteria type)
@@ -160,13 +157,12 @@ export function CriteriaInput({ onSelectedChange }: CriteriaInputProps) {
     const [t] = entry;
     setActivePills(prev => { const n = new Map(prev); n.delete(t); return n; });
     setPillOrder(prev => prev.filter(x => x !== t));
-    if (selectedType === t) { setSelectedType(null); onSelectedChange?.(null); }
+    if (selectedType === t) { setSelectedType(null); }
   };
 
   const handleSelectPill = (pill: CriteriaPillData) => {
     setType(pill.type);
     setSelectedType(pill.type);
-    onSelectedChange?.(pill);
   };
 
   return (
@@ -185,9 +181,9 @@ export function CriteriaInput({ onSelectedChange }: CriteriaInputProps) {
           {CRITERIA_WIDGET[type]({ type, state: stateMap[type], update, onCommit: handleAdd })}
         </div>
 
-        <button className="btn btn-primary filter-add-btn" onClick={handleAdd}>
+        <Button  onClick={handleAdd}>
           Add
-        </button>
+        </Button>
       </div>
 
       <CriteriaPills
