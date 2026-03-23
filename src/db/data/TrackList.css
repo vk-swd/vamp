@@ -200,6 +200,32 @@
   color:      var(--ui-text);
 }
 
+/* ── Per-row play button ─────────────────────────────────────────────────── */
+
+.tracklist-item__play-btn {
+  flex-shrink: 0;
+  width:       28px;
+  height:      28px;
+  padding:     0;
+  background:  var(--ui-accent);
+  border:      none;
+  border-radius: var(--ui-r-sm);
+  color:       #fff;
+  cursor:      pointer;
+  font-size:   11px;
+  line-height: 1;
+  transition:  background var(--ui-t-fast), opacity var(--ui-t-fast);
+}
+
+.tracklist-item__play-btn:hover:not(:disabled) {
+  background: var(--ui-accent-hover);
+}
+
+.tracklist-item__play-btn:disabled {
+  opacity: 0.35;
+  cursor:  not-allowed;
+}
+
 /* ── Context menu ────────────────────────────────────────────────────────── */
 
 .tracklist__context-menu {

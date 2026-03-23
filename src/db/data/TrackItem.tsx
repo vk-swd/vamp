@@ -1,5 +1,6 @@
 import React from 'react';
 import { TrackRow, TrackSource, TrackWithSources } from "../tauriDb";
+import { usePlayerStore } from '../../store';
 
 export type { TrackWithSources };
 
@@ -47,6 +48,8 @@ export function TrackItem({
   onContextMenu,
   onSourceChange,
 }: TrackItemProps) {
+  const setNowPlayingUrl = usePlayerStore((s) => s.setNowPlayingUrl);
+
   return (
     <div
       className={`tracklist-item${selected ? ' tracklist-item--selected' : ''}`}
@@ -85,6 +88,15 @@ export function TrackItem({
           ))}
         </select>
       </div>
+
+      <button
+        className="tracklist-item__play-btn"
+        disabled={!activeSource}
+        title={activeSource ? `Play: ${activeSource}` : 'No source available'}
+        onClick={() => { if (activeSource) setNowPlayingUrl(activeSource); }}
+      >
+        ▶
+      </button>
     </div>
   );
 }

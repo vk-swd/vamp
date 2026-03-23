@@ -2,6 +2,7 @@ import React, { useRef, useState, useCallback, useEffect } from 'react';
 import type { TrackRow } from '../tauriDb';
 import './TrackList.css';
 import { TrackItem, type TrackWithSources, TrackListProps } from './TrackItem';
+import { usePlayerStore } from '../../store';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -36,6 +37,7 @@ export function TrackList({
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [activeSources, setActiveSources] = useState<Record<number, string | null>>({});
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
+  const setNowPlayingUrl = usePlayerStore((s) => s.setNowPlayingUrl);
 
   // Close context menu on any outside click
   useEffect(() => {
@@ -122,7 +124,7 @@ export function TrackList({
             className="tracklist__context-menu-item"
             onClick={() => {
               const src = activeSources[contextTrack.id] ?? contextTrack.sources[0]?.url ?? null;
-              playTrack(contextTrack, src);
+              if (src) setNowPlayingUrl(src);
               setContextMenu(null);
             }}
           >

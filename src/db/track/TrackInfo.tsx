@@ -82,6 +82,7 @@ export function TrackInfoDialog({
   // Ref to the preview player instance, populated via onPlayerReady.
   const previewPlayerRef = useRef<YT.Player | null>(null);
   const [previewPlayerReady, setPreviewPlayerReady] = useState(false);
+  const [previewKey, setPreviewKey] = useState(0);
 
   const tagOptions: TagOption[] = allTags.map(t => ({ value: t, label: t }));
 
@@ -135,6 +136,7 @@ export function TrackInfoDialog({
     previewPlayerRef.current = null; // reset on new load
     setPreviewPlayerReady(false);
     setPreviewVideoId(extractYoutubeVideoId(ytUrl));
+    setPreviewKey(k => k + 1);
   };
 
   const handleImportData = () => {
@@ -307,6 +309,7 @@ export function TrackInfoDialog({
                   {previewVideoId ? (
                     <div className="ti-yt-preview">
                       <YoutubePlayerOwner
+                        key={previewKey}
                         videoId={previewVideoId}
                         onPlayerReady={p => { previewPlayerRef.current = p; setPreviewPlayerReady(true); }}
                       />

@@ -91,6 +91,8 @@ export default function App() {
   const inputRef = useRef<HTMLInputElement>(null);
 
   const ytPlayer = usePlayerStore((s) => s.ytPlayer);
+  const nowPlayingUrl = usePlayerStore((s) => s.nowPlayingUrl);
+  const setNowPlayingUrl = usePlayerStore((s) => s.setNowPlayingUrl);
 
   // ── load video ──
   const loadVideo = (raw: string) => {
@@ -104,6 +106,13 @@ export default function App() {
       setTrack(null);
     }
   };
+
+  // React to play requests coming from the library/tracklist.
+  useEffect(() => {
+    if (!nowPlayingUrl) return;
+    loadVideo(nowPlayingUrl);
+    setNowPlayingUrl(null);
+  }, [nowPlayingUrl]);
 
   const handleSubmit = (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
