@@ -3,7 +3,9 @@ import { SearchWidget } from "./filter/SearchWidget";
 import { invoke } from '@tauri-apps/api/core';
 import { TrackList } from './data/TrackList';
 import { Button } from '../ui/elements';
-import { TrackInfoDialog } from './track/TrackInfo';
+import { TrackInfoDialog, type TrackData } from './track/TrackInfo';
+import { addTrack } from './tauriDb';
+import { log } from '../logger';
 
 class TagLookupContextValue {
   async getAllTags(): Promise<string[]> {
@@ -40,7 +42,19 @@ export function LibraryWidget() {
       {dialogOpen && (
         <TrackInfoDialog
           mode="add"
-          onAdd={data => { console.log('add track', data); setDialogOpen(false); }}
+          onAdd={async (data: TrackData) => {
+            const id = await addTrack({
+              artist:         data.artist,
+              track_name:     data.track_name,
+              length_seconds: data.length_seconds,
+              bitrate_kbps:   data.bitrate_kbps ?? null,
+              tempo_bpm:      data.tempo_bpm    ?? null,
+              addition_time:  new Date().toISOString(),
+              sources:        data.sources,
+            });
+            log(`Track added with id ${id}`);
+            setDialogOpen(false);
+          }}
           onClose={() => setDialogOpen(false)}
         />
       )}

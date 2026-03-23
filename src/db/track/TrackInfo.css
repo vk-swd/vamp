@@ -129,7 +129,14 @@
   padding:       var(--ui-sp-5);
   text-align:    center;
 }
-
+/* ── Submit error ─────────────────────────────────────────────────────── */
+.ti-submit-error {
+  background:    rgba(239, 68, 68, 0.10);
+  border-top:    1px solid var(--ui-border-subtle);
+  color:         var(--ui-danger);
+  font-size:     var(--ui-fs-xs);
+  padding:       var(--ui-sp-3) var(--ui-sp-6);
+}
 /* ── Action buttons ──────────────────────────────────────────────────────── */
 .ti-actions {
   border-top:      1px solid var(--ui-border-subtle);

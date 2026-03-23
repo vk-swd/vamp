@@ -5,7 +5,8 @@ CREATE TABLE IF NOT EXISTS track_info (
     length_seconds  INTEGER NOT NULL,
     bitrate_kbps    INTEGER,
     tempo_bpm       REAL,
-    addition_time   TEXT    NOT NULL
+    addition_time   TEXT    NOT NULL,
+    UNIQUE (artist, track_name)
 );
 
 CREATE TABLE IF NOT EXISTS track_sources (

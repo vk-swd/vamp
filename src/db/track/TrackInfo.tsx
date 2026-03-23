@@ -26,8 +26,9 @@ export interface TrackInfoDialogProps {
   initialData?: Partial<TrackData>;
   /** Available tag options for the multi-select. */
   allTags?: string[];
-  onAdd?:    (data: TrackData) => void;
-  onUpdate?: (data: TrackData) => void;
+  /** Should throw (or return a rejected Promise) to report an error back into the dialog. */
+  onAdd?:    (data: TrackData) => Promise<void>;
+  onUpdate?: (data: TrackData) => Promise<void>;
   onClose:   () => void;
 }
 
@@ -83,6 +84,35 @@ export function TrackInfoDialog({
   const [previewPlayerReady, setPreviewPlayerReady] = useState(false);
 
   const tagOptions: TagOption[] = allTags.map(t => ({ value: t, label: t }));
+
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const [submitting,  setSubmitting]  = useState(false);
+
+  function handleAdd() {
+    if (!onAdd) return;
+    setSubmitError(null);
+    setSubmitting(true);
+    onAdd(buildData())
+      .catch((e: unknown) => {
+        setSubmitError(e instanceof Error ? e.message : String(e));
+      })
+      .finally(() => {
+        setSubmitting(false);
+      });
+  }
+
+  function handleUpdate() {
+    if (!onUpdate) return;
+    setSubmitError(null);
+    setSubmitting(true);
+    onUpdate(buildData())
+      .catch((e: unknown) => {
+        setSubmitError(e instanceof Error ? e.message : String(e));
+      })
+      .finally(() => {
+        setSubmitting(false);
+      });
+  }
 
   function buildData(): TrackData {
     return {
@@ -310,12 +340,15 @@ export function TrackInfoDialog({
         </div>
 
         {/* ── Action buttons ── */}
+        {submitError && (
+          <div className="ti-submit-error" role="alert">{submitError}</div>
+        )}
         <div className="ti-actions">
           {mode === 'add'  && (
-            <Button variant="primary" onClick={() => onAdd?.(buildData())}>Add</Button>
+            <Button variant="primary" loading={submitting} onClick={handleAdd}>Add</Button>
           )}
           {mode === 'edit' && (
-            <Button variant="primary" onClick={() => onUpdate?.(buildData())}>Update</Button>
+            <Button variant="primary" loading={submitting} onClick={handleUpdate}>Update</Button>
           )}
           <Button variant="secondary" onClick={onClose}>Close</Button>
         </div>
