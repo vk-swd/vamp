@@ -64,7 +64,6 @@ function NowPlayingTab({ track }: NowPlayingTabProps) {
   const setYtPlayer = usePlayerStore((s) => s.setYtPlayer);
   const loopEnabled = usePlayerStore((s) => s.loopEnabled);
   const selectedTracks = usePlayerStore((s) => s.selectedTracks);
-  const ytPlayer = usePlayerStore((s) => s.ytPlayer);
   const setNowPlayingUrl = usePlayerStore((s) => s.setNowPlayingUrl);
   const setNowPlayingDbId = usePlayerStore((s) => s.setNowPlayingDbId);
 
@@ -73,12 +72,7 @@ function NowPlayingTab({ track }: NowPlayingTabProps) {
 
   function handleEnded() {
     log(`${loopEnabled} ${selectedTracks.length} ${track.dbTrackId}`);
-    if (loopEnabled) {
-      log("Looping current track");
-      // ytPlayer?.seekTo(0, true);
-      ytPlayer?.playVideo();
-      return;
-    }
+    if (loopEnabled) return;
     if (selectedTracks.length === 0) return;
     const currentIndex = selectedTracks.findIndex(t => t.id === track.dbTrackId);
     const nextIndex = (currentIndex === -1 ? 0 : currentIndex + 1) % selectedTracks.length;

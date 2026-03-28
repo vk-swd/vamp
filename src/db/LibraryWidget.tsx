@@ -40,6 +40,7 @@ export function LibraryWidget() {
   const [prevCursors, setPrevCursors] = useState<(number | null)[]>([]);
   const [hasNext,     setHasNext]     = useState(false);
 
+  const selectedTracks = usePlayerStore((s) => s.selectedTracks);
   const setSelectedTracks = usePlayerStore((s) => s.setSelectedTracks);
 
   function loadPage(fromCursor: number | null) {
@@ -78,7 +79,13 @@ export function LibraryWidget() {
         <TrackList
           tracks={tracks}
           selectionMode={true}
-          onSelectionChange={(ids) => setSelectedTracks(tracks.filter(t => ids.includes(t.id)))}
+          selectedIds={selectedTracks.map(t => t.id)}
+          onSelectionChange={(ids) => {
+            // Keep selections from other pages, update selections for the current page.
+            const otherPages = selectedTracks.filter(t => !tracks.some(p => p.id === t.id));
+            const currentPage = tracks.filter(t => ids.includes(t.id));
+            setSelectedTracks([...otherPages, ...currentPage]);
+          }}
           onPagePrev={handlePagePrev}
           onPageNext={handlePageNext}
           hasPrev={prevCursors.length > 0}

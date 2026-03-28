@@ -28,16 +28,6 @@ export interface TrackItemProps {
   onSourceChange: (trackId: number, url: string | null) => void;
 }
 
-export interface TrackListProps {
-  tracks: TrackWithSources[];
-  selectionMode?: boolean;
-  onSelectionChange?: (ids: number[]) => void;
-  onPagePrev?: () => void;
-  onPageNext?: () => void;
-  hasPrev?: boolean;
-  hasNext?: boolean;
-}
-
 
 export function TrackItem({
   track,

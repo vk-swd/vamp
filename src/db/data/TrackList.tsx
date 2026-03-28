@@ -1,11 +1,23 @@
 import React, { useRef, useState, useCallback, useEffect } from 'react';
 import type { TrackRow } from '../tauriDb';
 import './TrackList.css';
-import { TrackItem, type TrackWithSources, TrackListProps } from './TrackItem';
+import { TrackItem, type TrackWithSources } from './TrackItem';
 import { usePlayerStore } from '../../store';
 import { log } from '../../logger';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
+
+export interface TrackListProps {
+  tracks: TrackWithSources[];
+  selectionMode?: boolean;
+  /** External selected IDs — the list renders these as selected. */
+  selectedIds?: number[];
+  onSelectionChange?: (ids: number[]) => void;
+  onPagePrev?: () => void;
+  onPageNext?: () => void;
+  hasPrev?: boolean;
+  hasNext?: boolean;
+}
 
 
 // ─── Placeholder play action ──────────────────────────────────────────────────
@@ -28,6 +40,7 @@ interface ContextMenuState {
 export function TrackList({
   tracks,
   selectionMode = false,
+  selectedIds = [],
   onSelectionChange,
   onPagePrev,
   onPageNext,
@@ -35,11 +48,12 @@ export function TrackList({
   hasNext = false,
 }: TrackListProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
-  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [activeSources, setActiveSources] = useState<Record<number, string | null>>({});
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const setNowPlayingUrl = usePlayerStore((s) => s.setNowPlayingUrl);
   const setNowPlayingDbId = usePlayerStore((s) => s.setNowPlayingDbId);
+
+  const selectedSet = new Set(selectedIds);
 
   // Close context menu on any outside click
   useEffect(() => {
@@ -50,14 +64,11 @@ export function TrackList({
   }, [contextMenu]);
 
   const handleSelect = useCallback((id: number, checked: boolean) => {
-    setSelectedIds(prev => {
-      log(`Selection change: ${id} ${checked ? 'selected' : 'deselected'}`);
-      const next = new Set(prev);
-      checked ? next.add(id) : next.delete(id);
-      onSelectionChange?.([...next]);
-      return next;
-    });
-  }, [onSelectionChange]);
+    log(`Selection change: ${id} ${checked ? 'selected' : 'deselected'}`);
+    const next = new Set(selectedIds);
+    checked ? next.add(id) : next.delete(id);
+    onSelectionChange?.([...next]);
+  }, [onSelectionChange, selectedIds]);
 
   const handleContextMenu = useCallback((e: React.MouseEvent, trackId: number) => {
     setContextMenu({ x: e.clientX, y: e.clientY, trackId });
@@ -92,7 +103,7 @@ export function TrackList({
             key={track.id}
             track={track}
             selectionMode={selectionMode}
-            selected={selectedIds.has(track.id)}
+            selected={selectedSet.has(track.id)}
             activeSource={activeSources[track.id] ?? track.sources[0]?.url ?? null}
             onSelect={handleSelect}
             onContextMenu={handleContextMenu}
@@ -117,9 +128,10 @@ export function TrackList({
           <li
             className="tracklist__context-menu-item"
             onClick={() => {
-              handleSelect(contextTrack.id, !selectedIds.has(contextTrack.id));
+              handleSelect(contextTrack.id, !selectedSet.has(contextTrack.id));
               setContextMenu(null);
             }}
+
           >
             Select
           </li>
