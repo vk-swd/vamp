@@ -261,7 +261,7 @@ export default function App() {
 
       {/* ── Persistent bottom bar ── */}
       <footer className="bottom-bar">
-        <PlayerControls player={ytPlayer} />
+        <PlayerControls />
       </footer>
     </div>
   );

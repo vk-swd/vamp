@@ -1,8 +1,5 @@
 import { useEffect, useRef, useState } from "react";
 import { usePlayerStore } from "./store";
-interface PlayerControlsProps {
-  player: YT.Player | null;
-}
 
 function formatTime(seconds: number): string {
   if (!isFinite(seconds) || seconds < 0) return "0:00";
@@ -11,36 +8,42 @@ function formatTime(seconds: number): string {
   return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
-export function PlayerControls({ player }: PlayerControlsProps) {
+export function PlayerControls() {
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [volume, setVolume] = useState(100);
   const isDraggingRef = useRef(false);
-  const ytPlayerState = usePlayerStore((state) => state);
-  const loopEnabled = usePlayerStore((s) => s.loopEnabled);
+
+  const playerActive = usePlayerStore((s) => s.playerActive);
+  const play         = usePlayerStore((s) => s.play);
+  const stop         = usePlayerStore((s) => s.stop);
+  const seekTo       = usePlayerStore((s) => s.seekTo);
+  const getCurrentTime = usePlayerStore((s) => s.getCurrentTime);
+  const getDuration    = usePlayerStore((s) => s.getDuration);
+  const getVolume      = usePlayerStore((s) => s.getVolume);
+  const storeSetVolume = usePlayerStore((s) => s.setVolume);
+  const loopEnabled    = usePlayerStore((s) => s.loopEnabled);
   const setLoopEnabled = usePlayerStore((s) => s.setLoopEnabled);
-  // Sync initial volume and poll time/duration while player is available
+
+  // When a player becomes active: sync initial volume and start polling time/duration.
   useEffect(() => {
-    if (!ytPlayerState.ytPlayer) {
+    if (!playerActive) {
       setCurrentTime(0);
       setDuration(0);
       return;
     }
 
-    setVolume(ytPlayerState.ytPlayer.getVolume());
+    setVolume(getVolume());
 
     const id = setInterval(() => {
-      if (!ytPlayerState.ytPlayer) {
-        return;
-      }
       if (!isDraggingRef.current) {
-        setCurrentTime(ytPlayerState.getCurrentTime());
+        setCurrentTime(getCurrentTime());
       }
-      setDuration(ytPlayerState.ytPlayer.getDuration() ?? 0);
+      setDuration(getDuration());
     }, 250);
 
     return () => clearInterval(id);
-  }, [ytPlayerState.ytPlayer]);
+  }, [playerActive]);
 
   const handleSeekChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setCurrentTime(parseFloat(e.target.value));
@@ -48,13 +51,13 @@ export function PlayerControls({ player }: PlayerControlsProps) {
 
   const commitSeek = (e: React.SyntheticEvent<HTMLInputElement>) => {
     isDraggingRef.current = false;
-    ytPlayerState.ytPlayer?.seekTo(parseFloat((e.target as HTMLInputElement).value), true);
+    seekTo(parseFloat((e.target as HTMLInputElement).value));
   };
 
   const handleVolumeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const v = parseInt(e.target.value, 10);
     setVolume(v);
-    ytPlayerState.ytPlayer?.setVolume(v);
+    storeSetVolume(v);
   };
 
   const volumeIcon = volume === 0 ? "🔇" : volume < 50 ? "🔉" : "🔊";
@@ -65,15 +68,15 @@ export function PlayerControls({ player }: PlayerControlsProps) {
       <div className="ctrl-row ctrl-buttons">
         <button
           className="btn btn-primary ctrl-btn"
-          disabled={!ytPlayerState.ytPlayer}
-          onClick={() => ytPlayerState.ytPlayer?.playVideo()}
+          disabled={!playerActive}
+          onClick={play}
         >
           ▶ Play
         </button>
         <button
           className="btn btn-secondary ctrl-btn"
-          disabled={!ytPlayerState.ytPlayer}
-          onClick={() => ytPlayerState.ytPlayer?.stopVideo()}
+          disabled={!playerActive}
+          onClick={stop}
         >
           ■ Stop
         </button>
@@ -96,7 +99,7 @@ export function PlayerControls({ player }: PlayerControlsProps) {
           max={duration > 0 ? duration : 0}
           step={0.5}
           value={currentTime}
-          disabled={!ytPlayerState.ytPlayer || duration === 0}
+          disabled={!playerActive || duration === 0}
           onMouseDown={() => { isDraggingRef.current = true; }}
           onTouchStart={() => { isDraggingRef.current = true; }}
           onChange={handleSeekChange}
@@ -116,7 +119,7 @@ export function PlayerControls({ player }: PlayerControlsProps) {
           max={100}
           step={1}
           value={volume}
-          disabled={!player}
+          disabled={!playerActive}
           onChange={handleVolumeChange}
         />
         <span className="ctrl-time">{volume}%</span>

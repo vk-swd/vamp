@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import { usePlayerStore } from "../store";
+import { log } from "../logger";
 
 // ── SoundCloud Widget API types ───────────────────────────────────────────────
 
@@ -102,8 +103,12 @@ export function SCPlayer({
 }: SCPlayerProps) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const widgetRef = useRef<SCWidget | null>(null);
-  // Cached playback position, updated via PLAY_PROGRESS for synchronous getCurrentTime.
+  // Cached playback position (ms), updated via playProgress for synchronous getCurrentTime.
   const positionMsRef = useRef<number>(0);
+  // Cached duration (ms), fetched once on ready.
+  const durationMsRef = useRef<number>(0);
+  // Cached volume (0-100), mirrors what we set so getVolume() is synchronous.
+  const volumeRef = useRef<number>(100);
   // Keep callbacks fresh without re-running the effect.
   const onReadyRef = useRef(onReady);
   const onFinishRef = useRef(onFinish);
@@ -135,14 +140,26 @@ export function SCPlayer({
         onReadyRef.current?.(widget);
 
         if (registerAsActivePlayer) {
+            log(`Registering SC player as active player in store`);
           usePlayerStore.getState().setActivePlayer({
-            play:           () => widget.play(),
-            pause:          () => widget.pause(),
-            stop:           () => { widget.seekTo(0); widget.pause(); },
-            replay:         () => { widget.seekTo(0); widget.play(); },
-            seekTo:         (s) => widget.seekTo(s * 1000),
+            play:           () => { 
+                log(`playing`);
+                widget.play()
+            },
+            pause:          () => { log(`pausing`); widget.pause(); },
+            stop:           () => { 
+                log(`stopping`);
+                widget.seekTo(0); widget.pause(); },
+            replay:         () => { log(`replaying`); widget.seekTo(0); widget.play(); },
+            seekTo:         (s) => { log(`seeking to ${s}`); widget.seekTo(s * 1000); },
             getCurrentTime: () => positionMsRef.current / 1000,
+            getDuration:    () => durationMsRef.current / 1000,
+            getVolume:      () => volumeRef.current,
+            setVolume:      (v) => { volumeRef.current = v; widget.setVolume(v); },
           });
+
+          // Cache the track duration once the widget is ready.
+          widget.getDuration((ms: number) => { durationMsRef.current = ms; });
 
           // Keep positionMsRef in sync for synchronous getCurrentTime reads.
           widget.bind("playProgress", (e: { currentPosition: number }) => {

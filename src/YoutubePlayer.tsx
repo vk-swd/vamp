@@ -160,6 +160,9 @@ export function YoutubePlayerOwner({ videoId, onListenedSeconds, onPlayerReady, 
         replay:         () => { player.seekTo(0, true); player.playVideo(); },
         seekTo:         (s) => player.seekTo(s, true),
         getCurrentTime: () => player.getCurrentTime(),
+        getDuration:    () => player.getDuration(),
+        getVolume:      () => player.getVolume(),
+        setVolume:      (v) => player.setVolume(v),
       });
     }
   }

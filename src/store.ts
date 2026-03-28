@@ -15,6 +15,12 @@ export interface ActivePlayerControls {
   seekTo: (seconds: number) => void;
   /** Return the current playback position in seconds (synchronous). */
   getCurrentTime: () => number;
+  /** Return the total duration in seconds (synchronous). */
+  getDuration: () => number;
+  /** Return the current volume 0-100 (synchronous). */
+  getVolume: () => number;
+  /** Set the volume 0-100. */
+  setVolume: (volume: number) => void;
 }
 
 const NOOP_CONTROLS: ActivePlayerControls = {
@@ -24,6 +30,9 @@ const NOOP_CONTROLS: ActivePlayerControls = {
   replay: () => {},
   seekTo: () => {},
   getCurrentTime: () => 0,
+  getDuration: () => 0,
+  getVolume: () => 100,
+  setVolume: () => {},
 };
 
 // ── Store interface ───────────────────────────────────────────────────────────
@@ -58,6 +67,14 @@ interface PlayerStore {
   seekTo: (seconds: number) => void;
   /** Return the current playback position in seconds. Returns 0 when no player is loaded. */
   getCurrentTime: () => number;
+  /** Return the total duration in seconds. Returns 0 when no player is loaded. */
+  getDuration: () => number;
+  /** Return the current volume 0-100. Returns 100 when no player is loaded. */
+  getVolume: () => number;
+  /** Set the volume 0-100. No-op when no player is loaded. */
+  setVolume: (volume: number) => void;
+  /** True while a player has registered itself as active. */
+  playerActive: boolean;
   /**
    * Called by the active player when the user seeks inside the player widget.
    * Register a listener via `setOnSeekTo` to react (e.g. sync a progress bar).
@@ -86,8 +103,9 @@ export const usePlayerStore = create<PlayerStore>((set) => ({
 
   // Strategy defaults — all no-ops until a player registers itself.
   ...NOOP_CONTROLS,
+  playerActive: false,
   onSeekTo: () => {},
-  setActivePlayer: (controls) => set({ ...controls, onSeekTo: () => {} }),
-  clearActivePlayer: () => set({ ...NOOP_CONTROLS, onSeekTo: () => {} }),
+  setActivePlayer: (controls) => set({ ...controls, playerActive: true, onSeekTo: () => {} }),
+  clearActivePlayer: () => set({ ...NOOP_CONTROLS, playerActive: false, onSeekTo: () => {} }),
   setOnSeekTo: (fn) => set({ onSeekTo: fn }),
 }));
