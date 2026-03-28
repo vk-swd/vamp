@@ -7,6 +7,7 @@ import { TrackInfoDialog, type TrackData } from './track/TrackInfo';
 import { addTrack, getTracksWithSources } from './tauriDb';
 import type { TrackWithSources } from './data/TrackItem';
 import { log } from '../logger';
+import { usePlayerStore } from '../store';
 
 const PAGE_SIZE = 20;
 
@@ -38,6 +39,8 @@ export function LibraryWidget() {
   const [cursor,      setCursor]      = useState<number | null>(null);
   const [prevCursors, setPrevCursors] = useState<(number | null)[]>([]);
   const [hasNext,     setHasNext]     = useState(false);
+
+  const setSelectedTracks = usePlayerStore((s) => s.setSelectedTracks);
 
   function loadPage(fromCursor: number | null) {
     getTracksWithSources(fromCursor, null, PAGE_SIZE)
@@ -74,6 +77,8 @@ export function LibraryWidget() {
         <SearchWidget />
         <TrackList
           tracks={tracks}
+          selectionMode={true}
+          onSelectionChange={(ids) => setSelectedTracks(tracks.filter(t => ids.includes(t.id)))}
           onPagePrev={handlePagePrev}
           onPageNext={handlePageNext}
           hasPrev={prevCursors.length > 0}

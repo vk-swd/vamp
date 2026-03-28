@@ -62,9 +62,33 @@ interface NowPlayingTabProps {
 function NowPlayingTab({ track }: NowPlayingTabProps) {
   const [mountKey] = useState(0);
   const setYtPlayer = usePlayerStore((s) => s.setYtPlayer);
+  const loopEnabled = usePlayerStore((s) => s.loopEnabled);
+  const selectedTracks = usePlayerStore((s) => s.selectedTracks);
+  const ytPlayer = usePlayerStore((s) => s.ytPlayer);
+  const setNowPlayingUrl = usePlayerStore((s) => s.setNowPlayingUrl);
+  const setNowPlayingDbId = usePlayerStore((s) => s.setNowPlayingDbId);
 
   // Clear the global player reference when this tab unmounts.
   useEffect(() => () => { setYtPlayer(null); }, []);
+
+  function handleEnded() {
+    log(`${loopEnabled} ${selectedTracks.length} ${track.dbTrackId}`);
+    if (loopEnabled) {
+      log("Looping current track");
+      // ytPlayer?.seekTo(0, true);
+      ytPlayer?.playVideo();
+      return;
+    }
+    if (selectedTracks.length === 0) return;
+    const currentIndex = selectedTracks.findIndex(t => t.id === track.dbTrackId);
+    const nextIndex = (currentIndex === -1 ? 0 : currentIndex + 1) % selectedTracks.length;
+    const nextTrack = selectedTracks[nextIndex];
+    const url = nextTrack.sources[0]?.url ?? null;
+    if (url) {
+      setNowPlayingDbId(nextTrack.id);
+      setNowPlayingUrl(url);
+    }
+  }
 
   return (
     <div className="now-playing-tab">
@@ -77,6 +101,7 @@ function NowPlayingTab({ track }: NowPlayingTabProps) {
               ? (s) => addListenedSeconds(track.dbTrackId!, s).catch((e) => log(`addListenedSeconds: ${e}`))
               : undefined}
             onPlayerReady={setYtPlayer}
+            onEnded={handleEnded}
           />
         )}
         {/* <button onClick={updated}>hello</button> */}

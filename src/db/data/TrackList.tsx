@@ -3,6 +3,7 @@ import type { TrackRow } from '../tauriDb';
 import './TrackList.css';
 import { TrackItem, type TrackWithSources, TrackListProps } from './TrackItem';
 import { usePlayerStore } from '../../store';
+import { log } from '../../logger';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -50,6 +51,7 @@ export function TrackList({
 
   const handleSelect = useCallback((id: number, checked: boolean) => {
     setSelectedIds(prev => {
+      log(`Selection change: ${id} ${checked ? 'selected' : 'deselected'}`);
       const next = new Set(prev);
       checked ? next.add(id) : next.delete(id);
       onSelectionChange?.([...next]);

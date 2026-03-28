@@ -66,9 +66,11 @@ export interface YoutubePlayerOwnerProps {
   onListenedSeconds?: (seconds: number) => void;
   /** Called once the player is ready. Omit for preview-only instances. */
   onPlayerReady?: (player: YT.Player) => void;
+  /** Called when the video finishes playing (state ENDED). */
+  onEnded?: () => void;
 }
 
-export function YoutubePlayerOwner({ videoId, onListenedSeconds, onPlayerReady }: YoutubePlayerOwnerProps) {
+export function YoutubePlayerOwner({ videoId, onListenedSeconds, onPlayerReady, onEnded }: YoutubePlayerOwnerProps) {
   const [mountKey, setMountKey] = useState(0);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Stable random prefix unique per component instance — prevents colliding
@@ -88,6 +90,8 @@ export function YoutubePlayerOwner({ videoId, onListenedSeconds, onPlayerReady }
   // Keep callback accessible inside closures without re-creating them.
   const onListenedSecondsRef = useRef<((s: number) => void) | undefined>(onListenedSeconds);
   onListenedSecondsRef.current = onListenedSeconds;
+  const onEndedRef = useRef<(() => void) | undefined>(onEnded);
+  onEndedRef.current = onEnded;
 
   /** Add elapsed time since last start to the accumulator. Resets the clock. */
   function snapshotElapsed() {
@@ -132,6 +136,9 @@ export function YoutubePlayerOwner({ videoId, onListenedSeconds, onPlayerReady }
       snapshotElapsed();
       playStartRef.current = null;
       drainAccumulated();
+      if (state === 0) {
+        onEndedRef.current?.();
+      }
     }
   }
 

@@ -17,6 +17,8 @@ export function PlayerControls({ player }: PlayerControlsProps) {
   const [volume, setVolume] = useState(100);
   const isDraggingRef = useRef(false);
   const ytPlayerState = usePlayerStore((state) => state);
+  const loopEnabled = usePlayerStore((s) => s.loopEnabled);
+  const setLoopEnabled = usePlayerStore((s) => s.setLoopEnabled);
   // Sync initial volume and poll time/duration while player is available
   useEffect(() => {
     if (!ytPlayerState.ytPlayer) {
@@ -74,6 +76,13 @@ export function PlayerControls({ player }: PlayerControlsProps) {
           onClick={() => ytPlayerState.ytPlayer?.stopVideo()}
         >
           ■ Stop
+        </button>
+        <button
+          className={`btn ctrl-btn${loopEnabled ? " btn-primary" : " btn-secondary"}`}
+          title="Loop current track instead of advancing to next"
+          onClick={() => setLoopEnabled(!loopEnabled)}
+        >
+          ⟳ Loop
         </button>
       </div>
 
