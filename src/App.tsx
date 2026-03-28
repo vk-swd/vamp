@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, type FormEvent } from "react";
+// import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { YoutubePlayerOwner } from "./YoutubePlayer";
 import { PlayerControls } from "./PlayerControls";
 import { usePlayerStore } from "./store";
@@ -41,6 +42,7 @@ function extractSoundCloudUrl(raw: string): string | null {
 
 // ── types ─────────────────────────────────────────────────────────────────────
 
+// type TabId = "library" | "now-playing" | "playlist" | "database" | "browserleaks";
 type TabId = "library" | "now-playing" | "playlist" | "database";
 type SourceType = "youtube" | "soundcloud" | "localfile";
 
@@ -158,11 +160,32 @@ export default function App() {
     setNowPlayingDbId(null);
   }, [nowPlayingUrl]);
 
+  // Open browserleaks.com in a dedicated Tauri window (iframe is blocked by
+  // X-Frame-Options: DENY sent by the target server — not fixable via CSP).
+  // useEffect(() => {
+  //   if (activeTab !== "browserleaks") return;
+  //   const label = "browserleaks";
+  //   WebviewWindow.getByLabel(label).then((existing) => {
+  //     if (existing) {
+  //       existing.setFocus();
+  //     } else {
+  //       new WebviewWindow(label, {
+  //         url: "https://browserleaks.com",
+  //         title: "BrowserLeaks",
+  //         width: 1200,
+  //         height: 800,
+  //         center: true,
+  //       });
+  //     }
+  //   });
+  // }, [activeTab]);
+
   const tabs: { id: TabId; label: string; disabled?: boolean }[] = [
-    { id: "library",     label: "Library" },
-    { id: "now-playing", label: "Now Playing", disabled: !track },
-    { id: "playlist",    label: "Playlist" },
-    { id: "database",    label: "Database" },
+    { id: "library",      label: "Library" },
+    { id: "now-playing",  label: "Now Playing", disabled: !track },
+    { id: "playlist",     label: "Playlist" },
+    { id: "database",     label: "Database" },
+    { id: "browserleaks", label: "BrowserLeaks" },
   ];
 
   return (
@@ -256,6 +279,13 @@ export default function App() {
             <LibraryWidget/>
           </div>
         )}
+
+        {/* BrowserLeaks
+        {activeTab === "browserleaks" && (
+          <div className="placeholder-panel">
+            BrowserLeaks opened in a separate window.
+          </div>
+        )} */}
 
       </main>
 
