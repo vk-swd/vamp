@@ -94,6 +94,7 @@ function NowPlayingTab({ track }: NowPlayingTabProps) {
           <YoutubePlayerOwner
             key={mountKey}
             videoId={track.id}
+            registerAsActivePlayer
             onListenedSeconds={track.dbTrackId != null
               ? (s) => addListenedSeconds(track.dbTrackId!, s).catch((e) => log(`addListenedSeconds: ${e}`))
               : undefined}
@@ -102,7 +103,7 @@ function NowPlayingTab({ track }: NowPlayingTabProps) {
           />
         )}
         {/* <button onClick={updated}>hello</button> */}
-        {track.sourceType === "soundcloud" && <SCPlayer url={track.id} autoPlay />}
+        {track.sourceType === "soundcloud" && <SCPlayer url={track.id} autoPlay registerAsActivePlayer />}
         {track.sourceType === "localfile" && <LocalFileInfo />}
       </div>
     </div>
@@ -222,7 +223,7 @@ export default function App() {
 
             {scLibraryUrl ? (
               <section className="sc-embed-section">
-                <SCPlayer url={scLibraryUrl} />
+                <SCPlayer url={scLibraryUrl} registerAsActivePlayer />
               </section>
             ) : (
               <section className="featured-section">

@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { usePlayerStore } from "../store";
 
 // ── SoundCloud Widget API types ───────────────────────────────────────────────
 
@@ -79,6 +80,12 @@ export interface SCPlayerProps {
   onReady?: (widget: SCWidget) => void;
   /** Called when playback finishes. */
   onFinish?: () => void;
+  /**
+   * When true, registers this player as the app-wide active player in the
+   * Zustand store (play/pause/stop/replay/seekTo/onSeekTo). Only set on
+   * main-playback instances — NOT on preview players.
+   */
+  registerAsActivePlayer?: boolean;
 }
 
 /**
@@ -91,9 +98,12 @@ export function SCPlayer({
   autoPlay = false,
   onReady,
   onFinish,
+  registerAsActivePlayer,
 }: SCPlayerProps) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const widgetRef = useRef<SCWidget | null>(null);
+  // Cached playback position, updated via PLAY_PROGRESS for synchronous getCurrentTime.
+  const positionMsRef = useRef<number>(0);
   // Keep callbacks fresh without re-running the effect.
   const onReadyRef = useRef(onReady);
   const onFinishRef = useRef(onFinish);
@@ -123,6 +133,30 @@ export function SCPlayer({
       widget.bind("ready", () => {
         if (cancelled) return;
         onReadyRef.current?.(widget);
+
+        if (registerAsActivePlayer) {
+          usePlayerStore.getState().setActivePlayer({
+            play:           () => widget.play(),
+            pause:          () => widget.pause(),
+            stop:           () => { widget.seekTo(0); widget.pause(); },
+            replay:         () => { widget.seekTo(0); widget.play(); },
+            seekTo:         (s) => widget.seekTo(s * 1000),
+            getCurrentTime: () => positionMsRef.current / 1000,
+          });
+
+          // Keep positionMsRef in sync for synchronous getCurrentTime reads.
+          widget.bind("playProgress", (e: { currentPosition: number }) => {
+            if (!cancelled) positionMsRef.current = e.currentPosition;
+          });
+
+          // Forward seek events from the SC widget to the store's onSeekTo slot.
+          widget.bind("seek", (e: { currentPosition: number }) => {
+            if (!cancelled) {
+              positionMsRef.current = e.currentPosition;
+              usePlayerStore.getState().onSeekTo(e.currentPosition / 1000);
+            }
+          });
+        }
       });
 
       widget.bind("finish", () => {
@@ -134,6 +168,9 @@ export function SCPlayer({
     return () => {
       cancelled = true;
       widgetRef.current = null;
+      if (registerAsActivePlayer) {
+        usePlayerStore.getState().clearActivePlayer();
+      }
     };
   }, [url]);
 

@@ -1,5 +1,6 @@
 import { MutableRefObject, useEffect, useRef, useState } from "react";
 import { log } from "./logger";
+import { usePlayerStore } from "./store";
 
 declare global {
   interface Window {
@@ -68,9 +69,15 @@ export interface YoutubePlayerOwnerProps {
   onPlayerReady?: (player: YT.Player) => void;
   /** Called when the video finishes playing (state ENDED). */
   onEnded?: () => void;
+  /**
+   * When true, registers this player as the app-wide active player in the
+   * Zustand store (play/pause/stop/replay/seekTo). Only set on main-playback
+   * instances — NOT on preview players.
+   */
+  registerAsActivePlayer?: boolean;
 }
 
-export function YoutubePlayerOwner({ videoId, onListenedSeconds, onPlayerReady, onEnded }: YoutubePlayerOwnerProps) {
+export function YoutubePlayerOwner({ videoId, onListenedSeconds, onPlayerReady, onEnded, registerAsActivePlayer }: YoutubePlayerOwnerProps) {
   const [mountKey, setMountKey] = useState(0);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Stable random prefix unique per component instance — prevents colliding
@@ -145,6 +152,16 @@ export function YoutubePlayerOwner({ videoId, onListenedSeconds, onPlayerReady, 
   function handlePlayerReady(player: YT.Player) {
     playerRef.current = player;
     onPlayerReady?.(player);
+    if (registerAsActivePlayer) {
+      usePlayerStore.getState().setActivePlayer({
+        play:           () => player.playVideo(),
+        pause:          () => player.pauseVideo(),
+        stop:           () => player.stopVideo(),
+        replay:         () => { player.seekTo(0, true); player.playVideo(); },
+        seekTo:         (s) => player.seekTo(s, true),
+        getCurrentTime: () => player.getCurrentTime(),
+      });
+    }
   }
 
   const [showReload, setShowReload] = useState(false);
@@ -214,6 +231,9 @@ export function YoutubePlayerOwner({ videoId, onListenedSeconds, onPlayerReady, 
       snapshotElapsed();
       playStartRef.current = null;
       drainAccumulated();
+      if (registerAsActivePlayer) {
+        usePlayerStore.getState().clearActivePlayer();
+      }
     }
   }, [mountKey]);
   

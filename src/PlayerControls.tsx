@@ -34,7 +34,7 @@ export function PlayerControls({ player }: PlayerControlsProps) {
         return;
       }
       if (!isDraggingRef.current) {
-        setCurrentTime(ytPlayerState.ytPlayer.getCurrentTime() ?? 0);
+        setCurrentTime(ytPlayerState.getCurrentTime());
       }
       setDuration(ytPlayerState.ytPlayer.getDuration() ?? 0);
     }, 250);
