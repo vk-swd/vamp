@@ -6,6 +6,7 @@ import "./App.css";
 import { addListenedSeconds } from "./db/tauriDb";
 import { log } from "./logger";
 import { LibraryWidget } from "./db/LibraryWidget";
+import { SCPlayer } from "./players/SCPlayer";
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -24,13 +25,19 @@ function extractVideoId(raw: string): string | null {
   return null;
 }
 
-const FEATURED: { id: string; title: string; thumb: string }[] = [
-  {
-    id: "R8MWKsheHxk",
-    title: "dnb",
-    thumb: "https://img.youtube.com/vi/R8MWKsheHxk/mqdefault.jpg",
+/** Returns the URL if it looks like a valid SoundCloud track/playlist link, otherwise null. */
+function extractSoundCloudUrl(raw: string): string | null {
+  const trimmed = raw.trim();
+  try {
+    const parsed = new URL(trimmed);
+    if (parsed.hostname === "soundcloud.com" && parsed.pathname.length > 1) {
+      return trimmed;
+    }
+  } catch {
+    // not a valid URL
   }
-];
+  return null;
+}
 
 // ── types ─────────────────────────────────────────────────────────────────────
 
@@ -44,10 +51,6 @@ interface Track {
 }
 
 // ── placeholder sub-components ────────────────────────────────────────────────
-
-function SoundCloudPlayer() {
-  return <div className="placeholder-panel">SoundCloud player coming soon</div>;
-}
 
 function LocalFileInfo() {
   return <div className="placeholder-panel">Local file info coming soon</div>;
@@ -99,7 +102,7 @@ function NowPlayingTab({ track }: NowPlayingTabProps) {
           />
         )}
         {/* <button onClick={updated}>hello</button> */}
-        {track.sourceType === "soundcloud" && <SoundCloudPlayer />}
+        {track.sourceType === "soundcloud" && <SCPlayer url={track.id} autoPlay />}
         {track.sourceType === "localfile" && <LocalFileInfo />}
       </div>
     </div>
@@ -112,7 +115,8 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<TabId>("library");
   const [track, setTrack] = useState<Track | null>(null);
   const [input, setInput] = useState("");
-  const [error, setError] = useState<string | null>(null);
+  const [scError, setScError] = useState<string | null>(null);
+  const [scLibraryUrl, setScLibraryUrl] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const ytPlayer = usePlayerStore((s) => s.ytPlayer);
@@ -126,11 +130,22 @@ export default function App() {
     const id = extractVideoId(raw.trim());
     if (id) {
       setTrack({ id, sourceType: "youtube", dbTrackId });
-      setError(null);
       setActiveTab("now-playing");
     } else {
-      setError("⚠️  Could not find a valid YouTube video ID.");
       setTrack(null);
+    }
+  };
+
+  // ── load SoundCloud track into the library embed ──
+  const handleScSubmit = (e: FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    const url = extractSoundCloudUrl(input);
+    if (url) {
+      setScLibraryUrl(url);
+      setScError(null);
+    } else {
+      setScError("⚠️  Please enter a valid SoundCloud track URL (e.g. https://soundcloud.com/artist/track).");
+      setScLibraryUrl(null);
     }
   };
 
@@ -141,11 +156,6 @@ export default function App() {
     setNowPlayingUrl(null);
     setNowPlayingDbId(null);
   }, [nowPlayingUrl]);
-
-  const handleSubmit = (e: FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
-    loadVideo(input);
-  };
 
   const tabs: { id: TabId; label: string; disabled?: boolean }[] = [
     { id: "library",     label: "Library" },
@@ -162,9 +172,8 @@ export default function App() {
           <svg className="brand-icon" viewBox="0 0 24 24" fill="currentColor">
             <path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z" />
           </svg>
-          <span className="brand-text">VampAgent</span>
+          <span className="brand-text">Vamp</span>
         </div>
-        <span className="brand-sub">YouTube Viewer</span>
       </header>
 
       {/* ── Tab bar ── */}
@@ -192,47 +201,36 @@ export default function App() {
         {activeTab === "library" && (
           <div className="library-tab">
             <section className="search-section">
-              <form onSubmit={handleSubmit} className="search-form">
+              <form onSubmit={handleScSubmit} className="search-form">
                 <input
                   ref={inputRef}
                   type="text"
-                  className={`search-input${error ? " search-input--error" : ""}`}
-                  placeholder="Paste a YouTube URL or video ID…"
+                  className={`search-input${scError ? " search-input--error" : ""}`}
+                  placeholder="Paste a SoundCloud track URL…"
                   value={input}
                   onChange={(e) => {
                     setInput(e.target.value);
-                    if (error) setError(null);
+                    if (scError) setScError(null);
                   }}
                 />
                 <button type="submit" className="btn btn-primary">
-                  ▶ Play
+                  ▶ Load
                 </button>
               </form>
-              {error && <p className="error-msg">{error}</p>}
+              {scError && <p className="error-msg">{scError}</p>}
             </section>
 
-            <section className="featured-section">
-              <h2 className="featured-heading">Featured Videos</h2>
-              <div className="featured-grid">
-                {FEATURED.map((v) => (
-                  <button
-                    key={v.id}
-                    className="thumb-card"
-                    onClick={() => {
-                      setInput(v.id);
-                      loadVideo(v.id);
-                    }}
-                  >
-                    <img src={v.thumb} alt={v.title} className="thumb-img" />
-                    <p className="thumb-title">{v.title}</p>
-                  </button>
-                ))}
-              </div>
-              <p className="hint">
-                Paste any YouTube URL or video ID in the bar above, or pick a
-                featured video.
-              </p>
-            </section>
+            {scLibraryUrl ? (
+              <section className="sc-embed-section">
+                <SCPlayer url={scLibraryUrl} />
+              </section>
+            ) : (
+              <section className="featured-section">
+                <p className="hint">
+                  Paste a SoundCloud track URL above to embed the player here.
+                </p>
+              </section>
+            )}
           </div>
         )}
 

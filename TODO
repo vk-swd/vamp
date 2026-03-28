@@ -1,0 +1,3 @@
+Csp seems not to be properly enforced which allowed loading soundcloud embeds in the dev mode.
+This should be addressed...probably later =D
+Meanwhile dont hack yourself and paste any other links then from soundcloud or youtube.
