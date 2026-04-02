@@ -185,7 +185,7 @@ export default function App() {
     { id: "now-playing",  label: "Now Playing", disabled: !track },
     { id: "playlist",     label: "Playlist" },
     { id: "database",     label: "Database" },
-    { id: "browserleaks", label: "BrowserLeaks" },
+    // { id: "browserleaks", label: "BrowserLeaks" },
   ];
 
   return (
@@ -291,7 +291,7 @@ export default function App() {
 
       {/* ── Persistent bottom bar ── */}
       <footer className="bottom-bar">
-        <PlayerControls />
+        <PlayerControls trackLabel={track ? `${track.artist} – ${track.name}` : ""} duration={track ? track.duration : 0} />
       </footer>
     </div>
   );

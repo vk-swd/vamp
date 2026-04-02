@@ -367,11 +367,32 @@
 
 .ctrl-buttons {
   gap: 8px;
+  align-items: flex-start;
+}
+
+.ctrl-track-info {
+  flex: 1;
+  min-width: 0;
+  white-space: normal;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  font-size: 0.9rem;
+  color: var(--text-secondary, var(--text));
+  padding-top: 6px;
+}
+
+.ctrl-track-artist {
+  font-weight: 600;
+}
+
+.ctrl-track-name {
+  font-style: italic;
 }
 
 .ctrl-btn {
   min-width: 90px;
   padding: 8px 16px;
+  flex-shrink: 0;
 }
 
 .ctrl-slider {

@@ -38,6 +38,7 @@ export async function seedFilterDataset(
         tempo_bpm: 120,
         addition_time: "2026-01-01",
         sources: [`https://example.com/track_${i + 1}.mp3`],
+        listened_seconds: 0,
     })));
     progress(`Inserted ${SEED_N} tracks.`, true);
     // Assign tags (same layout as testdb.rs)
@@ -75,6 +76,7 @@ export function expectedRegularRetrievalRes(cursor: number,
             bitrate_kbps: 160,
             tempo_bpm: 120,
             addition_time: "2026-01-01",
+            listened_seconds: 0,
         };
         const tags = Array.from({ length: SEED_SHIFTS }, (_, shift) => tagName(calcTag(i - 1, shift, SEED_N, SEED_TAG_COUNT)));
         const sources = [`https://example.com/track_${i}.mp3`];

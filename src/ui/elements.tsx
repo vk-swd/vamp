@@ -369,6 +369,22 @@ export function reactSelectStyles<
   return _reactSelectStylesCache as StylesConfig<Option, IsMulti, Group>;
 }
 
+// ─── WrappingLabel ───────────────────────────────────────────────────────────
+
+export interface WrappingLabelProps extends React.HTMLAttributes<HTMLSpanElement> {
+  /** Single line of text to display. */
+  text: string;
+}
+
+/**
+ * A span that displays a single text string and word-wraps it gracefully.
+ * Mirrors the track-info label style used in PlayerControls.
+ */
+export function WrappingLabel({ text, className, ...rest }: WrappingLabelProps) {
+  const cls = ['ui-wrapping-label', className].filter(Boolean).join(' ');
+  return <span className={cls} {...rest}>{text}</span>;
+}
+
 // ─── injectGlobalStyles ───────────────────────────────────────────────────────
 
 let _injected = false;

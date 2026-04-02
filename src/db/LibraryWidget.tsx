@@ -106,6 +106,7 @@ export function LibraryWidget() {
               tempo_bpm:      data.tempo_bpm    ?? null,
               addition_time:  new Date().toISOString(),
               sources:        data.sources,
+              listened_seconds: 0,
             }).then(id => {
               log(`Track added with id ${id}`);
               // Reload the same page so the new track appears.

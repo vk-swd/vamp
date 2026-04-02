@@ -381,3 +381,15 @@ body {
   font-size:  var(--ui-fs-xs);
   margin-top: var(--ui-sp-1);
 }
+
+/* ── WrappingLabel ───────────────────────────────────────────────────────── */
+.ui-wrapping-label {
+  color:         var(--ui-text-muted);
+  font-size:     var(--ui-fs-sm);
+  font-weight:   var(--ui-fw-normal);
+  line-height:   1.4;
+  min-width:     0;
+  overflow-wrap: anywhere;
+  white-space:   normal;
+  word-break:    break-word;
+}

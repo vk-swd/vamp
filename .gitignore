@@ -30,3 +30,4 @@ Thumbs.db
 *.lock
 *lock.json
 *.png
+agent_check.txt

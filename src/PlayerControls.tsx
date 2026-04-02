@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { usePlayerStore } from "./store";
+import { log } from "./logger";
+import { WrappingLabel } from "./ui/elements";
 
 function formatTime(seconds: number): string {
   if (!isFinite(seconds) || seconds < 0) return "0:00";
@@ -8,9 +10,8 @@ function formatTime(seconds: number): string {
   return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
-export function PlayerControls() {
+export function PlayerControls(trackLabel: string, duration: number) {
   const [currentTime, setCurrentTime] = useState(0);
-  const [duration, setDuration] = useState(0);
   const [volume, setVolume] = useState(100);
   const isDraggingRef = useRef(false);
 
@@ -27,9 +28,9 @@ export function PlayerControls() {
 
   // When a player becomes active: sync initial volume and start polling time/duration.
   useEffect(() => {
+    log(`Player active: ${playerActive}`);
     if (!playerActive) {
       setCurrentTime(0);
-      setDuration(0);
       return;
     }
 
@@ -39,9 +40,7 @@ export function PlayerControls() {
       if (!isDraggingRef.current) {
         setCurrentTime(getCurrentTime());
       }
-      setDuration(getDuration());
     }, 250);
-
     return () => clearInterval(id);
   }, [playerActive]);
 
@@ -87,6 +86,12 @@ export function PlayerControls() {
         >
           ⟳ Loop
         </button>
+        {trackLabel && (
+          <WrappingLabel
+            text={trackLabel}
+            style={{ flex: 1, paddingTop: 6 }}
+          />
+        )}
       </div>
 
       {/* Seek row */}
