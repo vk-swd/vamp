@@ -3,7 +3,6 @@ import type { TrackRow } from '../tauriDb';
 import './TrackList.css';
 import { TrackItem, type TrackWithSources } from './TrackItem';
 import { usePlayerStore } from '../../store';
-import { log } from '../../logger';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -12,7 +11,8 @@ export interface TrackListProps {
   selectionMode?: boolean;
   /** External selected IDs — the list renders these as selected. */
   selectedIds?: number[];
-  onSelectionChange?: (ids: number[]) => void;
+  /** Fired when a single track is toggled; parent decides how to store/remove. */
+  onSelectionToggle?: (id: number, selected: boolean) => void;
   onPagePrev?: () => void;
   onPageNext?: () => void;
   hasPrev?: boolean;
@@ -41,7 +41,7 @@ export function TrackList({
   tracks,
   selectionMode = false,
   selectedIds = [],
-  onSelectionChange,
+  onSelectionToggle,
   onPagePrev,
   onPageNext,
   hasPrev = false,
@@ -50,8 +50,7 @@ export function TrackList({
   const scrollRef = useRef<HTMLDivElement>(null);
   const [activeSources, setActiveSources] = useState<Record<number, string | null>>({});
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
-  const setNowPlayingUrl = usePlayerStore((s) => s.setNowPlayingUrl);
-  const setNowPlayingDbId = usePlayerStore((s) => s.setNowPlayingDbId);
+  const setTrackToPlay = usePlayerStore((s) => s.setTrackToPlay);
 
   const selectedSet = new Set(selectedIds);
 
@@ -62,13 +61,6 @@ export function TrackList({
     window.addEventListener('click', close, { once: true });
     return () => window.removeEventListener('click', close);
   }, [contextMenu]);
-
-  const handleSelect = useCallback((id: number, checked: boolean) => {
-    log(`Selection change: ${id} ${checked ? 'selected' : 'deselected'}`);
-    const next = new Set(selectedIds);
-    checked ? next.add(id) : next.delete(id);
-    onSelectionChange?.([...next]);
-  }, [onSelectionChange, selectedIds]);
 
   const handleContextMenu = useCallback((e: React.MouseEvent, trackId: number) => {
     setContextMenu({ x: e.clientX, y: e.clientY, trackId });
@@ -105,7 +97,7 @@ export function TrackList({
             selectionMode={selectionMode}
             selected={selectedSet.has(track.id)}
             activeSource={activeSources[track.id] ?? track.sources[0]?.url ?? null}
-            onSelect={handleSelect}
+            onSelect={onSelectionToggle ?? (() => {})}
             onContextMenu={handleContextMenu}
             onSourceChange={handleSourceChange}
           />
@@ -128,7 +120,7 @@ export function TrackList({
           <li
             className="tracklist__context-menu-item"
             onClick={() => {
-              handleSelect(contextTrack.id, !selectedSet.has(contextTrack.id));
+              onSelectionToggle?.(contextTrack.id, !selectedSet.has(contextTrack.id));
               setContextMenu(null);
             }}
 
@@ -139,7 +131,7 @@ export function TrackList({
             className="tracklist__context-menu-item"
             onClick={() => {
               const src = activeSources[contextTrack.id] ?? contextTrack.sources[0]?.url ?? null;
-              if (src) { setNowPlayingDbId(contextTrack.id); setNowPlayingUrl(src); }
+              if (src) { setTrackToPlay(contextTrack, src); }
               setContextMenu(null);
             }}
           >

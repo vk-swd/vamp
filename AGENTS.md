@@ -10,3 +10,4 @@ If the request is unclear:
 If you are unsure:
 - Say so and propose the best possible approach.
 
+- Don't format any code that is unrelated to your changes. For example, if there is a sequence of valiable iitizlisations and you insert a new variable longer then the others, dont format other assignements to make the equal sign be in the same column. Etc.

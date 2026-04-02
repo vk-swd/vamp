@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { usePlayerStore } from "./store";
 import { log } from "./logger";
-import { WrappingLabel } from "./ui/elements";
+import { Button, WrappingLabel } from "./ui/elements";
 
 function formatTime(seconds: number): string {
   if (!isFinite(seconds) || seconds < 0) return "0:00";
@@ -10,21 +10,24 @@ function formatTime(seconds: number): string {
   return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
-export function PlayerControls(trackLabel: string, duration: number) {
+export function PlayerControls({trackLabel, duration}: {trackLabel: string; duration: number}) {
   const [currentTime, setCurrentTime] = useState(0);
   const [volume, setVolume] = useState(100);
   const isDraggingRef = useRef(false);
 
   const playerActive = usePlayerStore((s) => s.playerActive);
+  const isPlaying    = usePlayerStore((s) => s.isPlaying);
   const play         = usePlayerStore((s) => s.play);
+  const pause        = usePlayerStore((s) => s.pause);
   const stop         = usePlayerStore((s) => s.stop);
   const seekTo       = usePlayerStore((s) => s.seekTo);
   const getCurrentTime = usePlayerStore((s) => s.getCurrentTime);
-  const getDuration    = usePlayerStore((s) => s.getDuration);
   const getVolume      = usePlayerStore((s) => s.getVolume);
   const storeSetVolume = usePlayerStore((s) => s.setVolume);
+  const setLoop        = usePlayerStore((s) => s.setLoop);
   const loopEnabled    = usePlayerStore((s) => s.loopEnabled);
   const setLoopEnabled = usePlayerStore((s) => s.setLoopEnabled);
+  
 
   // When a player becomes active: sync initial volume and start polling time/duration.
   useEffect(() => {
@@ -65,33 +68,43 @@ export function PlayerControls(trackLabel: string, duration: number) {
     <div className="player-controls">
       {/* Play / Stop row */}
       <div className="ctrl-row ctrl-buttons">
-        <button
-          className="btn btn-primary ctrl-btn"
+        <Button
           disabled={!playerActive}
-          onClick={play}
+          onClick={isPlaying ? pause : play}
         >
-          ▶ Play
-        </button>
-        <button
-          className="btn btn-secondary ctrl-btn"
+          {isPlaying ? "⏸" : "▶"}
+        </Button>
+        <Button
           disabled={!playerActive}
           onClick={stop}
         >
-          ■ Stop
-        </button>
-        <button
-          className={`btn ctrl-btn${loopEnabled ? " btn-primary" : " btn-secondary"}`}
+          ■
+        </Button>
+        <Button
           title="Loop current track instead of advancing to next"
-          onClick={() => setLoopEnabled(!loopEnabled)}
-        >
-          ⟳ Loop
-        </button>
+          onClick={() => { setLoop(!loopEnabled); setLoopEnabled(!loopEnabled)}}
+        >⟳</Button>
         {trackLabel && (
           <WrappingLabel
             text={trackLabel}
             style={{ flex: 1, paddingTop: 6 }}
           />
         )}
+         {/* Volume row */}
+        <div className="ctrl-row">
+          <span className="ctrl-label">{volumeIcon}</span>
+          <input
+            type="range"
+            className="ctrl-slider"
+            min={0}
+            max={100}
+            step={1}
+            value={volume}
+            disabled={!playerActive}
+            onChange={handleVolumeChange}
+          />
+          <span className="ctrl-time">{volume}%</span>
+        </div>
       </div>
 
       {/* Seek row */}
@@ -112,22 +125,6 @@ export function PlayerControls(trackLabel: string, duration: number) {
           onTouchEnd={commitSeek}
         />
         <span className="ctrl-time">{formatTime(duration)}</span>
-      </div>
-
-      {/* Volume row */}
-      <div className="ctrl-row">
-        <span className="ctrl-label">{volumeIcon}</span>
-        <input
-          type="range"
-          className="ctrl-slider"
-          min={0}
-          max={100}
-          step={1}
-          value={volume}
-          disabled={!playerActive}
-          onChange={handleVolumeChange}
-        />
-        <span className="ctrl-time">{volume}%</span>
       </div>
     </div>
   );

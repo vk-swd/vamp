@@ -80,11 +80,15 @@ export function LibraryWidget() {
           tracks={tracks}
           selectionMode={true}
           selectedIds={selectedTracks.map(t => t.id)}
-          onSelectionChange={(ids) => {
-            // Keep selections from other pages, update selections for the current page.
-            const otherPages = selectedTracks.filter(t => !tracks.some(p => p.id === t.id));
-            const currentPage = tracks.filter(t => ids.includes(t.id));
-            setSelectedTracks([...otherPages, ...currentPage]);
+          onSelectionToggle={(id, selected) => {
+            if (selected) {
+              const track = tracks.find(t => t.id === id);
+              if (track && !selectedTracks.some(t => t.id === id)) {
+                setSelectedTracks([...selectedTracks, track]);
+              }
+            } else {
+              setSelectedTracks(selectedTracks.filter(t => t.id !== id));
+            }
           }}
           onPagePrev={handlePagePrev}
           onPageNext={handlePageNext}

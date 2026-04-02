@@ -133,6 +133,10 @@ export function YoutubePlayerOwner({ videoId, onListenedSeconds, onPlayerReady, 
 
   function handleStateChange(state: number) {
     // YT.PlayerState: PLAYING = 1, PAUSED = 2, ENDED = 0, BUFFERING = 3
+    // Buffering (3) occurs during playback — treat as still playing.
+    if (registerAsActivePlayer) {
+      usePlayerStore.getState().setIsPlaying(state === 1 || state === 3);
+    }
     if (state === 1) {
       // Playback started/resumed — start clock and safety-net timer.
       playStartRef.current = Date.now();
@@ -153,17 +157,18 @@ export function YoutubePlayerOwner({ videoId, onListenedSeconds, onPlayerReady, 
     playerRef.current = player;
     onPlayerReady?.(player);
     if (registerAsActivePlayer) {
-      usePlayerStore.getState().setActivePlayer({
-        play:           () => player.playVideo(),
-        pause:          () => player.pauseVideo(),
-        stop:           () => player.stopVideo(),
-        replay:         () => { player.seekTo(0, true); player.playVideo(); },
-        seekTo:         (s) => player.seekTo(s, true),
-        getCurrentTime: () => player.getCurrentTime(),
-        getDuration:    () => player.getDuration(),
-        getVolume:      () => player.getVolume(),
-        setVolume:      (v) => player.setVolume(v),
-      });
+        usePlayerStore.getState().setActivePlayer({
+          play:           () => player.playVideo(),
+          pause:          () => player.pauseVideo(),
+          stop:           () => player.stopVideo(),
+          replay:         () => { player.seekTo(0, true); player.playVideo(); },
+          seekTo:         (s) => player.seekTo(s, true),
+          getCurrentTime: () => player.getCurrentTime(),
+          getDuration:    () => player.getDuration(),
+          getVolume:      () => player.getVolume(),
+          setVolume:      (v) => player.setVolume(v),
+          setLoop:        (enabled: boolean) => player.setLoop(enabled)
+        });
     }
   }
 

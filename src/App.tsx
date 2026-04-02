@@ -69,8 +69,7 @@ function NowPlayingTab({ track }: NowPlayingTabProps) {
   const setYtPlayer = usePlayerStore((s) => s.setYtPlayer);
   const loopEnabled = usePlayerStore((s) => s.loopEnabled);
   const selectedTracks = usePlayerStore((s) => s.selectedTracks);
-  const setNowPlayingUrl = usePlayerStore((s) => s.setNowPlayingUrl);
-  const setNowPlayingDbId = usePlayerStore((s) => s.setNowPlayingDbId);
+  const setTrackToPlay = usePlayerStore((s) => s.setTrackToPlay);
 
   // Clear the global player reference when this tab unmounts.
   useEffect(() => () => { setYtPlayer(null); }, []);
@@ -84,8 +83,7 @@ function NowPlayingTab({ track }: NowPlayingTabProps) {
     const nextTrack = selectedTracks[nextIndex];
     const url = nextTrack.sources[0]?.url ?? null;
     if (url) {
-      setNowPlayingDbId(nextTrack.id);
-      setNowPlayingUrl(url);
+      setTrackToPlay(nextTrack, url);
     }
   }
 
@@ -122,18 +120,13 @@ export default function App() {
   const [scLibraryUrl, setScLibraryUrl] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  const ytPlayer = usePlayerStore((s) => s.ytPlayer);
-  const nowPlayingUrl = usePlayerStore((s) => s.nowPlayingUrl);
-  const setNowPlayingUrl = usePlayerStore((s) => s.setNowPlayingUrl);
-  const nowPlayingDbId = usePlayerStore((s) => s.nowPlayingDbId);
-  const setNowPlayingDbId = usePlayerStore((s) => s.setNowPlayingDbId);
+  const trackToPlay = usePlayerStore((s) => s.trackToPlay);
 
   // ── load video ──
   const loadVideo = (raw: string, dbTrackId?: number) => {
     const id = extractVideoId(raw.trim());
     if (id) {
       setTrack({ id, sourceType: "youtube", dbTrackId });
-      setActiveTab("now-playing");
     } else {
       setTrack(null);
     }
@@ -154,11 +147,9 @@ export default function App() {
 
   // React to play requests coming from the library/tracklist.
   useEffect(() => {
-    if (!nowPlayingUrl) return;
-    loadVideo(nowPlayingUrl, nowPlayingDbId ?? undefined);
-    setNowPlayingUrl(null);
-    setNowPlayingDbId(null);
-  }, [nowPlayingUrl]);
+    if (!trackToPlay) return;
+    loadVideo(trackToPlay.sourceUrl, trackToPlay.track.id);
+  }, [trackToPlay]);
 
   // Open browserleaks.com in a dedicated Tauri window (iframe is blocked by
   // X-Frame-Options: DENY sent by the target server — not fixable via CSP).
@@ -188,18 +179,9 @@ export default function App() {
     // { id: "browserleaks", label: "BrowserLeaks" },
   ];
 
+  const getDuration    = usePlayerStore((s) => s.getDuration);
   return (
     <div className="app">
-      {/* ── Header ── */}
-      <header className="header">
-        <div className="header-brand">
-          <svg className="brand-icon" viewBox="0 0 24 24" fill="currentColor">
-            <path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z" />
-          </svg>
-          <span className="brand-text">Vamp</span>
-        </div>
-      </header>
-
       {/* ── Tab bar ── */}
       <nav className="tab-bar">
         {tabs.map((t) => (
@@ -291,7 +273,7 @@ export default function App() {
 
       {/* ── Persistent bottom bar ── */}
       <footer className="bottom-bar">
-        <PlayerControls trackLabel={track ? `${track.artist} – ${track.name}` : ""} duration={track ? track.duration : 0} />
+        <PlayerControls trackLabel={`${trackToPlay?.track.artist} - ${trackToPlay?.track.track_name}`} duration={getDuration()} />
       </footer>
     </div>
   );

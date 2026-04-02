@@ -21,6 +21,8 @@ export interface ActivePlayerControls {
   getVolume: () => number;
   /** Set the volume 0-100. */
   setVolume: (volume: number) => void;
+  /** Enable or disable looping of the current track. Optional; may not be supported by all players. */
+  setLoop: (enabled: boolean) => void;
 }
 
 const NOOP_CONTROLS: ActivePlayerControls = {
@@ -33,6 +35,7 @@ const NOOP_CONTROLS: ActivePlayerControls = {
   getDuration: () => 0,
   getVolume: () => 100,
   setVolume: () => {},
+  setLoop: () => {},
 };
 
 // ── Store interface ───────────────────────────────────────────────────────────
@@ -41,12 +44,12 @@ interface PlayerStore {
   /** The live YT.Player instance, or null when nothing is playing. */
   ytPlayer: YT.Player | null;
   setYtPlayer: (player: YT.Player | null) => void;
-  /** Set this to a source URL to request playback from anywhere in the app. */
-  nowPlayingUrl: string | null;
-  setNowPlayingUrl: (url: string | null) => void;
-  /** Database track ID of the currently playing track, or null. */
-  nowPlayingDbId: number | null;
-  setNowPlayingDbId: (id: number | null) => void;
+  /**
+   * Track requested for playback. Assign via setTrackToPlay — assCounter
+   * is bumped on every call so the same track can be re-triggered.
+   */
+  trackToPlay: { track: TrackWithSources; sourceUrl: string; assCounter: number } | null;
+  setTrackToPlay: (track: TrackWithSources, sourceUrl: string) => void;
   /** Tracks currently selected in the library — forms the active playlist. */
   selectedTracks: TrackWithSources[];
   setSelectedTracks: (tracks: TrackWithSources[]) => void;
@@ -73,6 +76,8 @@ interface PlayerStore {
   getVolume: () => number;
   /** Set the volume 0-100. No-op when no player is loaded. */
   setVolume: (volume: number) => void;
+  /** Enable or disable looping of the current track. No-op when no player is loaded. */
+  setLoop: (enabled: boolean) => void;
   /** True while a player has registered itself as active. */
   playerActive: boolean;
   /**
@@ -81,6 +86,10 @@ interface PlayerStore {
    * Reset to no-op whenever a player loads or unloads.
    */
   onSeekTo: (seconds: number) => void;
+  /** True while a track is actively playing (not paused or stopped). */
+  isPlaying: boolean;
+  /** Directly update the isPlaying flag. Called by player components on playback state change. */
+  setIsPlaying: (playing: boolean) => void;
   /** Register the active player's control functions. Called by player components on mount/ready. */
   setActivePlayer: (controls: ActivePlayerControls) => void;
   /** Reset all player controls to no-ops. Called by player components on unmount. */
@@ -92,10 +101,14 @@ interface PlayerStore {
 export const usePlayerStore = create<PlayerStore>((set) => ({
   ytPlayer: null,
   setYtPlayer: (player) => set({ ytPlayer: player }),
-  nowPlayingUrl: null,
-  setNowPlayingUrl: (url) => set({ nowPlayingUrl: url }),
-  nowPlayingDbId: null,
-  setNowPlayingDbId: (id) => set({ nowPlayingDbId: id }),
+  trackToPlay: null,
+  setTrackToPlay: (track, sourceUrl) => set(state => ({
+    trackToPlay: {
+      track,
+      sourceUrl,
+      assCounter: (state.trackToPlay?.assCounter ?? 0) + 1,
+    },
+  })),
   selectedTracks: [],
   setSelectedTracks: (tracks) => set({ selectedTracks: tracks }),
   loopEnabled: false,
@@ -104,8 +117,15 @@ export const usePlayerStore = create<PlayerStore>((set) => ({
   // Strategy defaults — all no-ops until a player registers itself.
   ...NOOP_CONTROLS,
   playerActive: false,
+  isPlaying: false,
   onSeekTo: () => {},
-  setActivePlayer: (controls) => set({ ...controls, playerActive: true, onSeekTo: () => {} }),
-  clearActivePlayer: () => set({ ...NOOP_CONTROLS, playerActive: false, onSeekTo: () => {} }),
+  setIsPlaying: (playing) => set({ isPlaying: playing }),
+  setActivePlayer: (controls) => set({
+    ...controls,
+    playerActive: true,
+    isPlaying: false,
+    onSeekTo: () => {},
+  }),
+  clearActivePlayer: () => set({ ...NOOP_CONTROLS, playerActive: false, isPlaying: false, onSeekTo: () => {} }),
   setOnSeekTo: (fn) => set({ onSeekTo: fn }),
 }));

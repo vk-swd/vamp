@@ -27,12 +27,6 @@
   gap: 10px;
 }
 
-.brand-icon {
-  width: 32px;
-  height: 32px;
-  color: var(--accent);
-}
-
 .brand-text {
   font-size: 1.3rem;
   font-weight: 700;
