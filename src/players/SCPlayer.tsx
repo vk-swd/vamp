@@ -156,18 +156,28 @@ export function SCPlayer({
             getDuration:    () => durationMsRef.current / 1000,
             getVolume:      () => volumeRef.current,
             setVolume:      (v) => { volumeRef.current = v; widget.setVolume(v); },
+            setLoop:        () => {},
           });
 
           // Cache the track duration once the widget is ready.
           widget.getDuration((ms: number) => { durationMsRef.current = ms; });
 
+          // Mirror YoutubePlayer's isPlaying updates.
+          const Events = window.SC!.Widget.Events;
+          widget.bind(Events.PLAY,   () => { if (!cancelled) usePlayerStore.getState().setIsPlaying(true);  });
+          widget.bind(Events.PAUSE,  () => { if (!cancelled) usePlayerStore.getState().setIsPlaying(false); });
+          widget.bind(Events.FINISH, () => { if (!cancelled) usePlayerStore.getState().setIsPlaying(false); });
+
           // Keep positionMsRef in sync for synchronous getCurrentTime reads.
-          widget.bind("playProgress", (e: { currentPosition: number }) => {
-            if (!cancelled) positionMsRef.current = e.currentPosition;
+          widget.bind(Events.PLAY_PROGRESS, (e: { currentPosition: number }) => {
+            if (!cancelled) {
+              positionMsRef.current = e.currentPosition;
+              usePlayerStore.getState().setIsPlaying(true);
+            }
           });
 
           // Forward seek events from the SC widget to the store's onSeekTo slot.
-          widget.bind("seek", (e: { currentPosition: number }) => {
+          widget.bind(Events.SEEK, (e: { currentPosition: number }) => {
             if (!cancelled) {
               positionMsRef.current = e.currentPosition;
               usePlayerStore.getState().onSeekTo(e.currentPosition / 1000);

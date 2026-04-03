@@ -8,37 +8,9 @@ import { addListenedSeconds } from "./db/tauriDb";
 import { log } from "./logger";
 import { LibraryWidget } from "./db/LibraryWidget";
 import { SCPlayer } from "./players/SCPlayer";
+import { getTrackSource } from "./common/utils";
 
 // ── helpers ───────────────────────────────────────────────────────────────────
-
-function extractVideoId(raw: string): string | null {
-  const patterns = [
-    /[?&]v=([a-zA-Z0-9_-]{11})/,
-    /youtu\.be\/([a-zA-Z0-9_-]{11})/,
-    /youtube\.com\/embed\/([a-zA-Z0-9_-]{11})/,
-    /youtube\.com\/shorts\/([a-zA-Z0-9_-]{11})/,
-    /^([a-zA-Z0-9_-]{11})$/,
-  ];
-  for (const p of patterns) {
-    const m = raw.match(p);
-    if (m) return m[1];
-  }
-  return null;
-}
-
-/** Returns the URL if it looks like a valid SoundCloud track/playlist link, otherwise null. */
-function extractSoundCloudUrl(raw: string): string | null {
-  const trimmed = raw.trim();
-  try {
-    const parsed = new URL(trimmed);
-    if (parsed.hostname === "soundcloud.com" && parsed.pathname.length > 1) {
-      return trimmed;
-    }
-  } catch {
-    // not a valid URL
-  }
-  return null;
-}
 
 // ── types ─────────────────────────────────────────────────────────────────────
 
@@ -124,9 +96,12 @@ export default function App() {
 
   // ── load video ──
   const loadVideo = (raw: string, dbTrackId?: number) => {
-    const id = extractVideoId(raw.trim());
-    if (id) {
-      setTrack({ id, sourceType: "youtube", dbTrackId });
+    const source = getTrackSource(raw.trim());
+    log(`Detected source type: ${source?.type} id: ${source?.id} from input: ${raw}`);
+    if (source?.type === 'youtube') {
+      setTrack({ id: source.id, sourceType: "youtube", dbTrackId });
+    } else if (source?.type === 'soundcloud') {
+      setTrack({ id: source.id, sourceType: "soundcloud", dbTrackId });
     } else {
       setTrack(null);
     }
@@ -135,9 +110,9 @@ export default function App() {
   // ── load SoundCloud track into the library embed ──
   const handleScSubmit = (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    const url = extractSoundCloudUrl(input);
-    if (url) {
-      setScLibraryUrl(url);
+    const source = getTrackSource(input);
+    if (source?.type === 'soundcloud') {
+      setScLibraryUrl(source.id);
       setScError(null);
     } else {
       setScError("⚠️  Please enter a valid SoundCloud track URL (e.g. https://soundcloud.com/artist/track).");
