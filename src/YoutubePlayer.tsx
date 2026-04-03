@@ -63,8 +63,6 @@ function setUpPlayer(
 //  "ready"   — onReady fired, player active, timer cleared
 export interface YoutubePlayerOwnerProps {
   videoId: string;
-  /** Called every 20 s while playback is active with how many seconds to credit. */
-  onListenedSeconds?: (seconds: number) => void;
   /** Called once the player is ready. Omit for preview-only instances. */
   onPlayerReady?: (player: YT.Player) => void;
   /** Called when the video finishes playing (state ENDED). */
@@ -77,7 +75,7 @@ export interface YoutubePlayerOwnerProps {
   registerAsActivePlayer?: boolean;
 }
 
-export function YoutubePlayerOwner({ videoId, onListenedSeconds, onPlayerReady, onEnded, registerAsActivePlayer }: YoutubePlayerOwnerProps) {
+export function YoutubePlayerOwner({ videoId, onPlayerReady, onEnded, registerAsActivePlayer }: YoutubePlayerOwnerProps) {
   const [mountKey, setMountKey] = useState(0);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Stable random prefix unique per component instance — prevents colliding
@@ -88,48 +86,8 @@ export function YoutubePlayerOwner({ videoId, onListenedSeconds, onPlayerReady, 
   const initForKeyRef = useRef<number>(-1);
   // Local reference to the player — no Zustand dependency here.
   const playerRef = useRef<YT.Player | null>(null);
-  // Wall-clock timestamp (ms) when playback last started/resumed. null = not playing.
-  const playStartRef = useRef<number | null>(null);
-  // Seconds listened that haven't been flushed to the DB yet.
-  const accumulatedRef = useRef<number>(0);
-  // Interval that fires every 20 s as a safety net while playback is active.
-  const listenIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  // Keep callback accessible inside closures without re-creating them.
-  const onListenedSecondsRef = useRef<((s: number) => void) | undefined>(onListenedSeconds);
-  onListenedSecondsRef.current = onListenedSeconds;
   const onEndedRef = useRef<(() => void) | undefined>(onEnded);
   onEndedRef.current = onEnded;
-
-  /** Add elapsed time since last start to the accumulator. Resets the clock. */
-  function snapshotElapsed() {
-    if (playStartRef.current === null) return;
-    const elapsed = (Date.now() - playStartRef.current) / 1000;
-    playStartRef.current = Date.now(); // reset so the next snapshot doesn't double-count
-    accumulatedRef.current += elapsed;
-  }
-
-  /** Drain accumulated seconds in 20-second chunks via the callback. */
-  function drainAccumulated() {
-    while (accumulatedRef.current >= 20) {
-      accumulatedRef.current -= 20;
-      onListenedSecondsRef.current?.(20);
-    }
-  }
-
-  function stopListenTimer() {
-    if (listenIntervalRef.current !== null) {
-      clearInterval(listenIntervalRef.current);
-      listenIntervalRef.current = null;
-    }
-  }
-
-  function startListenTimer() {
-    stopListenTimer();
-    listenIntervalRef.current = setInterval(() => {
-      snapshotElapsed();
-      drainAccumulated();
-    }, 20_000);
-  }
 
   function handleStateChange(state: number) {
     // YT.PlayerState: PLAYING = 1, PAUSED = 2, ENDED = 0, BUFFERING = 3
@@ -137,19 +95,8 @@ export function YoutubePlayerOwner({ videoId, onListenedSeconds, onPlayerReady, 
     if (registerAsActivePlayer) {
       usePlayerStore.getState().setIsPlaying(state === 1 || state === 3);
     }
-    if (state === 1) {
-      // Playback started/resumed — start clock and safety-net timer.
-      playStartRef.current = Date.now();
-      startListenTimer();
-    } else {
-      // Playback paused/ended/buffering — stop timer, snapshot and drain.
-      stopListenTimer();
-      snapshotElapsed();
-      playStartRef.current = null;
-      drainAccumulated();
-      if (state === 0) {
-        onEndedRef.current?.();
-      }
+    if (state === 0) {
+      onEndedRef.current?.();
     }
   }
 
@@ -235,10 +182,6 @@ export function YoutubePlayerOwner({ videoId, onListenedSeconds, onPlayerReady, 
     }
     return () => {
       log(`unmounted`)
-      stopListenTimer();
-      snapshotElapsed();
-      playStartRef.current = null;
-      drainAccumulated();
       if (registerAsActivePlayer) {
         usePlayerStore.getState().clearActivePlayer();
       }

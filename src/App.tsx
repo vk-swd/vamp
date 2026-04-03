@@ -6,6 +6,7 @@ import { usePlayerStore } from "./store";
 import "./App.css";
 import { addListenedSeconds } from "./db/tauriDb";
 import { log } from "./logger";
+import { useListenTracker } from "./useListenTracker";
 import { LibraryWidget } from "./db/LibraryWidget";
 import { SCPlayer } from "./players/SCPlayer";
 import { getTrackSource } from "./common/utils";
@@ -78,9 +79,6 @@ function NowPlayingTab({ track }: NowPlayingTabProps) {
             key={mountKey}
             videoId={track.id}
             registerAsActivePlayer
-            onListenedSeconds={track.dbTrackId != null
-              ? (s) => addListenedSeconds(track.dbTrackId!, s).catch((e) => log(`addListenedSeconds: ${e}`))
-              : undefined}
             onPlayerReady={setYtPlayer}
             onEnded={handleEnded}
           />
@@ -104,6 +102,10 @@ export default function App() {
   const inputRef = useRef<HTMLInputElement>(null);
 
   const trackToPlay = usePlayerStore((s) => s.trackToPlay);
+
+  useListenTracker((trackId, seconds) => {
+    addListenedSeconds(trackId, seconds).catch((e) => log(`addListenedSeconds: ${e}`));
+  });
 
   // ── load video ──
   const loadVideo = (raw: string, dbTrackId?: number) => {
