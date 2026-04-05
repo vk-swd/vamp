@@ -1,6 +1,14 @@
 import { create } from "zustand";
 import type { TrackWithSources } from "./db/tauriDb";
 
+// ── Playlist types ────────────────────────────────────────────────────────────
+
+export interface Playlist {
+  id: string;
+  name: string;
+  tracks: TrackWithSources[];
+}
+
 // ── Active-player strategy ────────────────────────────────────────────────────
 
 /** Control functions provided by whichever player is currently active. */
@@ -53,6 +61,18 @@ interface PlayerStore {
   /** Tracks currently selected in the library — forms the active playlist. */
   selectedTracks: TrackWithSources[];
   setSelectedTracks: (tracks: TrackWithSources[]) => void;
+
+  // ── Playlists ──────────────────────────────────────────────────────────────
+  playlists: Playlist[];
+  /** The id of the playlist currently active in the Playlist tab. */
+  activePlaylistId: string;
+  setActivePlaylistId: (id: string) => void;
+  /** Create a new playlist and return its id. */
+  createPlaylist: (name: string) => string;
+  deletePlaylist: (playlistId: string) => void;
+  addTrackToPlaylist: (playlistId: string, track: TrackWithSources) => void;
+  removeTrackFromPlaylist: (playlistId: string, trackId: number) => void;
+  reorderPlaylistTrack: (playlistId: string, fromIndex: number, toIndex: number) => void;
   /** When true, the current video replays instead of advancing to next track. */
   loopEnabled: boolean;
   setLoopEnabled: (enabled: boolean) => void;
@@ -111,6 +131,40 @@ export const usePlayerStore = create<PlayerStore>((set) => ({
   })),
   selectedTracks: [],
   setSelectedTracks: (tracks) => set({ selectedTracks: tracks }),
+
+  // Playlist state — one default playlist to start with.
+  playlists: [{ id: 'default', name: 'Playlist 1', tracks: [] }],
+  createPlaylist: (name) => {
+    const id = `pl_${Date.now()}`;
+    set(state => ({ playlists: [...state.playlists, { id, name, tracks: [] }] }));
+    return id;
+  },
+  deletePlaylist: (playlistId) => set(state => ({
+    playlists: state.playlists.filter(pl => pl.id !== playlistId),
+  })),
+  addTrackToPlaylist: (playlistId, track) => set(state => ({
+    playlists: state.playlists.map(pl =>
+      pl.id !== playlistId || pl.tracks.some(t => t.id === track.id)
+        ? pl
+        : { ...pl, tracks: [...pl.tracks, track] }
+    ),
+  })),
+  removeTrackFromPlaylist: (playlistId, trackId) => set(state => ({
+    playlists: state.playlists.map(pl =>
+      pl.id !== playlistId ? pl : { ...pl, tracks: pl.tracks.filter(t => t.id !== trackId) }
+    ),
+  })),
+  reorderPlaylistTrack: (playlistId, fromIndex, toIndex) => set(state => ({
+    playlists: state.playlists.map(pl => {
+      if (pl.id !== playlistId) return pl;
+      const tracks = [...pl.tracks];
+      const [moved] = tracks.splice(fromIndex, 1);
+      tracks.splice(toIndex, 0, moved);
+      return { ...pl, tracks };
+    }),
+  })),
+  activePlaylistId: 'default',
+  setActivePlaylistId: (id) => set({ activePlaylistId: id }),
   loopEnabled: false,
   setLoopEnabled: (enabled) => set({ loopEnabled: enabled }),
 

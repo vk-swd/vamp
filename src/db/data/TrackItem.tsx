@@ -1,6 +1,7 @@
 import React from 'react';
 import { TrackRow, TrackSource, TrackWithSources } from "../tauriDb";
 import { usePlayerStore } from '../../store';
+import { Selector } from '../../ui/elements';
 
 export type { TrackWithSources };
 
@@ -64,19 +65,13 @@ export function TrackItem({
       </span>
 
       <div className="tracklist-item__source">
-        <select
+        <Selector
           className="tracklist-src-select"
+          options={track.sources.map(s => ({ value: s.url, label: s.url }))}
           value={activeSource ?? ''}
           disabled={track.sources.length === 0}
-          onChange={e => onSourceChange(track.id, e.target.value || null)}
-        >
-          {track.sources.length === 0 && (
-            <option value="">No sources</option>
-          )}
-          {track.sources.map(s => (
-            <option key={s.url} value={s.url}>{s.url}</option>
-          ))}
-        </select>
+          onChange={value => onSourceChange(track.id, value || null)}
+        />
       </div>
 
       <button

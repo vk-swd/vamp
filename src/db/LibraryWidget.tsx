@@ -42,6 +42,9 @@ export function LibraryWidget() {
 
   const selectedTracks = usePlayerStore((s) => s.selectedTracks);
   const setSelectedTracks = usePlayerStore((s) => s.setSelectedTracks);
+  const playlists = usePlayerStore((s) => s.playlists);
+  const addTrackToPlaylist = usePlayerStore((s) => s.addTrackToPlaylist);
+  const createPlaylist = usePlayerStore((s) => s.createPlaylist);
 
   function loadPage(fromCursor: number | null) {
     getTracksWithSources(fromCursor, null, PAGE_SIZE)
@@ -94,6 +97,12 @@ export function LibraryWidget() {
           onPageNext={handlePageNext}
           hasPrev={prevCursors.length > 0}
           hasNext={hasNext}
+          playlists={playlists}
+          onAddToPlaylist={(track, playlistId) => addTrackToPlaylist(playlistId, track)}
+          onCreatePlaylistWithTrack={(track, name) => {
+            const id = createPlaylist(name);
+            addTrackToPlaylist(id, track);
+          }}
         />
         <Button onClick={() => setDialogOpen(true)}>Add Track</Button>
         <Button variant="secondary" onClick={() => loadPage(cursor)}>↻ Refresh</Button>

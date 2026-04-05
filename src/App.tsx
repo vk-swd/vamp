@@ -10,6 +10,7 @@ import { useListenTracker } from "./useListenTracker";
 import { LibraryWidget } from "./db/LibraryWidget";
 import { SCPlayer } from "./players/SCPlayer";
 import { getTrackSource } from "./common/utils";
+import { PlaylistsTab } from "./playlist/PlaylistsTab";
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -42,6 +43,8 @@ function NowPlayingTab({ track }: NowPlayingTabProps) {
   const setYtPlayer = usePlayerStore((s) => s.setYtPlayer);
   const loopEnabled = usePlayerStore((s) => s.loopEnabled);
   const selectedTracks = usePlayerStore((s) => s.selectedTracks);
+  const playlists = usePlayerStore((s) => s.playlists);
+  const activePlaylistId = usePlayerStore((s) => s.activePlaylistId);
   const setTrackToPlay = usePlayerStore((s) => s.setTrackToPlay);
 
   // Clear the global player reference when this tab unmounts.
@@ -61,10 +64,17 @@ function NowPlayingTab({ track }: NowPlayingTabProps) {
     // Reload the SC widget without autoplaying first, then advance track.
     setScAutoPlay(false);
     setScKey((prev) => prev + 1);
-    if (selectedTracks.length === 0) return;
-    const currentIndex = selectedTracks.findIndex(t => t.id === track.dbTrackId);
-    const nextIndex = (currentIndex === -1 ? 0 : currentIndex + 1) % selectedTracks.length;
-    const nextTrack = selectedTracks[nextIndex];
+
+    // Try the active playlist first, fall back to selectedTracks.
+    const activePlaylist = playlists.find(pl => pl.id === activePlaylistId);
+    const queue = (activePlaylist && activePlaylist.tracks.length > 0)
+      ? activePlaylist.tracks
+      : selectedTracks;
+
+    if (queue.length === 0) return;
+    const currentIndex = queue.findIndex(t => t.id === track.dbTrackId);
+    const nextIndex = (currentIndex === -1 ? 0 : currentIndex + 1) % queue.length;
+    const nextTrack = queue[nextIndex];
     const url = nextTrack.sources[0]?.url ?? null;
     if (url) {
       setTrackToPlay(nextTrack, url);
@@ -167,9 +177,7 @@ export default function App() {
         )}
 
         {/* Playlist */}
-        {activeTab === "playlist" && (
-          <div className="placeholder-panel">Playlist coming soon</div>
-        )}
+        {activeTab === "playlist" && <PlaylistsTab />}
 
         {/* Database */}
         {activeTab === "database" && (

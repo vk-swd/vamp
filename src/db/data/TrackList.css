@@ -255,3 +255,39 @@
   background: var(--ui-accent-muted);
   color:      var(--ui-accent-hover);
 }
+
+/* ── Context submenu ─────────────────────────────────────────────────────── */
+
+.tracklist__context-menu-item--has-sub {
+  position: relative;
+  display:  flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.tracklist__context-menu-item--has-sub::after {
+  content:     '▶';
+  font-size:   0.6em;
+  margin-left: var(--ui-sp-3);
+  opacity:     0.6;
+}
+
+.tracklist__context-submenu {
+  display:       none;
+  position:      absolute;
+  left:          100%;
+  top:           0;
+  z-index:       901;
+  background:    var(--ui-surface-2);
+  border:        1px solid var(--ui-border);
+  border-radius: var(--ui-r);
+  box-shadow:    var(--ui-shadow);
+  list-style:    none;
+  margin:        0;
+  padding:       var(--ui-sp-1) 0;
+  min-width:     160px;
+}
+
+.tracklist__context-menu-item--has-sub:hover .tracklist__context-submenu {
+  display: block;
+}

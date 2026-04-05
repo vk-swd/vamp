@@ -3,6 +3,7 @@ import type { TrackRow } from '../tauriDb';
 import './TrackList.css';
 import { TrackItem, type TrackWithSources } from './TrackItem';
 import { usePlayerStore } from '../../store';
+import { Dialog, LineEdit } from '../../ui/elements';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -13,6 +14,12 @@ export interface TrackListProps {
   selectedIds?: number[];
   /** Fired when a single track is toggled; parent decides how to store/remove. */
   onSelectionToggle?: (id: number, selected: boolean) => void;
+  /** List of playlists shown in the "Add to Playlist" submenu. */
+  playlists?: Array<{ id: string; name: string }>;
+  /** Fired when the user picks an existing playlist from the submenu. */
+  onAddToPlaylist?: (track: TrackWithSources, playlistId: string) => void;
+  /** Fired when the user confirms creating a new playlist in the dialog. */
+  onCreatePlaylistWithTrack?: (track: TrackWithSources, name: string) => void;
   onPagePrev?: () => void;
   onPageNext?: () => void;
   hasPrev?: boolean;
@@ -42,6 +49,9 @@ export function TrackList({
   selectionMode = false,
   selectedIds = [],
   onSelectionToggle,
+  playlists = [],
+  onAddToPlaylist,
+  onCreatePlaylistWithTrack,
   onPagePrev,
   onPageNext,
   hasPrev = false,
@@ -50,6 +60,8 @@ export function TrackList({
   const scrollRef = useRef<HTMLDivElement>(null);
   const [activeSources, setActiveSources] = useState<Record<number, string | null>>({});
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
+  const [newPlaylistDialog, setNewPlaylistDialog] = useState<{ track: TrackWithSources } | null>(null);
+  const [newPlaylistName, setNewPlaylistName] = useState('');
   const setTrackToPlay = usePlayerStore((s) => s.setTrackToPlay);
 
   const selectedSet = new Set(selectedIds);
@@ -138,6 +150,35 @@ export function TrackList({
             Play
           </li>
           <li
+            className="tracklist__context-menu-item tracklist__context-menu-item--has-sub"
+          >
+            Add to Playlist
+            <ul className="tracklist__context-submenu" onClick={e => e.stopPropagation()}>
+              {playlists.map(pl => (
+                <li
+                  key={pl.id}
+                  className="tracklist__context-menu-item"
+                  onClick={() => {
+                    onAddToPlaylist?.(contextTrack, pl.id);
+                    setContextMenu(null);
+                  }}
+                >
+                  {pl.name}
+                </li>
+              ))}
+              <li
+                className="tracklist__context-menu-item"
+                onClick={() => {
+                  setContextMenu(null);
+                  setNewPlaylistName('');
+                  setNewPlaylistDialog({ track: contextTrack });
+                }}
+              >
+                + New Playlist…
+              </li>
+            </ul>
+          </li>
+          <li
             className="tracklist__context-menu-item"
             onClick={() => {
               // TODO: show track information panel
@@ -147,6 +188,34 @@ export function TrackList({
             Information
           </li>
         </ul>
+      )}
+
+      {newPlaylistDialog && (
+        <Dialog
+          title="New Playlist"
+          onConfirm={() => {
+            if (newPlaylistName.trim()) {
+              onCreatePlaylistWithTrack?.(newPlaylistDialog.track, newPlaylistName.trim());
+            }
+            setNewPlaylistDialog(null);
+          }}
+          onCancel={() => setNewPlaylistDialog(null)}
+          confirmDisabled={!newPlaylistName.trim()}
+        >
+          <LineEdit
+            label="Playlist name"
+            value={newPlaylistName}
+            onChange={v => setNewPlaylistName(v)}
+            autoFocus
+            onKeyDown={e => {
+              if (e.key === 'Enter' && newPlaylistName.trim()) {
+                onCreatePlaylistWithTrack?.(newPlaylistDialog.track, newPlaylistName.trim());
+                setNewPlaylistDialog(null);
+              }
+              if (e.key === 'Escape') setNewPlaylistDialog(null);
+            }}
+          />
+        </Dialog>
       )}
     </div>
   );

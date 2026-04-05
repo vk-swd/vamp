@@ -385,6 +385,31 @@ export function WrappingLabel({ text, className, ...rest }: WrappingLabelProps) 
   return <span className={cls} {...rest}>{text}</span>;
 }
 
+// ─── Dialog ───────────────────────────────────────────────────────────────────
+
+export interface DialogProps {
+  title: string;
+  onConfirm: () => void;
+  onCancel: () => void;
+  confirmDisabled?: boolean;
+  children: React.ReactNode;
+}
+
+export function Dialog({ title, onConfirm, onCancel, confirmDisabled, children }: DialogProps) {
+  return (
+    <div className="ui-dialog-backdrop" onClick={onCancel}>
+      <div className="ui-dialog" onClick={e => e.stopPropagation()}>
+        <h2 className="ui-dialog__title">{title}</h2>
+        <div className="ui-dialog__body">{children}</div>
+        <div className="ui-dialog__actions">
+          <Button variant="secondary" onClick={onCancel}>Cancel</Button>
+          <Button onClick={onConfirm} disabled={confirmDisabled}>OK</Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── injectGlobalStyles ───────────────────────────────────────────────────────
 
 let _injected = false;

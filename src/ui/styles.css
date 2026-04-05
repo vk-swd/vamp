@@ -393,3 +393,48 @@ body {
   white-space:   normal;
   word-break:    break-word;
 }
+
+/* ── Dialog ──────────────────────────────────────────────────────────────── */
+.ui-dialog-backdrop {
+  position:        fixed;
+  inset:           0;
+  z-index:         1000;
+  background:      rgba(0, 0, 0, 0.55);
+  display:         flex;
+  align-items:     center;
+  justify-content: center;
+  animation:       ui-fade-in 120ms ease;
+}
+
+.ui-dialog {
+  background:    var(--ui-surface-2);
+  border:        1px solid var(--ui-border);
+  border-radius: var(--ui-r-lg);
+  box-shadow:    var(--ui-shadow-lg);
+  padding:       var(--ui-sp-6);
+  min-width:     280px;
+  max-width:     420px;
+  width:         100%;
+  display:       flex;
+  flex-direction: column;
+  gap:           var(--ui-sp-4);
+}
+
+.ui-dialog__title {
+  font-size:   var(--ui-fs-lg);
+  font-weight: var(--ui-fw-semibold);
+  color:       var(--ui-text);
+  margin:      0;
+}
+
+.ui-dialog__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ui-sp-3);
+}
+
+.ui-dialog__actions {
+  display:         flex;
+  justify-content: flex-end;
+  gap:             var(--ui-sp-2);
+}
