@@ -1,9 +1,18 @@
 import React from 'react';
 import { TrackRow, TrackSource, TrackWithSources } from "../tauriDb";
-import { usePlayerStore } from '../../store';
 import { Selector } from '../../ui/elements';
 
 export type { TrackWithSources };
+
+// ─── TrackPlayContext ─────────────────────────────────────────────────────────
+
+type OnPlayFn = (track: TrackWithSources, sourceUrl: string) => void;
+
+const TrackPlayContext = React.createContext<OnPlayFn>(() => {});
+
+export function TrackPlayProvider({ onPlay, children }: { onPlay: OnPlayFn; children: React.ReactNode }) {
+  return <TrackPlayContext.Provider value={onPlay}>{children}</TrackPlayContext.Provider>;
+}
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -39,7 +48,7 @@ export function TrackItem({
   onContextMenu,
   onSourceChange,
 }: TrackItemProps) {
-  const setTrackToPlay = usePlayerStore((s) => s.setTrackToPlay);
+  const onPlay = React.useContext(TrackPlayContext);
 
   return (
     <div
@@ -78,7 +87,7 @@ export function TrackItem({
         className="tracklist-item__play-btn"
         disabled={!activeSource}
         title={activeSource ? `Play: ${activeSource}` : 'No source available'}
-        onClick={() => { if (activeSource) { setTrackToPlay(track, activeSource); } }}
+        onClick={() => { if (activeSource) { onPlay(track, activeSource); } }}
       >
         ▶
       </button>

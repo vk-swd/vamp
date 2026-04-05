@@ -102,18 +102,18 @@ export function TrackList({
       >▲</button>
 
       <div className="tracklist__scroll" ref={scrollRef}>
-        {tracks.map(track => (
-          <TrackItem
-            key={track.id}
-            track={track}
-            selectionMode={selectionMode}
-            selected={selectedSet.has(track.id)}
-            activeSource={activeSources[track.id] ?? track.sources[0]?.url ?? null}
-            onSelect={onSelectionToggle ?? (() => {})}
-            onContextMenu={handleContextMenu}
-            onSourceChange={handleSourceChange}
-          />
-        ))}
+          {tracks.map(track => (
+            <TrackItem
+              key={track.id}
+              track={track}
+              selectionMode={selectionMode}
+              selected={selectedSet.has(track.id)}
+              activeSource={activeSources[track.id] ?? track.sources[0]?.url ?? null}
+              onSelect={onSelectionToggle ?? (() => {})}
+              onContextMenu={handleContextMenu}
+              onSourceChange={handleSourceChange}
+            />
+          ))}
       </div>
 
       <button

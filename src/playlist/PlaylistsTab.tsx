@@ -42,9 +42,9 @@ export function PlaylistsTab() {
 
       {activePlaylist && (
         <PlaylistView
-          tracks={activePlaylist.tracks}
-          onReorder={(from, to) => reorderPlaylistTrack(activePlaylist.id, from, to)}
-          onRemove={(trackId) => removeTrackFromPlaylist(activePlaylist.id, trackId)}
+            tracks={activePlaylist.tracks}
+            onReorder={(from, to) => reorderPlaylistTrack(activePlaylist.id, from, to)}
+            onRemove={(trackId) => removeTrackFromPlaylist(activePlaylist.id, trackId)}
         />
       )}
     </div>

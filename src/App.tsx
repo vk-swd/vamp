@@ -11,6 +11,7 @@ import { LibraryWidget } from "./db/LibraryWidget";
 import { SCPlayer } from "./players/SCPlayer";
 import { getTrackSource } from "./common/utils";
 import { PlaylistsTab } from "./playlist/PlaylistsTab";
+import { TrackPlayProvider } from "./db/data/TrackItem";
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -36,9 +37,10 @@ function LocalFileInfo() {
 
 interface NowPlayingTabProps {
   track: Track;
+  playPlaylist?: string;
 }
 
-function NowPlayingTab({ track }: NowPlayingTabProps) {
+function NowPlayingTab({ track, playPlaylist }: NowPlayingTabProps) {
   const [mountKey] = useState(0);
   const setYtPlayer = usePlayerStore((s) => s.setYtPlayer);
   const loopEnabled = usePlayerStore((s) => s.loopEnabled);
@@ -64,9 +66,11 @@ function NowPlayingTab({ track }: NowPlayingTabProps) {
     // Reload the SC widget without autoplaying first, then advance track.
     setScAutoPlay(false);
     setScKey((prev) => prev + 1);
-
+    if (!playPlaylist) {
+      return;
+    }
     // Try the active playlist first, fall back to selectedTracks.
-    const activePlaylist = playlists.find(pl => pl.id === activePlaylistId);
+    const activePlaylist = playlists.find(pl => pl.id === playPlaylist);
     const queue = (activePlaylist && activePlaylist.tracks.length > 0)
       ? activePlaylist.tracks
       : selectedTracks;
@@ -110,6 +114,8 @@ export default function App() {
   const [scError, setScError] = useState<string | null>(null);
   const [scLibraryUrl, setScLibraryUrl] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const [playPlaylist, setPlayPlaylist] = useState<string | undefined>(undefined);
+  const setTrackToPlay = usePlayerStore((s) => s.setTrackToPlay);
 
   const trackToPlay = usePlayerStore((s) => s.trackToPlay);
 
@@ -143,7 +149,8 @@ export default function App() {
     { id: "database",     label: "Database" },
     // { id: "browserleaks", label: "BrowserLeaks" },
   ];
-  const getDuration    = usePlayerStore((s) => s.getDuration);
+  const activePlaylistId = usePlayerStore((s) => s.activePlaylistId);
+  const getDuration = usePlayerStore((s) => s.getDuration);
   return (
     <div className="app">
       {/* ── Tab bar ── */}
@@ -172,17 +179,27 @@ export default function App() {
         */}
         {track && (
           <div className={activeTab !== "now-playing" ? "tab-panel--hidden" : ""}>
-            <NowPlayingTab track={track} />
+            <NowPlayingTab track={track} playPlaylist={playPlaylist} />
           </div>
         )}
 
         {/* Playlist */}
-        {activeTab === "playlist" && <PlaylistsTab />}
-
+        {activeTab === "playlist" && 
+          <TrackPlayProvider onPlay={(track, sourceUrl) => {
+            setTrackToPlay(track, sourceUrl);
+            setPlayPlaylist(activePlaylistId);
+          }}>
+            <PlaylistsTab />
+          </TrackPlayProvider>}
         {/* Database */}
         {activeTab === "database" && (
           <div>
-            <LibraryWidget/>
+            <TrackPlayProvider onPlay={(track, sourceUrl) => {
+              setTrackToPlay(track, sourceUrl);
+              setPlayPlaylist(undefined);
+            }}>
+              <LibraryWidget/>
+            </TrackPlayProvider>
           </div>
         )}
 

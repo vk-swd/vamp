@@ -19,6 +19,7 @@ import type { TrackWithSources } from '../db/data/TrackItem';
 import { TrackItem } from '../db/data/TrackItem';
 import '../db/data/TrackList.css';
 import { Button } from '../ui/elements';
+import { usePlayerStore } from '../store';
 
 // ─── SortableTrackItem ────────────────────────────────────────────────────────
 
@@ -90,7 +91,6 @@ export interface PlaylistViewProps {
 
 export function PlaylistView({ tracks, onReorder, onRemove }: PlaylistViewProps) {
   const [activeId, setActiveId] = React.useState<number | null>(null);
-
   const sensors = useSensors(useSensor(PointerSensor, {
     activationConstraint: { distance: 5 },
   }));
@@ -129,9 +129,9 @@ export function PlaylistView({ tracks, onReorder, onRemove }: PlaylistViewProps)
     >
       <SortableContext items={tracks.map(t => t.id)} strategy={verticalListSortingStrategy}>
         <div className="playlist-view">
-          {tracks.map(track => (
-            <SortableTrackItem key={track.id} track={track} onRemove={onRemove} />
-          ))}
+            {tracks.map(track => (
+              <SortableTrackItem key={track.id} track={track} onRemove={onRemove} />
+            ))}
         </div>
       </SortableContext>
       <DragOverlay>
