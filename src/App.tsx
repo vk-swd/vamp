@@ -90,7 +90,7 @@ function NowPlayingTab({ track, playPlaylist }: NowPlayingTabProps) {
       <div className="player-container">
         {track.sourceType === "youtube" && (
           <YoutubePlayerOwner
-            key={mountKey}
+            key={scKey}
             videoId={track.id}
             registerAsActivePlayer
             onPlayerReady={setYtPlayer}
