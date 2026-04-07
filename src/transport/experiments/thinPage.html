@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Thin Page</title>
+    <script id="s1" type="module"></script>
+    <style id="st1"></style>
+</head>
+<body>
+    <p id="status">Connecting...</p>
+    <script>
+        const WS_URL = 'ws://localhost:8080';
+        const status = document.getElementById('status');
+        const contents = []
+        const ws = new WebSocket(WS_URL);
+        ws.binaryType = 'arraybuffer';
+
+        ws.addEventListener('open', () => {
+            status.textContent = 'Connected, waiting for file...';
+        });
+        ws.addEventListener('message', (event) => {
+            let recceivedRaw = "";
+            if (event.data instanceof ArrayBuffer) {
+                recceivedRaw = new TextDecoder().decode(event.data);
+            } else {
+                recceivedRaw = event.data;
+            }
+            try {
+                const parsed = JSON.parse(recceivedRaw);
+                console.info('Received data:', Object.keys(parsed));
+                if (parsed.kind !== 'style' && parsed.kind !== 'script') {
+                    console.error('Received message with unknown kind:', parsed.kind);
+                    return;
+                } else if (parsed.kind === 'script') {
+                    // const script = document.getElementById('s1');
+                    // script.textContent = atob(parsed.data);
+                    // console.info(`injected script`);
+
+                    const script = document.createElement('script');
+                    script.type = 'module';
+                    script.textContent = atob(parsed.data);
+                    document.head.appendChild(script);
+                    console.info('injected script');
+                    
+                    return;
+                } else if (parsed.kind === 'style') {
+                    const st = document.getElementById('st1');
+                    st.textContent = atob(parsed.data);
+                    console.info(`injected style`);
+                }
+            } catch (err) {
+                console.error('Failed to parse received data as JSON:', err);
+                return;
+            }
+            
+            // const script = document.createElement('script');
+            // script.textContent = src;
+            // document.body.appendChild(script);
+
+            // status.textContent = 'Script injected.';
+            // ws.close();
+        });
+
+        ws.addEventListener('error', (err) => {
+            status.textContent = 'WebSocket error. See console.';
+            console.error(err);
+        });
+
+        ws.addEventListener('close', () => {
+            console.log('WebSocket closed.');
+        });
+    </script>
+    <div id="root"></div>
+</body>
+</html>
