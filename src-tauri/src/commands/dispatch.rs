@@ -14,8 +14,22 @@ use crate::db::{
     repository::ArcRepo,
     schema::{NewTrack, SearchCriteria, TagAssignment, TrackUpdate},
 };
-
+use std::fs;
+use base64::{Engine, engine::general_purpose::STANDARD};
 type Repo<'a> = tauri::State<'a, ArcRepo>;
+
+use std::env;
+use std::sync::OnceLock;
+
+static SCRIPT_DATA: OnceLock<String> = OnceLock::new();
+
+fn get_script_data() -> &'static str {
+    SCRIPT_DATA.get_or_init(|| {
+        let path = env::var("SCRIPT_PATH").expect("SCRIPT_PATH not set");
+        let bytes = fs::read(&path).expect("failed to read script file");
+        STANDARD.encode(&bytes)
+    })
+}
 
 // ─── Payload argument structs ────────────────────────────────────────────────
 // One struct per command variant that carries more than one field.
@@ -150,6 +164,7 @@ pub enum Command {
     RemoveTrackSource(RemoveTrackSourceArgs),
     EditTrackSource(EditTrackSourceArgs),
     GetSourcesForTrack(TrackIdArg),
+    GetHtmlBundle(()),
 }
 
 // ─── Shared execution logic ───────────────────────────────────────────────────
@@ -267,6 +282,10 @@ pub async fn execute(repo: &ArcRepo, cmd: Command) -> Result<serde_json::Value, 
 
         Command::GetSourcesForTrack(TrackIdArg { track_id }) =>
             to_val(repo.get_sources_for_track(track_id).await)?,
+        Command::GetHtmlBundle(()) => {
+            // In dev, this serves the unbundled JS/CSS from the webpack dev server
+            serde_json::to_value(get_script_data()).map_err(|e| e.to_string())?
+        }
     };
 
     Ok(value)

@@ -21,7 +21,10 @@ async-trait = "0.1"
 chrono = "0.4"
 tokio = { version = "1", features = ["full"] }
 tokio-tungstenite = "0.23"
+tokio-rustls = "0.26"
+rustls-pemfile = "2"
 futures-util = "0.3"
+base64 = "0.22"
 
 [dev-dependencies]
 webrtc = "0.11"

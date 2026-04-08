@@ -52,8 +52,11 @@ fn main() {
                 commands::setup_database(app.handle().clone(), db_full_path)
             ).map_err(|e| e.to_string())?;
             let repo = app.handle().state::<ArcRepo>().inner().clone();
+            let cert_path = config.db_path.join("cert.pem");
+            let key_path  = config.db_path.join("key.pem");
             tauri::async_runtime::block_on(
-                transport::ws_server::start(repo, "127.0.0.1:8090".parse().unwrap())
+                // transport::ws_server::start(repo, "127.0.0.1:8090".parse().unwrap(), &cert_path, &key_path)
+                transport::ws_server::start(repo, "0.0.0.0:8090".parse().unwrap(), &cert_path, &key_path)
             ).map_err(|e| e.to_string())?;
             let window = tauri::WebviewWindowBuilder::from_config(app.handle(), &app.config().app.windows[config.window_idx])?.build()?;
             // Apply webkit settings for ALL builds (debug + release)

@@ -14,4 +14,12 @@ function log(message: string) {
     }
 }
 
+window.onerror = (msg, src, line, col, err) => {
+    log(`${ JSON.stringify({ type: 'error', msg, src, line, col, stack: err?.stack }) }`);
+};
+
+window.onunhandledrejection = (e) => {
+    log(`${ JSON.stringify({ type: 'unhandledrejection', msg: e.reason?.message ?? e.reason, stack: e.reason?.stack }) }`);
+};
+
 export { log };

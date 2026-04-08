@@ -10,7 +10,8 @@ declare global {
 
 // ─── WebSocket client (singleton) ─────────────────────────────────────────────
 
-const WS_URL = 'ws://localhost:8090';
+const WS_URL = 'wss://192.168.0.106:8090';
+// const WS_URL = 'ws://localhost:8090';
 
 type WsState = 'disconnected' | 'connecting' | 'connected' | 'failed';
 
