@@ -91,22 +91,9 @@ fn main() {
             // window.open_devtools();
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![log_from_ui,
-            commands::add_track,        commands::add_tracks,
-            commands::update_track,
-            commands::get_tracks,       commands::get_track,
-            commands::get_tracks_with_sources,
-            commands::delete_track,
-            commands::add_listen,       commands::get_listens_for_track,
-            commands::add_listened_seconds,
-            commands::add_tag,          commands::edit_tag,
-            commands::delete_tag,       commands::get_all_tags,
-            commands::get_tags,
-            commands::assign_tag,       commands::assign_tags,
-            commands::remove_tag,
-            commands::get_tags_for_track,
-            commands::add_meta,         commands::update_meta,
-            commands::delete_meta,      commands::get_meta_for_track])
+        .invoke_handler(tauri::generate_handler![
+            log_from_ui,
+            commands::dispatch::dispatch])
         .plugin(tauri_plugin_opener::init())
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

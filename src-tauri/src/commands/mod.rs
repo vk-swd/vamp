@@ -31,6 +31,8 @@
 //! ])
 //! ```
 
+pub mod dispatch;
+
 use tauri::Manager;
 
 use crate::db::{

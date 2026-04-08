@@ -119,85 +119,91 @@ export type TagAssignment = {
 };
 
 // ─── Tauri command wrappers ──────────────────────────────────────────────────
-// Each function maps 1-to-1 to a #[tauri::command] in src-tauri/src/commands/mod.rs.
+// All operations are routed through the single `dispatch` Tauri command.
+// invoke('dispatch', { kind: '<VariantName>', payload: <args> })
+
+const dispatch = <T>(kind: string, payload: unknown = null): Promise<T> =>
+  invoke('dispatch', { kind, payload });
 
 // Tracks
 export const addTrack = (track: NewTrack): Promise<number> =>
-  invoke('add_track', { track });
-
+  dispatch('AddTrack', track);
 
 export const addTracks = (tracks: NewTrack[]): Promise<number[]> =>
-  invoke('add_tracks', { tracks });
+  dispatch('AddTracks', tracks);
 
 export const updateTrack = (id: number, update: TrackUpdate): Promise<void> =>
-  invoke('update_track', { id, update });
+  dispatch('UpdateTrack', { id, update });
 
 export const getTracks = (
   cursor: number | null,
   criteria: SearchCriteria[] | null,
   limit: number,
 ): Promise<TrackRow[]> =>
-  invoke('get_tracks', { cursor, criteria, limit });
+  dispatch('GetTracks', { cursor, criteria, limit });
 
 export const getTracksWithSources = (
   cursor: number | null,
   criteria: SearchCriteria[] | null,
   limit: number,
 ): Promise<TrackWithSources[]> =>
-  invoke('get_tracks_with_sources', { cursor, criteria, limit });
+  dispatch('GetTracksWithSources', { cursor, criteria, limit });
 
 export const getTrack = (id: number): Promise<TrackRow> =>
-  invoke('get_track', { id });
+  dispatch('GetTrack', { id });
 
 export const deleteTrack = (id: number): Promise<void> =>
-  invoke('delete_track', { id });
+  dispatch('DeleteTrack', { id });
 
 // Listen history
 export const addListen = (trackId: number, from: number, to: number): Promise<number> =>
-  invoke('add_listen', { trackId, from, to });
+  dispatch('AddListen', { track_id: trackId, from, to });
 
 export const getListensForTrack = (trackId: number): Promise<ListenInfo[]> =>
-  invoke('get_listens_for_track', { trackId });
+  dispatch('GetListensForTrack', { track_id: trackId });
+
+export const addListenedSeconds = (trackId: number, seconds: number): Promise<void> =>
+  dispatch('AddListenedSeconds', { track_id: trackId, seconds });
 
 // Tags
 export const addTag = (name: string): Promise<number> =>
-  invoke('add_tag', { name });
+  dispatch('AddTag', { name });
 
 export const editTag = (id: number, name: string): Promise<void> =>
-  invoke('edit_tag', { id, name });
+  dispatch('EditTag', { id, name });
 
 export const deleteTag = (id: number): Promise<void> =>
-  invoke('delete_tag', { id });
+  dispatch('DeleteTag', { id });
 
 export const getAllTags = (): Promise<Tag[]> =>
-  invoke('get_all_tags');
+  dispatch('GetAllTags');
 
 export const getTagsByPattern = (pattern: string): Promise<Tag[]> =>
-  invoke('get_tags', { pattern });
+  dispatch('GetTags', { pattern });
 
 export const assignTag = (trackId: number, tagId: number): Promise<void> =>
-  invoke('assign_tag', { trackId, tagId });
+  dispatch('AssignTag', { track_id: trackId, tag_id: tagId });
 
 export const assignTags = (assignments: TagAssignment[]): Promise<void> =>
-  invoke('assign_tags', { assignments });
+  dispatch('AssignTags', assignments);
 
 export const removeTagFromTrack = (trackId: number, tagId: number): Promise<void> =>
-  invoke('remove_tag', { trackId, tagId });
+  dispatch('RemoveTag', { track_id: trackId, tag_id: tagId });
 
 export const getTagsForTrack = (trackId: number): Promise<Tag[]> =>
-  invoke('get_tags_for_track', { trackId });
+  dispatch('GetTagsForTrack', { track_id: trackId });
 
 // Track metadata
 export const addMeta = (trackId: number, key: string, value: string): Promise<number> =>
-  invoke('add_meta', { trackId, key, value });
+  dispatch('AddMeta', { track_id: trackId, key, value });
 
 export const updateMeta = (id: number, value: string): Promise<void> =>
-  invoke('update_meta', { id, value });
+  dispatch('UpdateMeta', { id, value });
 
 export const deleteMeta = (id: number): Promise<void> =>
-  invoke('delete_meta', { id });
+  dispatch('DeleteMeta', { id });
 
-// Track sources
+// Track sources (not exposed through dispatch)
 export const addTrackSource = (trackId: number, url: string): Promise<number> =>
   invoke('add_track_source', { trackId, url });
 
@@ -209,7 +215,4 @@ export const editTrackSource = (trackId: number, oldUrl: string, newUrl: string)
 
 export const getSourcesForTrack = (trackId: number): Promise<TrackSource[]> =>
   invoke('get_sources_for_track', { trackId });
-
-export const addListenedSeconds = (trackId: number, seconds: number): Promise<void> =>
-  invoke('add_listened_seconds', { trackId, seconds });
 
