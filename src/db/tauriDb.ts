@@ -1,9 +1,4 @@
-import { invoke } from '@tauri-apps/api/core';
 import { dispatch } from './dispatchClient';
-export { dispatch } from './dispatchClient';
-export type { DispatchMode } from './dispatchClient';
-export { setDispatchMode, getDispatchMode } from './dispatchClient';
-
 // ─── Types mirroring src-tauri/src/db/schema.rs ─────────────────────────────
 
 export type TrackRow = {
@@ -124,8 +119,6 @@ export type TagAssignment = {
 
 // ─── Tauri command wrappers ──────────────────────────────────────────────────
 // All operations are routed through dispatchClient (invoke or WebSocket mode).
-// Switch modes at runtime with setDispatchMode('ws') / setDispatchMode('invoke').
-
 // Tracks
 export const addTrack = (track: NewTrack): Promise<number> =>
   dispatch('AddTrack', track);
@@ -204,16 +197,16 @@ export const updateMeta = (id: number, value: string): Promise<void> =>
 export const deleteMeta = (id: number): Promise<void> =>
   dispatch('DeleteMeta', { id });
 
-// Track sources (not exposed through dispatch)
+// Track sources
 export const addTrackSource = (trackId: number, url: string): Promise<number> =>
-  invoke('add_track_source', { trackId, url });
+  dispatch('AddTrackSource', { track_id: trackId, url });
 
 export const removeTrackSource = (trackId: number, url: string): Promise<void> =>
-  invoke('remove_track_source', { trackId, url });
+  dispatch('RemoveTrackSource', { track_id: trackId, url });
 
 export const editTrackSource = (trackId: number, oldUrl: string, newUrl: string): Promise<void> =>
-  invoke('edit_track_source', { trackId, oldUrl, newUrl });
+  dispatch('EditTrackSource', { track_id: trackId, old_url: oldUrl, new_url: newUrl });
 
 export const getSourcesForTrack = (trackId: number): Promise<TrackSource[]> =>
-  invoke('get_sources_for_track', { trackId });
+  dispatch('GetSourcesForTrack', { track_id: trackId });
 

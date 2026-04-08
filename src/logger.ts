@@ -1,9 +1,17 @@
 
 
-import { invoke } from "@tauri-apps/api/core";
+import { callInvoke } from "./db/tauriInvoke";
 
 function log(message: string) {
-    invoke("log_from_ui", { message: `${new Date().toISOString()}: ${message}` });
+    if (window.__TRANSPORT__ === 'ws') {
+        if (message) {
+        console.log(`WS log: ${message}`);
+        } else {
+        console.log(`WS log: (empty message)`);
+        }
+    } else {
+        callInvoke("log_from_ui", { message: `${new Date().toISOString()}: ${message}` });
+    }
 }
 
 export { log };

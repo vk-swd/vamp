@@ -1,17 +1,11 @@
-import { invoke } from '@tauri-apps/api/core';
+import { callInvoke } from './tauriInvoke';
 
 // ─── Mode ─────────────────────────────────────────────────────────────────────
+// Set window.__TRANSPORT__ = 'ws' (e.g. in index.html) to route via WebSocket.
+// Undefined or any other value falls back to Tauri IPC invoke.
 
-export type DispatchMode = 'invoke' | 'ws';
-
-let mode: DispatchMode = 'invoke';
-
-export function setDispatchMode(m: DispatchMode): void {
-  mode = m;
-}
-
-export function getDispatchMode(): DispatchMode {
-  return mode;
+declare global {
+  interface Window { __TRANSPORT__?: string; }
 }
 
 // ─── WebSocket client (singleton) ─────────────────────────────────────────────
@@ -20,11 +14,27 @@ const WS_URL = 'ws://localhost:8090';
 
 type WsState = 'disconnected' | 'connecting' | 'connected' | 'failed';
 
+type PendingRequest = {
+  resolve: (value: unknown) => void;
+  reject: (reason: unknown) => void;
+};
+
+type WsResponse = { id: number; ok: unknown } | { id: number; error: string };
+
 class WsDispatchClient {
   private ws: WebSocket | null = null;
   private state: WsState = 'disconnected';
   /** Shared promise while a connection attempt is in progress. */
   private connectingPromise: Promise<void> | null = null;
+  private nextId = 1;
+  private pending = new Map<number, PendingRequest>();
+
+  private rejectAllPending(reason: string): void {
+    for (const p of this.pending.values()) {
+      p.reject(new Error(reason));
+    }
+    this.pending.clear();
+  }
 
   private connect(): Promise<void> {
     if (this.state === 'connected') return Promise.resolve();
@@ -42,12 +52,26 @@ class WsDispatchClient {
         resolve();
       };
 
-      ws.onerror = () => {
+      ws.onmessage = (event: MessageEvent) => {
+        const msg = JSON.parse(event.data as string) as WsResponse;
+        const pending = this.pending.get(msg.id);
+        if (!pending) return;
+        this.pending.delete(msg.id);
+        if ('error' in msg) {
+          pending.reject(new Error(msg.error));
+        } else {
+          pending.resolve(msg.ok);
+        }
+      };
+
+      ws.onerror = (e) => {
         // onclose fires right after onerror; handled there.
         this.state = 'failed';
         this.ws = null;
         this.connectingPromise = null;
-        reject(new Error(`WebSocket connection to ${WS_URL} failed`));
+        const err = `WebSocket connection to ${WS_URL} failed`;
+        this.rejectAllPending(err);
+        reject(new Error(err));
       };
 
       ws.onclose = () => {
@@ -55,6 +79,7 @@ class WsDispatchClient {
         if (this.state === 'connected') {
           this.state = 'disconnected';
           this.ws = null;
+          this.rejectAllPending('WebSocket closed unexpectedly');
         }
       };
     });
@@ -62,11 +87,9 @@ class WsDispatchClient {
     return this.connectingPromise;
   }
 
-  /** Connect (if needed) then fire-and-forget the message.
-   *  Resolves when the message has been accepted by the send buffer.
-   *  Rejects (and sets state to 'failed') when connections cannot be established.
-   *  The next call after a failure will retry the connection. */
-  async send(kind: string, payload: unknown): Promise<void> {
+  /** Connect (if needed), send the message, and return a Promise that resolves
+   *  with the server's response value. Rejects on connection failure or server error. */
+  async send<T>(kind: string, payload: unknown): Promise<T> {
     // 'failed' and 'disconnected' both require a fresh connection attempt.
     if (this.state !== 'connected') {
       await this.connect();
@@ -75,8 +98,11 @@ class WsDispatchClient {
       this.state = 'disconnected';
       throw new Error('WebSocket is not open');
     }
-    // TODO: monitor buffered amount
-    this.ws.send(JSON.stringify({ kind, payload: payload ?? null }));
+    const id = this.nextId++;
+    return new Promise<T>((resolve, reject) => {
+      this.pending.set(id, { resolve: resolve as (v: unknown) => void, reject });
+      this.ws!.send(JSON.stringify({ id, kind, payload: payload ?? null }));
+    });
   }
 
   getState(): WsState { return this.state; }
@@ -89,19 +115,11 @@ const wsClient = new WsDispatchClient();
 /**
  * Route a command to the backend.
  *
- * In `invoke` mode (default): calls `invoke('dispatch', …)` via Tauri IPC and
- * returns the typed result.
- *
- * In `ws` mode: connects to `ws://localhost:8090` on the first call, then
- * fire-and-forgets the message. The returned promise resolves when the message
- * is handed to the WebSocket send buffer. Return type `T` is nominal only in
- * this mode — no response value is returned.
- *
- * Set the mode with `setDispatchMode('invoke' | 'ws')`.
+ * Routes via WebSocket when `window.__TRANSPORT__ === 'ws'`, otherwise via Tauri IPC invoke.
  */
 export function dispatch<T>(kind: string, payload: unknown = null): Promise<T> {
-  if (mode === 'ws') {
-    return wsClient.send(kind, payload).then(() => undefined as unknown as T);
+  if (window.__TRANSPORT__ === 'ws') {
+    return wsClient.send<T>(kind, payload);
   }
-  return invoke<T>('dispatch', { kind, payload });
+  return callInvoke<T>('dispatch', { kind, payload });
 }

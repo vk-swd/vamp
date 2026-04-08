@@ -5,9 +5,8 @@
 - While coding, break problems into clear steps and group related actions together.
 - Try using Model View Controller pattern when presenting data with a centralised storage in many places
 
-If the request is unclear:
-- Ask clarifying questions instead of guessing.
-If you are unsure:
-- Say so and propose the best possible approach.
+- If the request is unclear, ask clarifying questions instead of guessing.
+- If you are unsure, say so and propose the best possible approach.
 
 - Don't format any code that is unrelated to your changes. For example, if there is a sequence of valiable iitizlisations and you insert a new variable longer then the others, dont format other assignements to make the equal sign be in the same column. Etc.
+- Don't remove TODO messages. If you think you solved them, and add a super short summary of the task you were solving when this TODO was fixed.

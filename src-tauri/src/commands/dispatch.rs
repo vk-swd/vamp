@@ -92,6 +92,25 @@ pub struct UpdateMetaArgs {
     pub value: String,
 }
 
+#[derive(Deserialize)]
+pub struct AddTrackSourceArgs {
+    pub track_id: i64,
+    pub url: String,
+}
+
+#[derive(Deserialize)]
+pub struct RemoveTrackSourceArgs {
+    pub track_id: i64,
+    pub url: String,
+}
+
+#[derive(Deserialize)]
+pub struct EditTrackSourceArgs {
+    pub track_id: i64,
+    pub old_url: String,
+    pub new_url: String,
+}
+
 // ─── Command enum ─────────────────────────────────────────────────────────────
 
 /// Discriminated union of every DB operation.
@@ -126,6 +145,11 @@ pub enum Command {
     UpdateMeta(UpdateMetaArgs),
     DeleteMeta(IdArg),
     GetMetaForTrack(TrackIdArg),
+    // Track sources
+    AddTrackSource(AddTrackSourceArgs),
+    RemoveTrackSource(RemoveTrackSourceArgs),
+    EditTrackSource(EditTrackSourceArgs),
+    GetSourcesForTrack(TrackIdArg),
 }
 
 // ─── Shared execution logic ───────────────────────────────────────────────────
@@ -226,6 +250,23 @@ pub async fn execute(repo: &ArcRepo, cmd: Command) -> Result<serde_json::Value, 
 
         Command::GetMetaForTrack(TrackIdArg { track_id }) =>
             to_val(repo.get_meta_for_track(track_id).await)?,
+
+        // ── Track sources ───────────────────────────────────────────────────
+        Command::AddTrackSource(AddTrackSourceArgs { track_id, url }) =>
+            to_val(repo.add_track_source(track_id, url).await)?,
+
+        Command::RemoveTrackSource(RemoveTrackSourceArgs { track_id, url }) => {
+            repo.remove_track_source(track_id, url).await.map_err(|e| e.to_string())?;
+            serde_json::Value::Null
+        }
+
+        Command::EditTrackSource(EditTrackSourceArgs { track_id, old_url, new_url }) => {
+            repo.edit_track_source(track_id, old_url, new_url).await.map_err(|e| e.to_string())?;
+            serde_json::Value::Null
+        }
+
+        Command::GetSourcesForTrack(TrackIdArg { track_id }) =>
+            to_val(repo.get_sources_for_track(track_id).await)?,
     };
 
     Ok(value)

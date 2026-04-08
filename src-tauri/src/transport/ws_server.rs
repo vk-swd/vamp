@@ -61,22 +61,32 @@ async fn handle_connection(
     Ok(())
 }
 
-/// Parse `{ "kind": "…", "payload": … }`, execute the command, return a JSON reply.
+/// Parse `{ "id": N, "kind": "…", "payload": … }`, execute the command, return a JSON reply.
+/// The `id` field is echoed back so the client can match the response to its request.
 async fn route(text: &str, repo: &ArcRepo) -> String {
+    println!("[WS] received: {text}");
     let v: serde_json::Value = match serde_json::from_str(text) {
         Ok(v) => v,
-        Err(e) => return err_json(e.to_string()),
+        Err(e) => return err_json(None, e.to_string()),
     };
+    let id = v.get("id").cloned();
     let cmd: Command = match serde_json::from_value(v) {
         Ok(c) => c,
-        Err(e) => return err_json(e.to_string()),
+        Err(e) => return err_json(id.as_ref(), e.to_string()),
     };
     match execute(repo, cmd).await {
-        Ok(val) => serde_json::json!({ "ok": val }).to_string(),
-        Err(e)  => err_json(e),
+        Ok(val) => {
+            let mut res = serde_json::json!({ "ok": val });
+            if let Some(id) = &id { res["id"] = id.clone(); }
+            println!("[WS] sending: {res}");
+            res.to_string()
+        }
+        Err(e) => err_json(id.as_ref(), e),
     }
 }
 
-fn err_json(msg: String) -> String {
-    serde_json::json!({ "error": msg }).to_string()
+fn err_json(id: Option<&serde_json::Value>, msg: String) -> String {
+    let mut res = serde_json::json!({ "error": msg });
+    if let Some(id) = id { res["id"] = id.clone(); }
+    res.to_string()
 }

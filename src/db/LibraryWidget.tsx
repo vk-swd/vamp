@@ -1,10 +1,9 @@
 import { createContext, useEffect, useState } from 'react';
 import { SearchWidget } from "./filter/SearchWidget";
-import { invoke } from '@tauri-apps/api/core';
 import { TrackList } from './data/TrackList';
 import { Button } from '../ui/elements';
 import { TrackInfoDialog, type TrackData } from './track/TrackInfo';
-import { addTrack, getTracksWithSources } from './tauriDb';
+import { addTrack, getTracksWithSources, getAllTags, getTagsByPattern, type Tag } from './tauriDb';
 import type { TrackWithSources } from './data/TrackItem';
 import { log } from '../logger';
 import { usePlayerStore } from '../store';
@@ -12,11 +11,11 @@ import { usePlayerStore } from '../store';
 const PAGE_SIZE = 20;
 
 class TagLookupContextValue {
-  async getAllTags(): Promise<string[]> {
-    return invoke("get_all_tags")
+  async getAllTags(): Promise<Tag[]> {
+    return getAllTags();
   }
-  async getTags(pattern: string): Promise<string[]> {
-    return invoke("get_tags", {pattern});
+  async getTags(pattern: string): Promise<Tag[]> {
+    return getTagsByPattern(pattern);
   }
 }
 const tagGetter = new TagLookupContextValue()

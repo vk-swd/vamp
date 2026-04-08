@@ -9,6 +9,7 @@
 <body>
     <p id="status">Connecting...</p>
     <script>
+        window.__TRANSPORT__ = 'ws'
         const WS_URL = 'ws://localhost:8080';
         const status = document.getElementById('status');
         const contents = []
