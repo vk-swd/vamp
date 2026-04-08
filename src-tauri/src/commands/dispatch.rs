@@ -128,25 +128,11 @@ pub enum Command {
     GetMetaForTrack(TrackIdArg),
 }
 
-// ─── Dispatch command ─────────────────────────────────────────────────────────
+// ─── Shared execution logic ───────────────────────────────────────────────────
 
-/// Single Tauri command that routes to every DB operation.
-///
-/// Call from JS as:
-/// ```js
-/// const result = await invoke('dispatch', { kind: 'AddTrack', payload: { ... } });
-/// ```
-/// `payload` may be omitted or `null` for zero-argument commands (e.g. `GetAllTags`).
-#[tauri::command]
-pub async fn dispatch(
-    repo: Repo<'_>,
-    kind: String,
-    payload: Option<serde_json::Value>,
-) -> Result<serde_json::Value, String> {
-    let payload = payload.unwrap_or(serde_json::Value::Null);
-    let cmd: Command = serde_json::from_value(serde_json::json!({ "kind": kind, "payload": payload }))
-        .map_err(|e| e.to_string())?;
-
+/// Execute a `Command` against the repository and return a JSON-serialised result.
+/// Called by both the Tauri IPC command and the WebSocket server.
+pub async fn execute(repo: &ArcRepo, cmd: Command) -> Result<serde_json::Value, String> {
     let value = match cmd {
         // ── Tracks ─────────────────────────────────────────────────────────
         Command::AddTrack(track) =>
@@ -243,6 +229,27 @@ pub async fn dispatch(
     };
 
     Ok(value)
+}
+
+// ─── Tauri IPC command ────────────────────────────────────────────────────────
+
+/// Single Tauri command that routes to every DB operation.
+///
+/// Call from JS as:
+/// ```js
+/// const result = await invoke('dispatch', { kind: 'AddTrack', payload: { ... } });
+/// ```
+/// `payload` may be omitted or `null` for zero-argument commands (e.g. `GetAllTags`).
+#[tauri::command]
+pub async fn dispatch(
+    repo: Repo<'_>,
+    kind: String,
+    payload: Option<serde_json::Value>,
+) -> Result<serde_json::Value, String> {
+    let payload = payload.unwrap_or(serde_json::Value::Null);
+    let cmd: Command = serde_json::from_value(serde_json::json!({ "kind": kind, "payload": payload }))
+        .map_err(|e| e.to_string())?;
+    execute(&*repo, cmd).await
 }
 
 // ─── Helper ───────────────────────────────────────────────────────────────────

@@ -1,4 +1,8 @@
 import { invoke } from '@tauri-apps/api/core';
+import { dispatch } from './dispatchClient';
+export { dispatch } from './dispatchClient';
+export type { DispatchMode } from './dispatchClient';
+export { setDispatchMode, getDispatchMode } from './dispatchClient';
 
 // ─── Types mirroring src-tauri/src/db/schema.rs ─────────────────────────────
 
@@ -119,11 +123,8 @@ export type TagAssignment = {
 };
 
 // ─── Tauri command wrappers ──────────────────────────────────────────────────
-// All operations are routed through the single `dispatch` Tauri command.
-// invoke('dispatch', { kind: '<VariantName>', payload: <args> })
-
-const dispatch = <T>(kind: string, payload: unknown = null): Promise<T> =>
-  invoke('dispatch', { kind, payload });
+// All operations are routed through dispatchClient (invoke or WebSocket mode).
+// Switch modes at runtime with setDispatchMode('ws') / setDispatchMode('invoke').
 
 // Tracks
 export const addTrack = (track: NewTrack): Promise<number> =>

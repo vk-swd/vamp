@@ -5,10 +5,12 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 mod commands;
 mod db;
+mod transport;
 use tauri::Manager;
 use webkit2gtk::glib::DateTime;
 
 use crate::commands::default_dir;
+use crate::db::repository::ArcRepo;
 
 #[tauri::command]
 fn log_from_ui(message: String) {
@@ -48,6 +50,10 @@ fn main() {
             let db_full_path = config.db_path.join(&config.db_filename);
             tauri::async_runtime::block_on(
                 commands::setup_database(app.handle().clone(), db_full_path)
+            ).map_err(|e| e.to_string())?;
+            let repo = app.handle().state::<ArcRepo>().inner().clone();
+            tauri::async_runtime::block_on(
+                transport::ws_server::start(repo, "127.0.0.1:8090".parse().unwrap())
             ).map_err(|e| e.to_string())?;
             let window = tauri::WebviewWindowBuilder::from_config(app.handle(), &app.config().app.windows[config.window_idx])?.build()?;
             // Apply webkit settings for ALL builds (debug + release)
