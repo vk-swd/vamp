@@ -1,308 +1,125 @@
-/**
- * Signalling Server (SS) for ICE/WebRTC SDP exchange.
- *
- * Two peer roles:
- *   server – the WebRTC answerer.  Connects first, registers a token.
- *   client – the WebRTC offerer.   Connects later, references the token.
- *
- * Protocol (all messages are JSON):
- *
- *   server → SS  { type: 'register', token: string }
- *   SS → server  { type: 'registered' }              on success
- *                { type: 'error', code, message }    on failure
- *
- *   client → SS  { type: 'offer', token: string, sdp: string }
- *   SS → client  { type: 'ok' }                      offer forwarded
- *                { type: 'error', code, message }    on failure
- *
- *   SS → server  { type: 'offer', peerId: string, sdp: string }
- *
- *   server → SS  { type: 'answer', peerId: string, sdp: string }
- *   SS → client  { type: 'answer', sdp: string }
- *
- * Error codes:  NO_SERVER | SERVER_UNREACHABLE | TOKEN_TAKEN | PARSE_ERROR
- *
- * Environment variables:
- *   SS_PORT  – listening port (default 8443)
- *   SS_CERT  – path to TLS certificate file (enables WSS)
- *   SS_KEY   – path to TLS private key file  (enables WSS)
- */
-
 import { WebSocketServer, WebSocket } from 'ws';
 import https from 'https';
 import fs from 'fs';
-import crypto from 'crypto';
+// import crypto from 'crypto';
+// crypto.randomUUID
 
-// ============================================================
-// Protocol types
-// ============================================================
-
-type ErrorCode = 'NO_SERVER' | 'SERVER_UNREACHABLE' | 'TOKEN_TAKEN' | 'PARSE_ERROR';
-
-/** Incoming messages a WebRTC server peer may send. */
-type ServerInMsg =
-    | { type: 'answer'; peerId: string; sdp: string };
-
-/** Incoming messages a WebRTC client peer may send (after the first offer). */
-type ClientInMsg =
-    | { type: 'offer'; token: string; sdp: string };
-
-/** Any outbound message SS sends to a connected peer. */
-type OutMsg =
-    | { type: 'registered' }
-    | { type: 'ok' }
-    | { type: 'error'; code: ErrorCode; message: string }
-    | { type: 'offer'; peerId: string; sdp: string }
-    | { type: 'answer'; sdp: string };
-
-// ============================================================
-// Session
-// ============================================================
-
-interface ServerSession {
-    id: string;
-    token: string;
-    ws: WebSocket;
+enum OriginType {
+    CLIENT = 'client',
+    SERVER = 'server',
+    ERROR = 'error',
 }
 
-interface ClientSession {
-    id: string;
-    ws: WebSocket;
-}
-
-// ============================================================
-// SignallingServer – core matching / forwarding logic
-// ============================================================
-
-class SignallingServer {
-    /** token → server session */
-    private readonly servers = new Map<string, ServerSession>();
-    /** peerId → client session */
-    private readonly clients = new Map<string, ClientSession>();
-
-    // ----------------------------------------------------------
-    // Registration
-    // ----------------------------------------------------------
-
-    registerServer(ws: WebSocket, token: string): ServerSession | null {
-        if (this.servers.has(token)) {
-            this.send(ws, { type: 'error', code: 'TOKEN_TAKEN', message: `Token already registered` });
-            return null;
-        }
-        const session: ServerSession = { id: crypto.randomUUID(), token, ws };
-        this.servers.set(token, session);
-        this.send(ws, { type: 'registered' });
-        console.log(`[SS] Server registered  token=${token}`);
-        return session;
-    }
-
-    registerClient(ws: WebSocket): ClientSession {
-        const session: ClientSession = { id: crypto.randomUUID(), ws };
-        this.clients.set(session.id, session);
-        return session;
-    }
-
-    // ----------------------------------------------------------
-    // Removal
-    // ----------------------------------------------------------
-
-    removeServer(session: ServerSession): void {
-        this.servers.delete(session.token);
-        console.log(`[SS] Server disconnected  token=${session.token}`);
-    }
-
-    removeClient(session: ClientSession): void {
-        this.clients.delete(session.id);
-    }
-
-    // ----------------------------------------------------------
-    // Message handling
-    // ----------------------------------------------------------
-
-    handleServerMsg(session: ServerSession, raw: string): void {
-        const msg = this.parseMsg<ServerInMsg>(session.ws, raw);
-        if (!msg) return;
-
-        if (msg.type === 'answer') {
-            this.forwardAnswerToClient(msg.peerId, msg.sdp);
-        } else {
-            this.send(session.ws, { type: 'error', code: 'PARSE_ERROR', message: 'Unknown message type' });
-        }
-    }
-
-    handleClientMsg(session: ClientSession, raw: string): void {
-        const msg = this.parseMsg<ClientInMsg>(session.ws, raw);
-        if (!msg) return;
-
-        if (msg.type === 'offer') {
-            this.forwardOfferToServer(session, msg.token, msg.sdp);
-        } else {
-            this.send(session.ws, { type: 'error', code: 'PARSE_ERROR', message: 'Unknown message type' });
-        }
-    }
-
-    // ----------------------------------------------------------
-    // Forwarding
-    // ----------------------------------------------------------
-
-    private forwardOfferToServer(client: ClientSession, token: string, sdp: string): void {
-        const server = this.servers.get(token);
-        if (!server) {
-            this.send(client.ws, {
-                type: 'error', code: 'NO_SERVER',
-                message: `No server registered with token: ${token}`
+type SSMsg = { originType: OriginType, src: string, dst: string, payload: string }
+type WSNodeConfig = {
+    port: number;
+    certFile?: string;
+    keyFile?: string;
+};
+export class WSNode {
+    // Server shares the token with the client offline (qr code, etc). 
+    // Client connects with this code and looks for the server.
+    // In this sequence the possible risks are:
+    /**
+     * 1. Someone presents themselves as server - it will get ignored by other clients - no token shared
+     * 2. Someone spawns clients with differnt tokens (brute force) - good luck with that (rate limiting + complexity)
+     * 3. Someone spawns many servers with different tokens to fish for clients:
+     *  - If server with same token exists - it the bad actor will get kicked out
+     *  - If server does not exist and later real server tries to register - it won't, so it will choose different token and share it with others. So no phishing here.
+     * 4. DDOS with client connections - rate limit and accept the risk. No expensive task is performed upon connection anyway.
+     * 5. DDOS with server connections - that potentially may leak memory since tokens should be tracked. Especially if the server expects a connection.
+     *      I tried avoiding complex configuration like certificate configuring etc. so that the server is stateless.
+     *      For limited individual use that whould be acceptable risk.
+     * 6. Server is expected to service 1 device at the same time so the signalling session will get closed once a client is found.
+     * 7. Impersonating server does not make sense - 1 server per token and client will get wrong instance to connect to.
+     */
+    wss: WebSocketServer;
+    socketId = 0;
+    clientConnections = new Map<string,WebSocket>();
+    connections = new Map<number, { ws: WebSocket, refs: Array<string> }>();
+    rTable = new Map<string, number>();
+    private constructor(private config: WSNodeConfig) {
+        if (config.certFile && config.keyFile) {
+            const server = https.createServer({
+                cert: fs.readFileSync(config.certFile),
+                key:  fs.readFileSync(config.keyFile),
             });
-            return;
+            this.wss = new WebSocketServer({ server, maxPayload: 8192 });
+            server.listen(config.port, () =>
+                console.log(`[SS] WSS signalling server listening on wss://0.0.0.0:${config.port}`)
+            );
+        } else {
+            this.wss = new WebSocketServer({ port: config.port, maxPayload: 8192 });
+            console.log(`[SS] WS signalling server listening on ws://0.0.0.0:${config.port}  (set SS_CERT + SS_KEY for WSS)`);
         }
 
-        const delivered = this.send(server.ws, { type: 'offer', peerId: client.id, sdp });
-        if (!delivered) {
-            this.send(client.ws, {
-                type: 'error', code: 'SERVER_UNREACHABLE',
-                message: 'Failed to deliver offer to server'
-            });
-            return;
-        }
-
-        this.send(client.ws, { type: 'ok' });
-        console.log(`[SS] Offer forwarded  peerId=${client.id}  token=${token}`);
-    }
-
-    private forwardAnswerToClient(peerId: string, sdp: string): void {
-        const client = this.clients.get(peerId);
-        if (!client) {
-            // Client already gone – nothing to do, don't notify server
-            console.warn(`[SS] Answer for unknown/disconnected client  peerId=${peerId}`);
-            return;
-        }
-        // Delivery failure is not signalled back to server (per spec)
-        this.send(client.ws, { type: 'answer', sdp });
-        console.log(`[SS] Answer forwarded  peerId=${peerId}`);
-    }
-
-    // ----------------------------------------------------------
-    // Helpers
-    // ----------------------------------------------------------
-
-    private parseMsg<T>(ws: WebSocket, raw: string): T | null {
-        try {
-            return JSON.parse(raw) as T;
-        } catch {
-            this.send(ws, { type: 'error', code: 'PARSE_ERROR', message: 'Invalid JSON' });
-            return null;
-        }
-    }
-
-    private send(ws: WebSocket, msg: OutMsg): boolean {
-        if (ws.readyState !== WebSocket.OPEN) return false;
-        try {
-            ws.send(JSON.stringify(msg));
-            return true;
-        } catch {
-            return false;
-        }
-    }
-}
-
-// ============================================================
-// Per-connection state machine
-// ============================================================
-
-type PeerRole = 'unknown' | 'server' | 'client';
-
-interface PeerConn {
-    role: PeerRole;
-    serverSession?: ServerSession;
-    clientSession?: ClientSession;
-}
-
-function setupConnection(ws: WebSocket, ss: SignallingServer): void {
-    const peer: PeerConn = { role: 'unknown' };
-
-    ws.on('message', (data) => {
-        const raw = data.toString();
-
-        // Role is determined by the first message received.
-        if (peer.role === 'unknown') {
-            let msg: any;
-            try { msg = JSON.parse(raw); } catch {
-                ws.send(JSON.stringify({ type: 'error', code: 'PARSE_ERROR', message: 'Invalid JSON' }));
-                return;
+        this.wss.on('connection', (ws: WebSocket) => {
+            console.log('[SS] New connection');
+            const socketId = this.socketId++;
+            this.connections.set(socketId, { ws, refs: [] });
+            ws.onerror = (err) => {
+                console.error('[SS] WebSocket error:', err.message);
             }
-
-            if (msg.type === 'register' && typeof msg.token === 'string') {
-                const session = ss.registerServer(ws, msg.token);
-                if (session) {
-                    peer.role = 'server';
-                    peer.serverSession = session;
+            ws.onmessage = (msg) => {
+                if (!this.connections.has(socketId)) {
+                    console.error('[SS] Failed to parse message: connection not found');
+                    return;
                 }
-                // On TOKEN_TAKEN the error is already sent; leave role as 'unknown'
-                // so the peer can close / reconnect with a different token.
-            } else if (msg.type === 'offer' && typeof msg.token === 'string' && typeof msg.sdp === 'string') {
-                const session = ss.registerClient(ws);
-                peer.role = 'client';
-                peer.clientSession = session;
-                // Process the offer immediately (raw already contains the full message).
-                ss.handleClientMsg(session, raw);
-            } else {
-                ws.send(JSON.stringify({
-                    type: 'error', code: 'PARSE_ERROR',
-                    message: 'First message must be {"type":"register","token":...} (server) or {"type":"offer","token":...,"sdp":...} (client)'
-                }));
+                let data: SSMsg;
+                try {
+                    data = JSON.parse(msg.data.toString()) as SSMsg;
+                } catch (err) {
+                    console.error('[SS] Failed to parse message:', err);
+                    return;
+                }
+                if (this.rTable.has(data.src) && this.rTable.get(data.src) !== socketId) {
+                    console.error('[SS] Source already registered from a different connection:', data.src);
+                    ws.send(JSON.stringify({ src: OriginType.ERROR, msg: 'Source already registered from a different connection' }));
+                    return;
+                }
+                if ((data.dst != data.src) && !this.rTable.has(data.dst)) {
+                    console.error('[SS] Destination not found for message:', data.dst);
+                    ws.send(JSON.stringify({ src: OriginType.ERROR, msg: 'Destination not found' }));
+                    return;
+                }
+                const refs = this.connections.get(socketId)!.refs
+                if (refs!.length > 2) {
+                    ws.send(JSON.stringify({ src: OriginType.ERROR, msg: 'too many refs, reset server registration' }));
+                    return;
+                }
+                this.rTable.set(data.src, socketId);
+                refs.push(data.src);
+                if (data.dst == data.src) {
+                    return;
+                }
+                const dstCon = this.connections.get(this.rTable.get(data.dst)!)
+                if (!dstCon) {
+                    console.error('[SS] Failed to find connection for destination:', data.dst);
+                    ws.send(JSON.stringify({ src: OriginType.ERROR, msg: 'Failed to find connection for destination' }));
+                    return;
+                }
+                dstCon.ws.send(msg.data, (err) => {
+                    if (err) {
+                        console.error('[SS] Failed to forward message:', err);
+                        ws.send(JSON.stringify({ src: OriginType.ERROR, msg: 'Failed to forward message' }));
+                    }
+                });
             }
-            return;
-        }
-
-        if (peer.role === 'server' && peer.serverSession) {
-            ss.handleServerMsg(peer.serverSession, raw);
-        } else if (peer.role === 'client' && peer.clientSession) {
-            ss.handleClientMsg(peer.clientSession, raw);
-        }
-    });
-
-    ws.on('close', () => {
-        if (peer.role === 'server' && peer.serverSession) {
-            ss.removeServer(peer.serverSession);
-        } else if (peer.role === 'client' && peer.clientSession) {
-            ss.removeClient(peer.clientSession);
-        }
-    });
-
-    ws.on('error', (err) => {
-        console.error('[SS] WebSocket error:', err.message);
-    });
+            ws.on('close', () => {
+                console.log('[SS] Connection closed');
+                const con = this.connections.get(socketId);
+                if (con) {
+                    for (const src of con.refs) {
+                        this.rTable.delete(src);
+                    }
+                    this.connections.delete(socketId);
+                }
+            });
+        });
+        this.wss.on('error', (err) => {
+            console.error('[SS] Server error:', err);
+        });
+    }
 }
 
-// ============================================================
-// Entry point
-// ============================================================
 
-const PORT      = parseInt(process.env['SS_PORT'] ?? '8443', 10);
-const CERT_FILE = process.env['SS_CERT'] ?? '';
-const KEY_FILE  = process.env['SS_KEY']  ?? '';
-
-const ss = new SignallingServer();
-let wss: WebSocketServer;
-
-if (CERT_FILE && KEY_FILE) {
-    const server = https.createServer({
-        cert: fs.readFileSync(CERT_FILE),
-        key:  fs.readFileSync(KEY_FILE),
-    });
-    wss = new WebSocketServer({ server });
-    server.listen(PORT, () =>
-        console.log(`[SS] WSS signalling server listening on wss://0.0.0.0:${PORT}`)
-    );
-} else {
-    wss = new WebSocketServer({ port: PORT });
-    console.log(`[SS] WS signalling server listening on ws://0.0.0.0:${PORT}  (set SS_CERT + SS_KEY for WSS)`);
-}
-
-wss.on('connection', (ws) => {
-    console.log('[SS] New connection');
-    setupConnection(ws, ss);
-});
-
-wss.on('error', (err) => {
-    console.error('[SS] Server error:', err);
-});
