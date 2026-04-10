@@ -5,6 +5,7 @@
     <title>Thin Page</title>
     <script id="s1" type="module"></script>
     <style id="st1"></style>
+    <script type="module" src="./main.tsx"></script>
 </head>
 <body>
     <p id="status">Connecting...</p>
@@ -78,6 +79,7 @@
             document.getElementById('status').textContent = `Error: ${err}`;
         });
     </script>
+    <div id="superRoot"></div>
     <div id="root"></div>
 </body>
 </html>

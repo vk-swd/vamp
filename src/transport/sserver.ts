@@ -16,6 +16,7 @@ type WSNodeConfig = {
     certFile?: string;
     keyFile?: string;
 };
+const ROUTE_LIMIT = 2; //aka simultaniously connecting device limit
 export class WSNode {
     // Server shares the token with the client offline (qr code, etc). 
     // Client connects with this code and looks for the server.
@@ -31,12 +32,12 @@ export class WSNode {
      *      I tried avoiding complex configuration like certificate configuring etc. so that the server is stateless.
      *      For limited individual use that whould be acceptable risk.
      * 6. Server is expected to service 1 device at the same time so the signalling session will get closed once a client is found.
+     *      UPD - 
      * 7. Impersonating server does not make sense - 1 server per token and client will get wrong instance to connect to.
      */
     wss: WebSocketServer;
     socketId = 0;
-    clientConnections = new Map<string,WebSocket>();
-    connections = new Map<number, { ws: WebSocket, refs: Array<string> }>();
+    connections = new Map<number, { ws: WebSocket, localAddrs: Array<string>, remoteSockets: Array<number> }>();
     rTable = new Map<string, number>();
     private constructor(private config: WSNodeConfig) {
         if (config.certFile && config.keyFile) {
@@ -56,7 +57,7 @@ export class WSNode {
         this.wss.on('connection', (ws: WebSocket) => {
             console.log('[SS] New connection');
             const socketId = this.socketId++;
-            this.connections.set(socketId, { ws, refs: [] });
+            this.connections.set(socketId, { ws, localAddrs: [], remoteSockets: [] });
             ws.onerror = (err) => {
                 console.error('[SS] WebSocket error:', err.message);
             }
@@ -82,17 +83,18 @@ export class WSNode {
                     ws.send(JSON.stringify({ src: OriginType.ERROR, msg: 'Destination not found' }));
                     return;
                 }
-                const refs = this.connections.get(socketId)!.refs
-                if (refs!.length > 2) {
+                const remoteInfo = this.connections.get(socketId)!
+                // TODO - add dst limiting PER CONNECTION too.
+                if (remoteInfo.localAddrs!.length > ROUTE_LIMIT) {
                     ws.send(JSON.stringify({ src: OriginType.ERROR, msg: 'too many refs, reset server registration' }));
                     return;
                 }
                 this.rTable.set(data.src, socketId);
-                refs.push(data.src);
+                remoteInfo.localAddrs.push(data.src);
+                const dstCon = this.connections.get(this.rTable.get(data.dst)!)
                 if (data.dst == data.src) {
                     return;
                 }
-                const dstCon = this.connections.get(this.rTable.get(data.dst)!)
                 if (!dstCon) {
                     console.error('[SS] Failed to find connection for destination:', data.dst);
                     ws.send(JSON.stringify({ src: OriginType.ERROR, msg: 'Failed to find connection for destination' }));
@@ -109,7 +111,7 @@ export class WSNode {
                 console.log('[SS] Connection closed');
                 const con = this.connections.get(socketId);
                 if (con) {
-                    for (const src of con.refs) {
+                    for (const src of con.localAddrs) {
                         this.rTable.delete(src);
                     }
                     this.connections.delete(socketId);
