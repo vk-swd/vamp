@@ -33,3 +33,6 @@ Thumbs.db
 *lock.json
 *.png
 agent_check.txt
+
+dist-thin*
+signalling-server/target/

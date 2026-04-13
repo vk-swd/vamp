@@ -2,14 +2,24 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Thin Page</title>
+    <title>Thin Page1</title>
     <script id="s1" type="module"></script>
     <style id="st1"></style>
-    <script type="module" src="./main.tsx"></script>
+    <!-- <script type="module" src="./main.tsx"></script> -->
 </head>
 <body>
     <p id="status">Connecting...</p>
     <script>
+        function logIce(hh, ...message) {
+            console.log(hh, ...message);
+        }
+        function fixSDP(sdp) {
+        return sdp
+            .split('\n')
+            .map(line => line.replace(/\r$/, '')) // strip any stray \r just in case
+            .join('\r\n') + '\r\n'; // rejoin with proper line endings + trailing
+        }
+        console.log('starting script');
         window.__TRANSPORT__ = 'ws'
         const storageLocation = 'loaded_page'; // or 'cache' for Cache API / IndexedDB
         function render(parsed) {
@@ -19,7 +29,62 @@
             document.head.appendChild(script);
             console.info('injected script');
         }
-        async function loadContent() {
+        logIce('iceLog1', 'ma1');
+
+
+
+        // const match = raw.match(/^(turn|turns):(.+):(.+)@(.+)$/);
+
+        //   iceServers: [
+        //     { urls: `${match[1]}:${match[4]}`, username: match[2], credential: match[3] }
+
+
+
+
+        pc1 = new RTCPeerConnection({ 
+            iceServers: [
+                { urls: `turns:redacted`, username: "redacted", credential: "redacted" }
+            ] 
+        });
+        logIce('iceLog1', 'ma2');
+        logIce('iceLog1', 'ma3');
+        const dataChannel = pc1.createDataChannel('ebc');
+        dataChannel.onopen = () => {
+            console.log('channel open');
+            dataChannel.send('hello!');
+        };
+
+        dataChannel.onmessage = (e) => {
+            console.log('received for pc1:', e.data);
+        };
+        let createdSDP = ""
+        pc1.onicecandidate = (e) => {
+            if (e.candidate) {
+                logIce('iceLog1', e.candidate.type + ' - ' + (e.candidate.address || 'hidden'));
+            } else {
+                createdSDP = fixSDP(pc1.localDescription.sdp);
+                loadContent(createdSDP).then(loaded => {
+                    const bytes = Uint8Array.from(atob(loaded), c => c.charCodeAt(0));
+                    const text = new TextDecoder().decode(bytes); // ✅ proper UTF-8 decode
+                    localStorage.setItem(storageLocation, loaded);
+                    render(text);
+                }).catch(err => {
+                    document.getElementById('status').textContent = `Error: ${err}`;
+                });
+                logIce('iceLog1', 'ICE gathering complete', createdSDP);
+            }
+        };
+
+        pc1.oniceconnectionstatechange = () => {
+            logIce('iceLog1', 'ICE state: ' + pc1.iceConnectionState);
+            if (pc1.iceConnectionState === 'connected') setStatus('connected!');
+        };
+
+        pc1.onicegatheringstatechange = () => {
+            logIce('iceLog1', 'Gathering: ' + pc1.iceGatheringState);
+        };
+
+        async function loadContent(sdp) {
             // 1. Show cached version immediately (no blank flash)
             // const cached = localStorage.getItem(storageLocation);
             // if (cached != null && cached != undefined
@@ -27,12 +92,12 @@
             // ) {
             //     return cached
             // }
+
+            
             return new Promise((resolve,reject) => {
                 const requestId = `${Date.now()}-${Math.random()}`;
                 // 2. Connect and get fresh content
-                console.log(`Connecting to ${requestId}`)
-                // const ws = new WebSocket("ws://localhost:8090");
-                const ws = new WebSocket("wss://192.168.0.106:8090");
+                const ws = new WebSocket("wss://redacted");
                 
                 const res = (data) => {
                     resolve(data)
@@ -44,13 +109,15 @@
                 }
                 ws.onopen = () => {
                     console.log(`opened`)
-                    const msg = JSON.stringify({ kind: 'GetHtmlBundle', id: requestId, payload: null });
+                    // const msg = JSON.stringify({ kind: 'GetHtmlBundle', id: requestId, payload: null });
+                    const msg = JSON.stringify({ src: 'hello111', dst: "hello", payload: sdp });
                     console.log(`sending message: ${msg}`)
                     ws.send(msg);
                 };
                 ws.onmessage = (e) => {
                     try {
                         const msg = JSON.parse(e.data)
+                        console.log(`received message: ${e.data}`)
                         if (msg.id != requestId) return;
                         if ('error' in msg) {
                             rej(new Error(msg.error));
@@ -70,14 +137,10 @@
                 };
             });
         }
-        loadContent().then(loaded => {
-            const bytes = Uint8Array.from(atob(loaded), c => c.charCodeAt(0));
-            const text = new TextDecoder().decode(bytes); // ✅ proper UTF-8 decode
-            localStorage.setItem(storageLocation, loaded);
-            render(text);
-        }).catch(err => {
-            document.getElementById('status').textContent = `Error: ${err}`;
-        });
+
+        pc1.createOffer().then(offer => {
+            return pc1.setLocalDescription(offer);
+        })
     </script>
     <div id="superRoot"></div>
     <div id="root"></div>

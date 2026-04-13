@@ -9,6 +9,11 @@ export default defineConfig({
     emptyOutDir: true,
     rollupOptions: {
       input: "src/transport/experiments/thinPage.html",
+      output: {
+        format: "iife",
+        inlineDynamicImports: true,
+        entryFileNames: "bundle.js",
+      }
     },
   },
 });

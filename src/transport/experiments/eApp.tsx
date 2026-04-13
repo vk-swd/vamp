@@ -1,9 +1,17 @@
+import { Button } from "../../ui/elements";
+
 
 
 
 export default function EApp() {
+
+
+
+    const ws = new WebSocket("wss://redacted");
     return (
-        <div>
-        </div>
+        <Button onClick={() => {
+            console.log("clicked");
+        }}>Hello</Button>
+        
     )
 }
