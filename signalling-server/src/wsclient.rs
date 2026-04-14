@@ -146,6 +146,7 @@ async fn negotiate_answer(
     let connected = Arc::new(Notify::new());
     let conn = connected.clone();
     pc.on_ice_connection_state_change(Box::new(move |state: RTCIceConnectionState| {
+        
         let conn = conn.clone();
         Box::pin(async move {
             println!("[WSC] ICE state → {}", state);
@@ -345,4 +346,71 @@ pub async fn run_client(server_url: &str, src_addr: String) {
     }
 
     println!("[WSC] Disconnected from signalling server");
+}
+
+
+
+enum WRTCState {
+    Idle,
+    Connected,
+    Failed
+}
+use uuid::Uuid;
+
+
+struct WRTCConnection {
+
+}
+
+struct WSConnection {
+    socket: WebSocketStream<MaybeTlsStream<TcpStream>>,
+    state: WRTCState,
+}
+impl WSConnection {
+    fn new(socket: WebSocketStream<MaybeTlsStream<TcpStream>>) -> Self {
+        WSConnection {
+            socket,
+            state: WRTCState::Idle,
+        }
+    }
+    async fn get() {
+        // get the message from the socket
+    }
+    async fn send(&self, msg: &str) {
+        // send the message to the socket
+    }
+}
+impl WRTCConnection {
+    async fn new() -> Self {
+        let id = Uuid::new_v4().simple().to_string();
+        // connect to signalling server
+        // wait for some offer
+        // try establish connection
+        // if anything fails
+        //  1. Before the connection - drop everything and restart with new code.
+        //  2. After the connection - tretry with the same code, until it is manually dropped.
+        WRTCConnection {}
+    }
+    async fn connectToSignallingServer(&self) {
+        // the connection polls the messages and expects incoming offer
+        // when offer comes, it tries to generate an answer and get to the next level.
+        // if it fails, it should stop trying because it would mean that either the offer was bad or
+        // or that the answer is impossible to generate.
+        // either way, a response should be relayed back
+        // and the operation should be cancelled.
+        // what if more then one offer arrives? this should not be expected....single device per connection.
+        // connect to signalling server
+    }
+    async fn waitForOffer(&self) {
+        // wait for some offer
+    }
+    async fn establishConnection(&self) {
+        // try establish connection
+    }
+    async fn handleFailure(&self) {
+        self.connectToSignallingServer().await;
+        // if anything fails
+        //  1. Before the connection - drop everything and restart with new code.
+        //  2. After the connection - tretry with the same code, until it is manually dropped.
+    }
 }

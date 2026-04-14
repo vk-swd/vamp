@@ -12,6 +12,7 @@ fn test_select() {
 
 use std::sync::{Arc, Mutex};
 use tokio::time::{sleep, Duration, Instant};
+use webrtc::ice::rand;
 
 async fn select_test() {
     let start = Instant::now();
@@ -53,6 +54,9 @@ async fn select_test() {
     println!("var1 after wait: {:?}", var1);
     println!("var2 after wait: {:?}", var2);
 }
+
+
+
 #[tokio::main]
 async fn main() {
     while 1 == 1 {
