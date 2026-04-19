@@ -59,10 +59,18 @@ async fn select_test() {
 
 #[tokio::main]
 async fn main() {
+
+    println!("[WSC] start 1 ");
+    // std::env::set_var("RUST_LOG", "info,webrtc_ice::agent::agent_internal=off");
+    std::env::set_var("RUST_LOG", "debug");
+    env_logger::init();
+    println!("[WSC] start 2 ");
+    log::info!("[WSC] starting server connection ");
+    // wsserver::run_server().await;
+    rustls::crypto::aws_lc_rs::default_provider()
+    .install_default()
+    .expect("failed to install rustls crypto provider");
     while 1 == 1 {
-        rustls::crypto::aws_lc_rs::default_provider()
-        .install_default()
-        .expect("failed to install rustls crypto provider");
         // select_test().await;
         //     wsserver::run_server().await;
         wsclient::run_client("redacted", String::from("hello")).await;

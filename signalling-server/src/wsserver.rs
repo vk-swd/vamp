@@ -84,7 +84,7 @@ where
             return;
         }
     };
-
+ 
     let (mut sink, mut source) = ws_stream.split();
     let (tx, mut rx) = mpsc::unbounded_channel::<Message>();
 
@@ -166,6 +166,7 @@ where
         }
 
         // Register / refresh src → this socket in the routing table.
+        log::info!("[SS] Registering route: {} → socket id={}", data.src, socket_id);
         s.r_table.insert(data.src.clone(), socket_id);
         if let Some(c) = s.connections.get_mut(&socket_id) {
             c.local_addrs.push(data.src.clone());
@@ -205,6 +206,7 @@ where
 
     // Clean up routing table entries and connection record on close.
     let mut s = state.lock().await;
+    log::info!("[SS] Removing routes for socket id={}", socket_id);
     if let Some(con) = s.connections.remove(&socket_id) {
         for addr in &con.local_addrs {
             s.r_table.remove(addr);
