@@ -11,8 +11,9 @@
     <textarea id="pass" placeholder="password"></textarea>
     <textarea id="usrnm" placeholder="username"></textarea>
     <textarea id="messageOut" placeholder="message to send"></textarea>
-    <textarea id="messageRecieve" placeholder="message to receive"></textarea>   
-    <textarea id="log" placeholder="log" readonly="true"></textarea>    
+    <textarea id="messageRecieve" placeholder="message to receive"></textarea>
+    <textarea id="log" placeholder="log" readonly="true"></textarea>
+    <textarea id="fullUrls" placeholder="full turn url"></textarea>
     <button id="btn">Connect</button>
 </head>
 
@@ -38,9 +39,47 @@
             document.head.appendChild(script);
             console.info('injected script');
         }
+        let wrtcCon = null;
+        const prepareConenction = (conParams) => {
+            return new Promise((resolve, reject) => {
+                pc1 = new RTCPeerConnection(conParams);
+                const dataChannel = pc1.createDataChannel('ebn');
+                logIce('iceLog1', 'ma2');
+                pc1.onicecandidate = (e) => {
+                    if (e.candidate) {
+                        logIce('iceLog1', e.candidate.type + ' - ' + (e.candidate.address || 'hidden'));
+                    } else {
+                        // loadContent(createdSDP).then(loaded => {
+                        //     const bytes = Uint8Array.from(atob(loaded), c => c.charCodeAt(0));
+                        //     const text = new TextDecoder().decode(bytes); // ✅ proper UTF-8 decode
+                        //     localStorage.setItem(storageLocation, loaded);
+                        //     render(text);
+                        // }).catch(err => {
+                        //     document.getElementById('status').textContent = `Error: ${err}`;
+                        // });
+                        logIce('iceLog1', 'ICE gathering complete');
+                        resolve([pc1, dataChannel]);
+                    }
+                };
+
+                pc1.oniceconnectionstatechange = () => {
+                    logIce('iceLog1', 'ICE state: ' + pc1.iceConnectionState);
+                };
+
+                pc1.onicegatheringstatechange = () => {
+                    logIce('iceLog1', 'Gathering: ' + pc1.iceGatheringState);
+                };
+                pc1.onerror = (err) => {
+                    reject(`PeerConnection error: ${err}`);
+                }
+                pc1.createOffer()
+                .then(offer => pc1.setLocalDescription(offer))
+            })
+        }
+
         async function sendOfferGetAnswer(sdp, src, dst) {
             // Old artefact from page delivery tests
-           // 1. Show cached version immediately (no blank flash)
+            // 1. Show cached version immediately (no blank flash)
             // const cached = localStorage.getItem(storageLocation);
             // if (cached != null && cached != undefined
             // //  && cached != "undefined"
@@ -50,9 +89,7 @@
             return new Promise((resolve, reject) => {
                 const requestId = `${Date.now()}-${Math.random()}`;
                 // 2. Connect and get fresh content
-
                 const ws = new WebSocket("wss://redacted");
-                
                 const res = (data) => {
                     resolve(data)
                     ws.close();
@@ -89,80 +126,94 @@
                 };
             });
         }
-        let wrtcCon = null;
-        const getWrtcCon = () => {
-            if (wrtcCon == null) {
-                wrtcCon = new Promise((resolveG, rejectG) => {
-                    logIce('log', 'starting script');
-                    window.__TRANSPORT__ = 'ws'
-                    const storageLocation = 'loaded_page'; // or 'cache' for Cache API / IndexedDB
-                    const password = document.getElementById('pass').value || '';
-                    const username = document.getElementById('usrnm').value || '';
-                    const address = document.getElementById('addr').value || '';
-                    const conParams = {
-                        iceServers: [
-                            { urls: `turns:` + address, username: username, credential: password }
-                        ]
-                    }
-                    logIce('iceLog1', 'conParams', conParams);
-                    pc1 = new RTCPeerConnection(conParams);
-                    logIce('iceLog1', 'ma2');
-                    const dataChannel = pc1.createDataChannel('ebn');
-                    dataChannel.onopen = () => {
-                        logIce('log', 'channel open');
-                        dataChannel.send('hello!');
-                        resolveG({pc: pc1, channel: dataChannel});
-                    };
+        const setUpChannel = (channel) => {
+            return new Promise((resolve, reject) => {
+                channel.onopen = () => {
+                    resolve();
+                    logIce('log', 'Data channel opened');
+                };
+                channel.onmessage = (e) => {
+                    logIce('log', 'Received message:', e.data);
+                    document.getElementById('messageRecieve').value = e.data;
+                };
+                channel.onerror = (err) => {
+                    reject(`Data channel error: ${err}`);
+                };
+            })
+        }
+        const establishConnection = (params) => {
+            return prepareConenction(params)
+            .then(([pc, dataChannel]) => {
+                const createdSDP = fixSDP(pc.localDescription.sdp);
+                return sendOfferGetAnswer(createdSDP, 'hello1', 'hello')
+                .then(answer => {
+                    logIce('iceLog1', 'got answer', answer);
+                    return pc.setRemoteDescription(new RTCSessionDescription({ type: 'answer', sdp: answer }))
+                })
+                .then(() => {
+                    logIce('iceLog1', 'remote description set successfully');
+                    return setUpChannel(dataChannel);
+                })
+                .then(() => {
 
-                    dataChannel.onmessage = (e) => {
-                        logIce('log', 'received for pc1:', e.data);
-                    };
-                    let createdSDP = ""
-                    pc1.onicecandidate = (e) => {
-                        if (e.candidate) {
-                            logIce('iceLog1', e.candidate.type + ' - ' + (e.candidate.address || 'hidden'));
-                        } else {
-                            createdSDP = fixSDP(pc1.localDescription.sdp);
-                            // loadContent(createdSDP).then(loaded => {
-                            //     const bytes = Uint8Array.from(atob(loaded), c => c.charCodeAt(0));
-                            //     const text = new TextDecoder().decode(bytes); // ✅ proper UTF-8 decode
-                            //     localStorage.setItem(storageLocation, loaded);
-                            //     render(text);
-                            // }).catch(err => {
-                            //     document.getElementById('status').textContent = `Error: ${err}`;
-                            // });
-                            logIce('iceLog1', 'ICE gathering complete', createdSDP);
-                        }
-                    };
-
-                    pc1.oniceconnectionstatechange = () => {
-                        logIce('iceLog1', 'ICE state: ' + pc1.iceConnectionState);
-                    };
-
-                    pc1.onicegatheringstatechange = () => {
-                        logIce('iceLog1', 'Gathering: ' + pc1.iceGatheringState);
-                    };
-                    pc1.createOffer().then(offer => {
-                        return pc1.setLocalDescription(offer)
-                        .then(() => sendOfferGetAnswer(offer.sdp, 'hello1', 'hello'))
-                        .then(answer => {
-                            logIce('iceLog1', 'got answer', answer);
-                            // const bytes = Uint8Array.from(atob(loaded), c => c.charCodeAt(0));
-                            // const text = new TextDecoder().decode(bytes); // ✅ proper UTF-8 decode
-                            // localStorage.setItem(storageLocation, loaded);
-                            // render(text);
-                            return pc1.setRemoteDescription(new RTCSessionDescription({ type: 'answer', sdp: answer }))
-                        })
-                    })
-                    .then(() => {
-                        logIce('iceLog1', 'remote description set successfully');
-                    })
-                    .catch(err => {
-                        document.getElementById('status').textContent = `Error: ${err}`;
-                        rejectG(err);
-                    });
-                });
+                    // const bytes = Uint8Array.from(atob(loaded), c => c.charCodeAt(0));
+                    // const text = new TextDecoder().decode(bytes); // ✅ proper UTF-8 decode
+                    // localStorage.setItem(storageLocation, loaded);
+                    // render(text);
+                    logIce('log', 'WebRTC connection established');
+                    document.getElementById('status').textContent = 'Connected!';
+                    return { pc, channel: dataChannel };
+                })
+            })
+            .catch(err => {
+                logIce('log', 'Failed to establish WebRTC connection:', err);
+                document.getElementById('status').textContent = `Connection error: ${err}`;
+            });
+        }
+        const getTurnUrl = () => {
+            const conParams = {
+                iceServers: []
             }
+            const fullUrl = document.getElementById('fullUrls').value || '';
+            if (fullUrl) {
+                const match = fullUrl.match(/^turns:(.+?):(.+?)@(.+?):(\d+)$/);
+                if (!match) {
+                    throw new Error("Invalid TURN string format");
+                }
+                const [, username, password, addr, port] = match;
+                logIce('log', 'Using full TURN URL:', fullUrl, "conParams: ", conParams);
+                conParams.iceServers.push({ urls: `turns:${addr}:${port}`, username, credential: password });
+            } else { 
+                const address = document.getElementById('addr').value || '';
+                const username = document.getElementById('usrnm').value || '';
+                const password = document.getElementById('pass').value || '';
+                conParams.iceServers.push({ urls: `turns:` + address, username: username, credential: password });
+            }
+            return conParams;
+        }
+        const getWrtcCon = () => {
+            if (wrtcCon != null) {
+                return wrtcCon;
+            }
+            wrtcCon = new Promise((resolveG, rejectG) => {
+                logIce('log', 'starting script');
+                window.__TRANSPORT__ = 'ws'
+                // const storageLocation = 'loaded_page'; // or 'cache' for Cache API / IndexedDB
+                let conParams;
+                try {
+                    conParams = getTurnUrl();
+                } catch (err) {
+                    rejectG(`Invalid TURN server configuration: ${err}`);
+                    return;
+                }
+                logIce('iceLog1', 'conParams', conParams);
+                establishConnection(conParams)
+                .then(resolveG)
+                .catch(err => {
+                    document.getElementById('status').textContent = `Error: ${err}`;
+                    rejectG(err);
+                });
+            });
             return wrtcCon;
         }
         document.getElementById('btn').addEventListener('click', () => {
