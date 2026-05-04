@@ -2,6 +2,7 @@ import React, { useRef, useState, useCallback, useEffect } from 'react';
 import type { TrackRow } from '../tauriDb';
 import './TrackList.css';
 import { TrackItem, type TrackWithSources } from './TrackItem';
+import { TrackListContextMenu } from './TrackListContextMenu';
 import { usePlayerStore } from '../../store';
 import { Dialog, LineEdit } from '../../ui/elements';
 
@@ -124,70 +125,23 @@ export function TrackList({
       >▼</button>
 
       {contextMenu && contextTrack && (
-        <ul
-          className="tracklist__context-menu"
-          style={{ top: contextMenu.y, left: contextMenu.x }}
-          onClick={e => e.stopPropagation()}
-        >
-          <li
-            className="tracklist__context-menu-item"
-            onClick={() => {
-              onSelectionToggle?.(contextTrack.id, !selectedSet.has(contextTrack.id));
-              setContextMenu(null);
-            }}
-
-          >
-            Select
-          </li>
-          <li
-            className="tracklist__context-menu-item"
-            onClick={() => {
-              const src = activeSources[contextTrack.id] ?? contextTrack.sources[0]?.url ?? null;
-              if (src) { setTrackToPlay(contextTrack, src); }
-              setContextMenu(null);
-            }}
-          >
-            Play
-          </li>
-          <li
-            className="tracklist__context-menu-item tracklist__context-menu-item--has-sub"
-          >
-            Add to Playlist
-            <ul className="tracklist__context-submenu" onClick={e => e.stopPropagation()}>
-              {playlists.map(pl => (
-                <li
-                  key={pl.id}
-                  className="tracklist__context-menu-item"
-                  onClick={() => {
-                    onAddToPlaylist?.(contextTrack, pl.id);
-                    setContextMenu(null);
-                  }}
-                >
-                  {pl.name}
-                </li>
-              ))}
-              <li
-                className="tracklist__context-menu-item"
-                onClick={() => {
-                  setContextMenu(null);
-                  setNewPlaylistName('');
-                  setNewPlaylistDialog({ track: contextTrack });
-                }}
-              >
-                + New Playlist…
-              </li>
-            </ul>
-          </li>
-          <li
-            className="tracklist__context-menu-item"
-            onClick={() => {
-              // TODO: show track information panel
-              setContextMenu(null);
-            }}
-          >
-            Information
-          </li>
-        </ul>
+        <TrackListContextMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          track={contextTrack}
+          isSelected={selectedSet.has(contextTrack.id)}
+          activeSource={activeSources[contextTrack.id] ?? contextTrack.sources[0]?.url ?? null}
+          playlists={playlists}
+          onSelect={() => onSelectionToggle?.(contextTrack.id, !selectedSet.has(contextTrack.id))}
+          onPlay={() => {
+            const src = activeSources[contextTrack.id] ?? contextTrack.sources[0]?.url ?? null;
+            if (src) { setTrackToPlay(contextTrack, src); }
+          }}
+          onAddToPlaylist={playlistId => onAddToPlaylist?.(contextTrack, playlistId)}
+          onNewPlaylist={() => { setNewPlaylistName(''); setNewPlaylistDialog({ track: contextTrack }); }}
+          onInfo={() => { /* TODO: show track information panel */ }}
+          onClose={() => setContextMenu(null)}
+        />
       )}
 
       {newPlaylistDialog && (
