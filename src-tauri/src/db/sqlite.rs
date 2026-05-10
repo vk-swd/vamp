@@ -77,7 +77,7 @@ impl SqliteRepository {
 
         match db_result {
             Ok(_) => println!("[error_log] recorded to db: OK"),
-            Err(ref log_err) => println!("[error_log] recorded to db: FAILED ({})", log_err),
+            Err(ref log_err) => println!("[error_log] recorded to db: FAILED ({}). Original error: {}", log_err, error_text),
         }
 
         Err(e)
@@ -109,41 +109,26 @@ fn assign_tag_bind(track_id: i64, tag_id: i64) -> sqlx::query::Query<'static, sq
         .bind(track_id)
         .bind(tag_id)
 }
+async fn add_track_unlogged(app_rep: &SqliteRepository, t: NewTrack) -> Result<i64, sqlx::Error> {
+    let mut tx = app_rep.pool.begin().await?;
+
+    let row = add_track_bind(&t).execute(&mut *tx).await?;
+    let track_id = row.last_insert_rowid();
+
+    for url in t.sources {
+        add_track_source_bind(track_id, &url).execute(&mut *tx).await?;
+    }
+
+    tx.commit().await.map(|_| track_id)
+}
 
 #[async_trait]
 impl AppRepository for SqliteRepository {
     // ------------------------------------------------------------------
     // Tracks
     // ------------------------------------------------------------------
-
     async fn add_track(&self, t: NewTrack) -> Result<i64, sqlx::Error> {
-        let mut tx = self
-            .try_log("add_track: begin transaction", self.pool.begin().await)
-            .await?;
-
-        let row = self
-            .try_log(
-                "add_track: insert track_info",
-                add_track_bind(&t)
-                .execute(&mut *tx)
-                .await,
-            )
-            .await?;
-
-        let track_id = row.last_insert_rowid();
-
-        for url in t.sources {
-            self.try_log(
-                "add_track: insert track_sources",
-                add_track_source_bind(track_id, &url)
-                    .execute(&mut *tx)
-                    .await,
-            )
-            .await?;
-        }
-
-        self.try_log("add_track: commit", tx.commit().await).await?;
-        Ok(track_id)
+        self.try_log(format!("add_track: {}, {}, {}", t.track_name, t.artist, t.sources[0]).as_str(), add_track_unlogged(&self, t).await).await
     }
 
     async fn add_tracks(&self, t: Vec<NewTrack>) -> Result<Vec<i64>, sqlx::Error> {

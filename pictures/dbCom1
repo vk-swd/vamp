@@ -1,0 +1,17 @@
+    
+```mermaid
+sequenceDiagram
+    participant SqliteRepository
+    participant execute
+    participant WebviewWindowBuilder
+    participant dispatch
+    participant UI
+
+    dispatch --> WebviewWindowBuilder : register "dispatch" in Tauri with "invoke_handler" (main.rs)
+    UI --> dispatch : tauri::command(dispatch) (dispatchClient.ts)
+    dispatch --> execute : serde converts payload to union arg (dispatch.rs)
+    execute --> SqliteRepository : run query (sqlite.rs)
+    SqliteRepository -> UI : error at any stage or await success
+
+
+```

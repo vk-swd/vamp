@@ -1,7 +1,7 @@
 import React, { useRef, useState } from 'react';
 import ReactSelect from 'react-select';
 
-import { Button, LineEdit, Selector, reactSelectStyles } from '../../ui/elements';
+import { Button, LineEdit, reactSelectStyles } from '../../ui/elements';
 import { YoutubePlayerOwner } from '../../YoutubePlayer';
 import { SCPlayer, type SCWidget } from '../../players/SCPlayer';
 import { getTrackSource } from '../../common/utils';
@@ -69,11 +69,9 @@ export function TrackInfoDialog({
 
   // ── Sources tab state ──
   const [sourceType,     setSourceType]     = useState<SourceType>('youtube');
-  const [ytUrl,          setYtUrl]          = useState('');
+  const [sourceUrl,      setSourceUrl]      = useState('');
   const [previewVideoId, setPreviewVideoId] = useState<string | null>(null);
-  const [scUrl,          setScUrl]          = useState('');
   const [scPreviewUrl,   setScPreviewUrl]   = useState<string | null>(null);
-  const [localPath,      setLocalPath]      = useState('');
   // Ref to the preview player instance, populated via onPlayerReady.
   const previewPlayerRef = useRef<YT.Player | null>(null);
   const [previewPlayerReady, setPreviewPlayerReady] = useState(false);
@@ -119,20 +117,27 @@ export function TrackInfoDialog({
       bitrate_kbps:   bitrateKbps !== '' ? parseInt(bitrateKbps) : null,
       tempo_bpm:      tempoBpm    !== '' ? parseFloat(tempoBpm)  : null,
       tags:           selectedTags.map(t => t.value),
-      sources: [
-        ...(sourceType === 'youtube'    && ytUrl     ? [ytUrl]     : []),
-        ...(sourceType === 'soundcloud' && scUrl     ? [scUrl]     : []),
-        ...(sourceType === 'local'      && localPath ? [localPath] : []),
-      ],
+      sources: sourceUrl.trim() ? [sourceUrl.trim()] : [],
     };
   }
 
-  const handleShowPreview = () => {
-    previewPlayerRef.current = null; // reset on new load
-    setPreviewPlayerReady(false);
-    const source = getTrackSource(ytUrl);
-    setPreviewVideoId(source?.type === 'youtube' ? source.id : null);
-    setPreviewKey(k => k + 1);
+  const handleSeek = () => {
+    const source = getTrackSource(sourceUrl);
+    if (!source) return;
+    setSourceType(source.type);
+    if (source.type === 'youtube') {
+      previewPlayerRef.current = null;
+      setPreviewPlayerReady(false);
+      setPreviewVideoId(source.id);
+      setScPreviewUrl(null);
+      setPreviewKey(k => k + 1);
+    } else if (source.type === 'soundcloud') {
+      setPreviewVideoId(null);
+      setScPreviewUrl(sourceUrl.trim());
+    } else {
+      setPreviewVideoId(null);
+      setScPreviewUrl(null);
+    }
   };
 
   const handleImportData = () => {
@@ -181,17 +186,14 @@ export function TrackInfoDialog({
     }
   };
 
-  const handleShowScPreview = () => {
-    setScPreviewUrl(scUrl.trim() || null);
-  };
-
   const handleScReady = (widget: SCWidget) => {
     widget.getCurrentSound((sound: any) => {
-      log(`[TrackInfo] SoundCloud sound dump: ${JSON.stringify(sound)}`);
+      log(`[TrackInfo] SoundCloud sound dump: ${JSON.stringify(sound, null, 2)}`);
       const title: string = sound?.title ?? '';
       const username: string = sound?.user?.username ?? '';
       const durationMs: number = sound?.duration ?? 0;
 
+      log(`[TrackInfo] SoundCloud key params: $title="${title}", username="${username}", duration=${durationMs}ms`);      
       const sep = title.match(/\s[\u2013\u2014-]\s/);
       if (sep) {
         const idx = title.indexOf(sep[0]);
@@ -206,12 +208,6 @@ export function TrackInfoDialog({
         setLengthSec(String(Math.round(durationMs / 1000)));
       }
     });
-  };
-
-  const handleSourceTypeChange = (v: string) => {
-    setSourceType(v as SourceType);
-    setPreviewVideoId(null);
-    setScPreviewUrl(null);
   };
 
   return (
@@ -299,86 +295,45 @@ export function TrackInfoDialog({
 
           {/* ── Sources tab ── */}
           <div className="ti-fields" style={{ display: activeTab === 'sources' ? 'flex' : 'none' }}>
-              <Selector
-                label="Source Type"
-                value={sourceType}
-                options={[
-                  { value: 'youtube',    label: 'YouTube'    },
-                  { value: 'soundcloud', label: 'SoundCloud' },
-                  { value: 'local',      label: 'Local File' },
-                ]}
-                onChange={handleSourceTypeChange}
-              />
-
-              {sourceType === 'youtube' && (
-                <div className="ti-yt-section">
-                  <div className="ti-yt-row">
-                    <LineEdit
-                      placeholder="https://www.youtube.com/watch?v=…"
-                      value={ytUrl}
-                      onChange={setYtUrl}
-                    />
-                    <Button variant="secondary" size="sm" onClick={handleShowPreview}>
-                      Show
-                    </Button>
-                    <Button
-                      variant="secondary"
-                      size="sm"
-                      disabled={!previewPlayerReady}
-                      onClick={handleImportData}
-                    >
-                      Import Data
-                    </Button>
-                  </div>
-                  {previewVideoId ? (
-                    <div className="ti-yt-preview">
-                      <YoutubePlayerOwner
-                        key={previewKey}
-                        videoId={previewVideoId}
-                        onPlayerReady={p => { previewPlayerRef.current = p; setPreviewPlayerReady(true); }}
-                      />
-                    </div>
-                  ) : (
-                    <div className="ti-yt-placeholder">
-                      Enter a YouTube URL and press Show to preview
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {sourceType === 'soundcloud' && (
-                <div className="ti-yt-section">
-                  <div className="ti-yt-row">
-                    <LineEdit
-                      label="SoundCloud URL"
-                      placeholder="https://soundcloud.com/…"
-                      value={scUrl}
-                      onChange={v => { setScUrl(v); setScPreviewUrl(null); }}
-                    />
-                    <Button variant="secondary" size="sm" onClick={handleShowScPreview}>
-                      Seek
-                    </Button>
-                  </div>
-                  {scPreviewUrl ? (
-                    <div className="ti-yt-preview">
-                      <SCPlayer url={scPreviewUrl} autoPlay onReady={handleScReady} />
-                    </div>
-                  ) : (
-                    <div className="ti-yt-placeholder">
-                      Enter a SoundCloud URL and press Seek to preview
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {sourceType === 'local' && (
+            <div className="ti-yt-section">
+              <div className="ti-yt-row">
                 <LineEdit
-                  label="Local File Path"
-                  placeholder="/path/to/track.mp3"
-                  value={localPath}
-                  onChange={setLocalPath}
+                  placeholder="Paste a URL or file path…"
+                  value={sourceUrl}
+                  onChange={setSourceUrl}
                 />
+                <Button variant="secondary" size="sm" onClick={handleSeek}>
+                  Seek
+                </Button>
+                {sourceType === 'youtube' && (
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    disabled={!previewPlayerReady}
+                    onClick={handleImportData}
+                  >
+                    Import Data
+                  </Button>
+                )}
+              </div>
+              {sourceType === 'youtube' && previewVideoId ? (
+                <div className="ti-yt-preview">
+                  <YoutubePlayerOwner
+                    key={previewKey}
+                    videoId={previewVideoId}
+                    onPlayerReady={p => { previewPlayerRef.current = p; setPreviewPlayerReady(true); }}
+                  />
+                </div>
+              ) : sourceType === 'soundcloud' && scPreviewUrl ? (
+                <div className="ti-yt-preview">
+                  <SCPlayer url={scPreviewUrl} autoPlay onReady={handleScReady} />
+                </div>
+              ) : (
+                <div className="ti-yt-placeholder">
+                  Enter a URL or file path and press Seek
+                </div>
               )}
+            </div>
           </div>
         </div>
 
