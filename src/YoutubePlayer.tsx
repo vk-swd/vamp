@@ -1,6 +1,7 @@
-import { MutableRefObject, useEffect, useRef, useState } from "react";
+import React, { MutableRefObject, useEffect, useRef, useState } from "react";
 import { log } from "./logger";
 import { usePlayerStore } from "./store";
+import { TrackPlayContext1 } from "./players/playingContext";
 
 declare global {
   interface Window {
@@ -93,13 +94,15 @@ export function YoutubePlayerOwner({ videoId, onPlayerReady, onEnded, registerAs
   // Local reference to the player — no Zustand dependency here.
   const playerRef = useRef<YT.Player | null>(null);
   const onEndedRef = useRef<(() => void) | undefined>(onEnded);
+  const playCtx = React.useContext(TrackPlayContext1);
+
   onEndedRef.current = onEnded;
 
   function handleStateChange(state: number) {
     // YT.PlayerState: PLAYING = 1, PAUSED = 2, ENDED = 0, BUFFERING = 3
     // Buffering (3) occurs during playback — treat as still playing.
     if (registerAsActivePlayer) {
-      usePlayerStore.getState().setIsPlaying(state === 1 || state === 3);
+      playCtx?.setIsPlaying(state === 1 || state === 3);
     }
     if (state === 0) {
       onEndedRef.current?.();

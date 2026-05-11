@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { usePlayerStore } from "../store";
 import { log } from "../logger";
+import { TrackPlayContext1 } from "./playingContext";
 
 // ── SoundCloud Widget API types ───────────────────────────────────────────────
 
@@ -106,8 +107,6 @@ export function SCPlayer({
   const widgetRef = useRef<SCWidget | null>(null);
   // Cached playback position (ms), updated via playProgress for synchronous getCurrentTime.
   const positionMsRef = useRef<number>(0);
-  // Cached duration (ms), fetched once on ready.
-  const [durationMs, setDurationMs] = useState<number>(0);
   // Cached volume (0-100), mirrors what we set so getVolume() is synchronous.
   const volumeRef = useRef<number>(100);
   // Keep callbacks fresh without re-running the effect.
@@ -115,9 +114,8 @@ export function SCPlayer({
   const onFinishRef = useRef(onFinish);
   onReadyRef.current = onReady;
   onFinishRef.current = onFinish;
+  const playCtx = React.useContext(TrackPlayContext1);
 
-
-  const setIsPlaying    = usePlayerStore((s) => s.setIsPlaying);
   const embedUrl =
     `${SC_EMBED_BASE}?url=${encodeURIComponent(url)}` +
     `&color=%23ff5500` +
@@ -139,73 +137,84 @@ export function SCPlayer({
       widgetRef.current = widget;
 
       widget.bind("ready", () => {
+        log(`SC widget ready: ${url} cancelled=${cancelled}`);
         if (cancelled) return;
         onReadyRef.current?.(widget);
-
-        if (registerAsActivePlayer) {
-          log(`Registering SC player as active player in store`);
-          widget.getDuration((ms: number) => {
-            if (cancelled) {
-              return;
-            }
-            usePlayerStore.getState().setActivePlayer({
-              play: () => {
-                log(`playing`);
-                widget.play()
-              },
-              pause: () => { log(`pausing`); widget.pause(); },
-              stop: () => {
-                widget.pause();
-                widget.seekTo(0);
-                log(`stopping`);
-              },
-              replay: () => { log(`replaying`); widget.seekTo(0); widget.play(); },
-              seekTo: (s) => { log(`seeking to ${s}`); widget.seekTo(s * 1000); },
-              getCurrentTime: () => positionMsRef.current / 1000,
-              getDuration: () => ms / 1000,
-              getVolume: () => volumeRef.current,
-              setVolume: (v) => { volumeRef.current = v; widget.setVolume(v); },
-              setLoop: () => { },
-            });
-            // Mirror YoutubePlayer's isPlaying updates.
-            const Events = window.SC!.Widget.Events;
-            widget.bind(Events.PLAY, () => {
-              log(`play event ${cancelled}`);
-              if (!cancelled) {
-                setIsPlaying(true);
-              }
-            });
-            widget.bind(Events.PAUSE, () => { if (!cancelled) setIsPlaying(false); });
-            widget.bind(Events.FINISH, () => {
-              if (!cancelled) {
-                setIsPlaying(false);
-                onFinishRef.current?.();
-              }
-            });
-            // Keep positionMsRef in sync for synchronous getCurrentTime reads.
-            widget.bind(Events.PLAY_PROGRESS, (e: any) => {
-              if (!cancelled) {
-                positionMsRef.current = e.currentPosition;
-              }
-            });
-            // Forward seek events from the SC widget to the store's onSeekTo slot.
-            widget.bind(Events.SEEK, (e: { currentPosition: number }) => {
-              // log(`SEEK event: ${JSON.stringify(e)}`);
-              if (!cancelled) {
-                positionMsRef.current = e.currentPosition;
-                usePlayerStore.getState().onSeekTo(e.currentPosition / 1000);
-              }
-            });
-            widget.bind(Events.ERROR, (e: any) => {
-              log(`ERROR event: ${JSON.stringify(e)}`);
-            });
-          })
+        if (!registerAsActivePlayer) {
+          return;
         }
+      
+        log(`Registering SC player as active player in store`);
+        widget.getDuration((ms: number) => {
+          log(`getDuration callback: ${ms}ms cancelled=${cancelled}`);
+          if (cancelled) {
+            return;
+          }
+          usePlayerStore.getState().setActivePlayer({
+            play: () => {
+              log(`playing`);
+              widget.play()
+            },
+            pause: () => { log(`pausing`); widget.pause(); },
+            stop: () => {
+              widget.pause();
+              widget.seekTo(0);
+              log(`stopping`);
+            },
+            replay: () => { log(`replaying`); widget.seekTo(0); widget.play(); },
+            seekTo: (s) => { log(`seeking to ${s}`); widget.seekTo(s * 1000); },
+            getCurrentTime: () => positionMsRef.current / 1000,
+            getDuration: () => ms / 1000,
+            getVolume: () => volumeRef.current,
+            setVolume: (v) => { volumeRef.current = v; widget.setVolume(v); },
+            setLoop: () => { }
+          });
+          log(`SC player registered as active player with duration ${ms}ms`);
+          // Mirror YoutubePlayer's isPlaying updates.
+          const Events = window.SC!.Widget.Events;
+          widget.bind(Events.PLAY, () => {
+            log(`play event ${cancelled}`);
+            if (!cancelled) {
+              playCtx?.setIsPlaying(true);
+            }
+          });
+          widget.bind(Events.PAUSE, () => { 
+            if (!cancelled) {
+              playCtx?.setIsPlaying(false);
+            }
+          });
+          widget.bind(Events.FINISH, () => {
+            log(`finish event ${cancelled}`);
+            if (!cancelled) {
+              playCtx?.setIsPlaying(false);
+              // setIsPlaying(false);
+              onFinishRef.current?.();
+            }
+          });
+          // Keep positionMsRef in sync for synchronous getCurrentTime reads.
+          widget.bind(Events.PLAY_PROGRESS, (e: any) => {
+            // log(`play progress event ${cancelled}`);
+            if (!cancelled) {
+              positionMsRef.current = e.currentPosition;
+            }
+          });
+          // Forward seek events from the SC widget to the store's onSeekTo slot.
+          widget.bind(Events.SEEK, (e: { currentPosition: number }) => {
+            log(`SEEK event: ${JSON.stringify(e)}`);
+            if (!cancelled) {
+              positionMsRef.current = e.currentPosition;
+              usePlayerStore.getState().onSeekTo(e.currentPosition / 1000);
+            }
+          });
+          widget.bind(Events.ERROR, (e: any) => {
+            log(`ERROR event: ${JSON.stringify(e)}`);
+          });
+        })
       });
     });
 
     return () => {
-
+      log(`Cleaning up SCPlayer for url=${url}`);
       cancelled = true;
       widgetRef.current = null;
       if (registerAsActivePlayer) {

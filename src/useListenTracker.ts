@@ -1,6 +1,3 @@
-import { useEffect, useRef } from "react";
-import { usePlayerStore } from "./store";
-
 /**
  * Polls playback state every second.  While a track is actively playing,
  * accumulates listened time per track.  Every time the accumulator crosses
@@ -12,38 +9,36 @@ import { usePlayerStore } from "./store";
  *
  * Mount this hook once at the App level — it has no UI.
  */
-export function useListenTracker(
-  onListenedSeconds: (trackId: number, seconds: number) => void,
-) {
-  const callbackRef = useRef(onListenedSeconds);
-  callbackRef.current = onListenedSeconds;
 
-  const lastTrackIdRef = useRef<number | null>(null);
-  const accumulatedRef = useRef<number>(0);
+export class ListenTracker {
+  public currentTrackId: number | null = null
+  listened: number = 0;
+  timer: NodeJS.Timeout | null = null;
+  public isPlaying: boolean = false;
+  constructor(private callback: (trackId: number, seconds: number) => Promise<void>) {
+    this.restratTimer();
+  }
+  kill() {
+    if (this.timer) {
+      clearTimeout(this.timer);
+      this.timer = null;
+    }
+  }
+  checkPlayed(): Promise<void> {
+    if (this.isPlaying && this.currentTrackId !== null) {
+      this.listened += 1;
 
-  useEffect(() => {
-    const intervalId = setInterval(() => {
-      const { isPlaying, trackToPlay } = usePlayerStore.getState();
-      if (!isPlaying) return;
-
-      const currentTrackId = trackToPlay?.track.id ?? null;
-      if (currentTrackId === null) return;
-
-      if (currentTrackId !== lastTrackIdRef.current) {
-        // Track changed while playing — drop any partial time from the old track.
-        accumulatedRef.current = 0;
-        lastTrackIdRef.current = currentTrackId;
+      if (this.listened >= 10) {
+        this.listened -= 10;
+        // TODO make an outbox for async data commit
+        return this.callback(this.currentTrackId, 10);
       }
-
-      accumulatedRef.current += 1;
-
-      if (accumulatedRef.current >= 10) {
-        accumulatedRef.current -= 10;
-        // TODO make an outbox for asunc data commit
-        callbackRef.current(currentTrackId, 10);
-      }
-    }, 1000);
-
-    return () => clearInterval(intervalId);
-  }, []);
+    }
+    return Promise.resolve();
+  }
+  restratTimer(): Promise<void> {
+    return this.checkPlayed().then(_ => {
+      this.timer = setTimeout(() => this.restratTimer(), 1000);
+    })
+  }
 }

@@ -43,7 +43,7 @@ const NOOP_CONTROLS: ActivePlayerControls = {
   getDuration: () => 0,
   getVolume: () => 100,
   setVolume: () => {},
-  setLoop: () => {},
+  setLoop: () => {}
 };
 
 // ── Store interface ───────────────────────────────────────────────────────────
@@ -52,12 +52,6 @@ interface PlayerStore {
   /** The live YT.Player instance, or null when nothing is playing. */
   ytPlayer: YT.Player | null;
   setYtPlayer: (player: YT.Player | null) => void;
-  /**
-   * Track requested for playback. Assign via setTrackToPlay — assCounter
-   * is bumped on every call so the same track can be re-triggered.
-   */
-  trackToPlay: { track: TrackWithSources; sourceUrl: string; assCounter: number } | null;
-  setTrackToPlay: (track: TrackWithSources, sourceUrl: string) => void;
   /** Tracks currently selected in the library — forms the active playlist. */
   selectedTracks: TrackWithSources[];
   setSelectedTracks: (tracks: TrackWithSources[]) => void;
@@ -121,14 +115,6 @@ interface PlayerStore {
 export const usePlayerStore = create<PlayerStore>((set) => ({
   ytPlayer: null,
   setYtPlayer: (player) => set({ ytPlayer: player }),
-  trackToPlay: null,
-  setTrackToPlay: (track, sourceUrl) => set(state => ({
-    trackToPlay: {
-      track,
-      sourceUrl,
-      assCounter: (state.trackToPlay?.assCounter ?? 0) + 1,
-    },
-  })),
   selectedTracks: [],
   setSelectedTracks: (tracks) => set({ selectedTracks: tracks }),
 

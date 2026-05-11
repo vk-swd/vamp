@@ -10,13 +10,12 @@ function formatTime(seconds: number): string {
   return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
-export function PlayerControls({trackLabel, duration}: {trackLabel: string; duration: number}) {
+export function PlayerControls({trackLabel, duration, isPlaying}: {trackLabel: string; duration: number; isPlaying: boolean}) {
   const [currentTime, setCurrentTime] = useState(0);
   const [volume, setVolume] = useState(100);
   const isDraggingRef = useRef(false);
 
   const playerActive = usePlayerStore((s) => s.playerActive);
-  const isPlaying    = usePlayerStore((s) => s.isPlaying);
   const play         = usePlayerStore((s) => s.play);
   const pause        = usePlayerStore((s) => s.pause);
   const stop         = usePlayerStore((s) => s.stop);

@@ -5,7 +5,7 @@ import { TrackItem, type TrackWithSources } from './TrackItem';
 import { TrackListContextMenu } from './TrackListContextMenu';
 import { usePlayerStore } from '../../store';
 import { Dialog, LineEdit } from '../../ui/elements';
-
+import { TrackPlayContext } from './TrackItem';
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 export interface TrackListProps {
@@ -63,7 +63,6 @@ export function TrackList({
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const [newPlaylistDialog, setNewPlaylistDialog] = useState<{ track: TrackWithSources } | null>(null);
   const [newPlaylistName, setNewPlaylistName] = useState('');
-  const setTrackToPlay = usePlayerStore((s) => s.setTrackToPlay);
 
   const selectedSet = new Set(selectedIds);
 
@@ -93,6 +92,7 @@ export function TrackList({
     ? tracks.find(t => t.id === contextMenu.trackId) ?? null
     : null;
 
+  const onPlay = React.useContext(TrackPlayContext);
   return (
     <div className="tracklist">
       <button
@@ -135,7 +135,7 @@ export function TrackList({
           onSelect={() => onSelectionToggle?.(contextTrack.id, !selectedSet.has(contextTrack.id))}
           onPlay={() => {
             const src = activeSources[contextTrack.id] ?? contextTrack.sources[0]?.url ?? null;
-            if (src) { setTrackToPlay(contextTrack, src); }
+            if (src) { onPlay(contextTrack, src); }
           }}
           onAddToPlaylist={playlistId => onAddToPlaylist?.(contextTrack, playlistId)}
           onNewPlaylist={() => { setNewPlaylistName(''); setNewPlaylistDialog({ track: contextTrack }); }}

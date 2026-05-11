@@ -6,12 +6,13 @@ import { usePlayerStore } from "./store";
 import "./App.css";
 import { addListenedSeconds } from "./db/tauriDb";
 import { log } from "./logger";
-import { useListenTracker } from "./useListenTracker";
+import { ListenTracker } from "./useListenTracker";
 import { LibraryWidget } from "./db/LibraryWidget";
 import { SCPlayer } from "./players/SCPlayer";
 import { getTrackSource } from "./common/utils";
 import { PlaylistsTab } from "./playlist/PlaylistsTab";
 import { TrackPlayProvider } from "./db/data/TrackItem";
+import { TrackPlayContext1 } from "./players/playingContext";
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -23,6 +24,7 @@ type SourceType = "youtube" | "soundcloud" | "localfile";
 
 interface Track {
   id: string;
+  label: string;
   sourceType: SourceType;
   dbTrackId?: number;
 }
@@ -38,21 +40,20 @@ function LocalFileInfo() {
 interface NowPlayingTabProps {
   track: Track;
   playPlaylist?: string;
+  scKey: number;
+  setScKey: React.Dispatch<React.SetStateAction<number>>;
+  playTrack: (source: string, label: string, id: number) => void;
 }
 
-function NowPlayingTab({ track, playPlaylist }: NowPlayingTabProps) {
+function NowPlayingTab({ track, playPlaylist, scKey, setScKey, playTrack }: NowPlayingTabProps) {
   const [mountKey] = useState(0);
   const setYtPlayer = usePlayerStore((s) => s.setYtPlayer);
   const loopEnabled = usePlayerStore((s) => s.loopEnabled);
   const selectedTracks = usePlayerStore((s) => s.selectedTracks);
   const playlists = usePlayerStore((s) => s.playlists);
-  const activePlaylistId = usePlayerStore((s) => s.activePlaylistId);
-  const setTrackToPlay = usePlayerStore((s) => s.setTrackToPlay);
-
   // Clear the global player reference when this tab unmounts.
   useEffect(() => () => { setYtPlayer(null); }, []);
 
-  const [scKey, setScKey] = useState(0);
   const [scAutoPlay, setScAutoPlay] = useState(true);
 
   // When a completely new track arrives, restore autoplay for it.
@@ -61,7 +62,7 @@ function NowPlayingTab({ track, playPlaylist }: NowPlayingTabProps) {
   }, [track.id]);
 
   function handleEnded() {
-    log(`${loopEnabled} ${selectedTracks.length} ${track.dbTrackId}`);
+    log(`handleEnded: ${loopEnabled} ${selectedTracks.length} ${track.dbTrackId}`);
     if (loopEnabled) return;
     // Reload the SC widget without autoplaying first, then advance track.
     setScAutoPlay(false);
@@ -81,7 +82,7 @@ function NowPlayingTab({ track, playPlaylist }: NowPlayingTabProps) {
     const nextTrack = queue[nextIndex];
     const url = nextTrack.sources[0]?.url ?? null;
     if (url) {
-      setTrackToPlay(nextTrack, url);
+      playTrack(url, `${nextTrack.artist} - ${nextTrack.track_name}`, nextTrack.id);
     }
   }
   
@@ -110,37 +111,44 @@ function NowPlayingTab({ track, playPlaylist }: NowPlayingTabProps) {
 export default function App() {
   const [activeTab, setActiveTab] = useState<TabId>("library");
   const [track, setTrack] = useState<Track | null>(null);
-  const [input, setInput] = useState("");
-  const [scError, setScError] = useState<string | null>(null);
-  const [scLibraryUrl, setScLibraryUrl] = useState<string | null>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
   const [playPlaylist, setPlayPlaylist] = useState<string | undefined>(undefined);
-  const setTrackToPlay = usePlayerStore((s) => s.setTrackToPlay);
-
-  const trackToPlay = usePlayerStore((s) => s.trackToPlay);
-
-  useListenTracker((trackId, seconds) => {
-    addListenedSeconds(trackId, seconds).catch((e) => log(`addListenedSeconds: ${e}`));
-  });
+  const activePlaylistId = usePlayerStore((s) => s.activePlaylistId);
+  const duration = usePlayerStore((s) => s.duration);
+  const [scKey, setScKey] = useState(0);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const listenTracker = useRef<ListenTracker | null>(null);
+  useEffect(() => {
+    if (!listenTracker.current) {
+      listenTracker.current = new ListenTracker((trackId, seconds) => {
+        return addListenedSeconds(trackId, seconds).catch((e) => log(`addListenedSeconds: ${e}`));
+      });
+    }
+    return () => {
+      listenTracker.current?.kill();
+    }
+  }, []);
 
   // ── load video ──
-  const loadVideo = (raw: string, dbTrackId?: number) => {
+  const loadVideo = (raw: string, label: string, dbTrackId?: number) => {
     const source = getTrackSource(raw.trim());
     log(`Detected source type: ${source?.type} id: ${source?.id} from input: ${raw}`);
     if (source?.type === 'youtube') {
-      setTrack({ id: source.id, sourceType: "youtube", dbTrackId });
+      setTrack({ id: source.id, label, sourceType: "youtube", dbTrackId });
     } else if (source?.type === 'soundcloud') {
-      setTrack({ id: source.id, sourceType: "soundcloud", dbTrackId });
+      setTrack({ id: source.id, label, sourceType: "soundcloud", dbTrackId });
     } else {
       setTrack(null);
     }
   };
 
-  // React to play requests coming from the library/tracklist.
-  useEffect(() => {
-    if (!trackToPlay) return;
-    loadVideo(trackToPlay.sourceUrl, trackToPlay.track.id);
-  }, [trackToPlay]);
+  const playTrack = (source: string, label: string, id?: number) => {
+    setScKey((prev) => prev + 1);
+    if (listenTracker.current) {
+      listenTracker.current.currentTrackId = id ?? null;
+    }
+    if (!id) return;
+    loadVideo(source, label, id);
+  };
 
   const tabs: { id: TabId; label: string; disabled?: boolean }[] = [
     { id: "library",      label: "Library" },
@@ -149,8 +157,7 @@ export default function App() {
     { id: "database",     label: "Database" },
     // { id: "browserleaks", label: "BrowserLeaks" },
   ];
-  const activePlaylistId = usePlayerStore((s) => s.activePlaylistId);
-  const getDuration = usePlayerStore((s) => s.getDuration);
+  log(`App render: `);
   return (
     <div className="app">
       {/* ── Tab bar ── */}
@@ -179,14 +186,21 @@ export default function App() {
         */}
         {track && (
           <div className={activeTab !== "now-playing" ? "tab-panel--hidden" : ""}>
-            <NowPlayingTab track={track} playPlaylist={playPlaylist} />
+            <TrackPlayContext1.Provider value={{ setIsPlaying: (playing) => {
+              if (listenTracker.current != null) {
+                listenTracker.current.isPlaying = playing;
+              }
+              setIsPlaying(playing);
+            }}}>
+              <NowPlayingTab track={track} playPlaylist={playPlaylist} scKey={scKey} setScKey={setScKey} playTrack={playTrack} />
+            </TrackPlayContext1.Provider>
           </div>
         )}
 
         {/* Playlist */}
         {activeTab === "playlist" && 
           <TrackPlayProvider onPlay={(track, sourceUrl) => {
-            setTrackToPlay(track, sourceUrl);
+            playTrack(sourceUrl, `${track.artist} - ${track.track_name}`, track.id);
             setPlayPlaylist(activePlaylistId);
           }}>
             <PlaylistsTab />
@@ -195,7 +209,7 @@ export default function App() {
         {activeTab === "database" && (
           <div>
             <TrackPlayProvider onPlay={(track, sourceUrl) => {
-              setTrackToPlay(track, sourceUrl);
+              playTrack(sourceUrl, `${track.artist} - ${track.track_name}`, track.id);
               setPlayPlaylist(undefined);
             }}>
               <LibraryWidget/>
@@ -214,7 +228,7 @@ export default function App() {
 
       {/* ── Persistent bottom bar ── */}
       <footer className="bottom-bar">
-        <PlayerControls trackLabel={`${trackToPlay?.track.artist} - ${trackToPlay?.track.track_name}`} duration={getDuration()} />
+        <PlayerControls trackLabel={`${track?.label}`} duration={duration} isPlaying={isPlaying} />
       </footer>
     </div>
   );

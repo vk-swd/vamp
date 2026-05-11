@@ -8,7 +8,7 @@ export type { TrackWithSources };
 
 type OnPlayFn = (track: TrackWithSources, sourceUrl: string) => void;
 
-const TrackPlayContext = React.createContext<OnPlayFn>(() => {});
+export const TrackPlayContext = React.createContext<OnPlayFn>(() => {});
 
 export function TrackPlayProvider({ onPlay, children }: { onPlay: OnPlayFn; children: React.ReactNode }) {
   return <TrackPlayContext.Provider value={onPlay}>{children}</TrackPlayContext.Provider>;
