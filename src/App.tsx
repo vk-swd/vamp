@@ -113,7 +113,7 @@ export default function App() {
   const [track, setTrack] = useState<Track | null>(null);
   const [playPlaylist, setPlayPlaylist] = useState<string | undefined>(undefined);
   const activePlaylistId = usePlayerStore((s) => s.activePlaylistId);
-  const duration = usePlayerStore((s) => s.duration);
+  const [duration, setDuration] = useState<number>(0);
   const [scKey, setScKey] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const listenTracker = useRef<ListenTracker | null>(null);
@@ -186,12 +186,16 @@ export default function App() {
         */}
         {track && (
           <div className={activeTab !== "now-playing" ? "tab-panel--hidden" : ""}>
-            <TrackPlayContext1.Provider value={{ setIsPlaying: (playing) => {
-              if (listenTracker.current != null) {
-                listenTracker.current.isPlaying = playing;
-              }
-              setIsPlaying(playing);
-            }}}>
+            <TrackPlayContext1.Provider value={{ 
+                setIsPlaying: (playing) => {
+                if (listenTracker.current != null) {
+                  listenTracker.current.isPlaying = playing;
+                }
+                setIsPlaying(playing);
+              },
+              setDuration: (duration) => {
+                setDuration(duration);
+              }}}>
               <NowPlayingTab track={track} playPlaylist={playPlaylist} scKey={scKey} setScKey={setScKey} playTrack={playTrack} />
             </TrackPlayContext1.Provider>
           </div>

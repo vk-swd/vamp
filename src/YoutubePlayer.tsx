@@ -113,6 +113,8 @@ export function YoutubePlayerOwner({ videoId, onPlayerReady, onEnded, registerAs
     playerRef.current = player;
     onPlayerReady?.(player);
     if (registerAsActivePlayer) {
+        // This only works because players are remounted at every track change.
+        playCtx?.setDuration(player.getDuration());
         usePlayerStore.getState().setActivePlayer({
           play:           () => player.playVideo(),
           pause:          () => player.pauseVideo(),
@@ -120,7 +122,6 @@ export function YoutubePlayerOwner({ videoId, onPlayerReady, onEnded, registerAs
           replay:         () => { player.seekTo(0, true); player.playVideo(); },
           seekTo:         (s) => player.seekTo(s, true),
           getCurrentTime: () => player.getCurrentTime(),
-          getDuration:    () => player.getDuration(),
           getVolume:      () => player.getVolume(),
           setVolume:      (v) => player.setVolume(v),
           setLoop:        (enabled: boolean) => player.setLoop(enabled)

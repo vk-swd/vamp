@@ -5,6 +5,7 @@ import React from "react";
 
 type PlayTrackFns = { 
     setIsPlaying: (isPlaying: boolean) => void;
+    setDuration: (duration: number) => void;
     // setCurrentTrackId: (id: number | null) => void;
 }
 

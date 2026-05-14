@@ -23,8 +23,6 @@ export interface ActivePlayerControls {
   seekTo: (seconds: number) => void;
   /** Return the current playback position in seconds (synchronous). */
   getCurrentTime: () => number;
-  /** Return the total duration in seconds (synchronous). */
-  getDuration: () => number;
   /** Return the current volume 0-100 (synchronous). */
   getVolume: () => number;
   /** Set the volume 0-100. */
@@ -40,7 +38,6 @@ const NOOP_CONTROLS: ActivePlayerControls = {
   replay: () => {},
   seekTo: () => {},
   getCurrentTime: () => 0,
-  getDuration: () => 0,
   getVolume: () => 100,
   setVolume: () => {},
   setLoop: () => {}
@@ -84,8 +81,6 @@ interface PlayerStore {
   seekTo: (seconds: number) => void;
   /** Return the current playback position in seconds. Returns 0 when no player is loaded. */
   getCurrentTime: () => number;
-  /** Return the total duration in seconds. Returns 0 when no player is loaded. */
-  getDuration: () => number;
   /** Return the current volume 0-100. Returns 100 when no player is loaded. */
   getVolume: () => number;
   /** Set the volume 0-100. No-op when no player is loaded. */

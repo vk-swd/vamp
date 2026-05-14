@@ -150,6 +150,8 @@ export function SCPlayer({
           if (cancelled) {
             return;
           }
+          // This only works because players are remounted at every track change.
+          playCtx?.setDuration(ms / 1000);
           usePlayerStore.getState().setActivePlayer({
             play: () => {
               log(`playing`);
@@ -164,7 +166,6 @@ export function SCPlayer({
             replay: () => { log(`replaying`); widget.seekTo(0); widget.play(); },
             seekTo: (s) => { log(`seeking to ${s}`); widget.seekTo(s * 1000); },
             getCurrentTime: () => positionMsRef.current / 1000,
-            getDuration: () => ms / 1000,
             getVolume: () => volumeRef.current,
             setVolume: (v) => { volumeRef.current = v; widget.setVolume(v); },
             setLoop: () => { }
