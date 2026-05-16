@@ -1,13 +1,9 @@
-
-
-
 // Prevents an extra console window on Windows in release. DO NOT REMOVE!
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 mod commands;
 mod db;
 mod transport;
 use tauri::Manager;
-use webkit2gtk::glib::DateTime;
 
 use crate::commands::default_dir;
 use crate::db::repository::ArcRepo;
@@ -23,46 +19,62 @@ struct AppConfig {
 }
 
 fn main() {
+    let port: u16 = 9527;
     tauri::Builder::default()
-        .setup(|app| {
+        .plugin(tauri_plugin_localhost::Builder::new(port.clone()).build())
+        .setup(move |app| {
+            let url1: String = format!("http://localhost:{}", port.clone()).parse().unwrap();
             let test_dir_env = std::env::var("TEST_DIR");
             let app_dir_env = std::env::var("VAMP_DIR");
             let config = if let Ok(test_dir) = test_dir_env {
-                AppConfig { 
-                    db_path: std::path::PathBuf::from(test_dir), 
-                    db_filename: chrono::Local::now().format("%Y%m%d_%H%M%S").to_string() + "_test.db",
-                    window_idx: 1 
+                AppConfig {
+                    db_path: std::path::PathBuf::from(test_dir),
+                    db_filename: chrono::Local::now().format("%Y%m%d_%H%M%S").to_string()
+                        + "_test.db",
+                    window_idx: 1,
                 }
             } else if let Ok(app_dir) = app_dir_env {
-                AppConfig { 
+                AppConfig {
                     db_path: std::path::PathBuf::from(app_dir),
                     db_filename: "vampa.db".to_string(),
-                    window_idx: 0 
+                    window_idx: 0,
                 }
             } else {
-                AppConfig { 
-                    db_path: default_dir(app.handle())?, 
+                AppConfig {
+                    db_path: default_dir(app.handle())?,
                     db_filename: "vampagent3.db".to_string(),
-                    window_idx: 0 
+                    window_idx: 0,
                 }
             };
             std::fs::create_dir_all(&config.db_path).map_err(|e| e.to_string())?;
             let db_full_path = config.db_path.join(&config.db_filename);
-            tauri::async_runtime::block_on(
-                commands::setup_database(app.handle().clone(), db_full_path)
-            ).map_err(|e| e.to_string())?;
+            tauri::async_runtime::block_on(commands::setup_database(
+                app.handle().clone(),
+                db_full_path,
+            ))
+            .map_err(|e| e.to_string())?;
             let repo = app.handle().state::<ArcRepo>().inner().clone();
             let cert_path = config.db_path.join("cert.pem");
-            let key_path  = config.db_path.join("key.pem");
+            let key_path = config.db_path.join("key.pem");
             tauri::async_runtime::block_on(
                 // transport::ws_server::start(repo, "127.0.0.1:8090".parse().unwrap(), &cert_path, &key_path)
-                transport::ws_server::start(repo, "0.0.0.0:8090".parse().unwrap(), &cert_path, &key_path)
-            ).map_err(|e| e.to_string())?;
-            let window = tauri::WebviewWindowBuilder::from_config(app.handle(), &app.config().app.windows[config.window_idx])?.build()?;
+                transport::ws_server::start(
+                    repo,
+                    "0.0.0.0:8090".parse().unwrap(),
+                    &cert_path,
+                    &key_path,
+                ),
+            )
+            .map_err(|e| e.to_string())?;
+            let mut win_config = app.config().app.windows[config.window_idx].clone();
+            win_config.url = tauri::WebviewUrl::External(url1.parse().unwrap());
+            let window = tauri::WebviewWindowBuilder::from_config(app.handle(), &win_config)?
+                .build()?;
             // Apply webkit settings for ALL builds (debug + release)
-        
+
             #[cfg(target_os = "linux")]
-            window.with_webview(|webview| {
+            window
+                .with_webview(|webview| {
                     use webkit2gtk::{SettingsExt, WebViewExt};
 
                     let w = webview.inner();
@@ -93,8 +105,8 @@ fn main() {
 
                     // MediaStream – suppresses the enumerate-devices console errors
                     settings.set_enable_media_stream(true);
-                  
-                }).unwrap();
+                })
+                .unwrap();
             // Open DevTools only in debug builds
             // #[cfg(debug_assertions)]
             // window.open_devtools();
@@ -102,9 +114,9 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             log_from_ui,
-            commands::dispatch::dispatch])
+            commands::dispatch::dispatch
+        ])
         .plugin(tauri_plugin_opener::init())
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
-
