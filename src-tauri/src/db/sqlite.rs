@@ -10,6 +10,10 @@ use crate::db::schema::{
     TagAssignment, TrackMeta, TrackRow, TrackSource, TrackUpdate,
 };
 
+/// Schema version tracked at deletion time so the JSON archive records which DB layout
+/// was active when the track was removed.  Bump this whenever a new migration is added.
+static SCHEMA_VERSION: i32 = 5;
+
 /// Private helper: a type-erased bind value for dynamic query building.
 enum BindVal {
     Int(i64),
@@ -109,6 +113,76 @@ fn assign_tag_bind(track_id: i64, tag_id: i64) -> sqlx::query::Query<'static, sq
         .bind(track_id)
         .bind(tag_id)
 }
+async fn delete_track_unlogged(app_rep: &SqliteRepository, track_id: i64) -> Result<(), sqlx::Error> {
+    let mut tx = app_rep.pool.begin().await?;
+
+    let track = sqlx::query_as::<_, TrackRow>("SELECT * FROM track_info WHERE id = ?")
+        .bind(track_id)
+        .fetch_one(&mut *tx)
+        .await?;
+
+    let sources: Vec<String> = sqlx::query_as::<_, (String,)>(
+        "SELECT url FROM track_sources WHERE track_id = ? ORDER BY id ASC",
+    )
+    .bind(track_id)
+    .fetch_all(&mut *tx)
+    .await?
+    .into_iter()
+    .map(|(url,)| url)
+    .collect();
+
+    let tags: Vec<(i64, String)> = sqlx::query_as::<_, (i64, String)>(
+        "SELECT t.id, t.tag_name FROM tags t \
+         INNER JOIN tag_assignments ta ON ta.tag_id = t.id \
+         WHERE ta.track_id = ? ORDER BY t.id ASC",
+    )
+    .bind(track_id)
+    .fetch_all(&mut *tx)
+    .await?;
+
+    let meta = sqlx::query_as::<_, TrackMeta>(
+        "SELECT * FROM track_meta WHERE track_id = ? ORDER BY id ASC",
+    )
+    .bind(track_id)
+    .fetch_all(&mut *tx)
+    .await?;
+
+    let listened_daily: Vec<(String, i64)> = sqlx::query_as::<_, (String, i64)>(
+        "SELECT date, listened FROM listened_daily WHERE track_id = ? ORDER BY date ASC",
+    )
+    .bind(track_id)
+    .fetch_all(&mut *tx)
+    .await?;
+
+    let json = serde_json::json!([
+        SCHEMA_VERSION,
+        track.id,
+        track.artist,
+        track.track_name,
+        track.length_seconds,
+        track.bitrate_kbps,
+        track.tempo_bpm,
+        track.addition_time,
+        track.listened_seconds,
+        sources,
+        tags.iter().map(|(id, name)| serde_json::json!([id, name])).collect::<Vec<_>>(),
+        meta.iter().map(|m| serde_json::json!([m.key, m.value])).collect::<Vec<_>>(),
+        listened_daily.iter().map(|(date, seconds)| serde_json::json!([date, seconds])).collect::<Vec<_>>()
+    ]);
+
+    sqlx::query("INSERT INTO removed_tracks (data) VALUES (?)")
+        .bind(json.to_string())
+        .execute(&mut *tx)
+        .await?;
+    // The "ON DELETE CASCADE" ensures all related rows are removed; we just need to delete the main track_info row.
+    sqlx::query("DELETE FROM track_info WHERE id = ?")
+        .bind(track_id)
+        .execute(&mut *tx)
+        .await?;
+
+    tx.commit().await.map(|_| ())
+}
+
 async fn add_track_unlogged(app_rep: &SqliteRepository, t: NewTrack) -> Result<i64, sqlx::Error> {
     let mut tx = app_rep.pool.begin().await?;
 
@@ -395,15 +469,8 @@ impl AppRepository for SqliteRepository {
     }
 
     async fn delete_track(&self, id: i64) -> Result<(), sqlx::Error> {
-        self.try_log(
-            "delete_track",
-            sqlx::query("DELETE FROM track_info WHERE id = ?")
-                .bind(id)
-                .execute(&self.pool)
-                .await,
-        )
-        .await
-        .map(|_| ())
+        self.try_log("delete_track", delete_track_unlogged(self, id).await)
+            .await
     }
 
     // ------------------------------------------------------------------

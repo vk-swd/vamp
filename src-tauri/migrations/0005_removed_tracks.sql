@@ -1,0 +1,4 @@
+CREATE TABLE IF NOT EXISTS removed_tracks (
+    id    INTEGER PRIMARY KEY AUTOINCREMENT,
+    data  TEXT    NOT NULL
+);
