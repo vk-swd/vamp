@@ -1,18 +1,9 @@
 import React from 'react';
 import { TrackRow, TrackSource, TrackWithSources } from "../tauriDb";
 import { Selector } from '../../ui/elements';
+import { TrackPlayContext } from '../../ui/playContext';
 
 export type { TrackWithSources };
-
-// ─── TrackPlayContext ─────────────────────────────────────────────────────────
-
-type OnPlayFn = (track: TrackWithSources, sourceUrl: string) => void;
-
-export const TrackPlayContext = React.createContext<OnPlayFn>(() => {});
-
-export function TrackPlayProvider({ onPlay, children }: { onPlay: OnPlayFn; children: React.ReactNode }) {
-  return <TrackPlayContext.Provider value={onPlay}>{children}</TrackPlayContext.Provider>;
-}
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 

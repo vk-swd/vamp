@@ -1,5 +1,7 @@
 import React from 'react';
 import type { TrackWithSources } from './TrackItem';
+import { DeleteTrackContext } from '../../ui/deleteContext';
+import { TrackPlayContext } from '../../ui/playContext';
 
 export interface TrackListContextMenuProps {
   x: number;
@@ -9,7 +11,6 @@ export interface TrackListContextMenuProps {
   activeSource: string | null;
   playlists: Array<{ id: string; name: string }>;
   onSelect:        () => void;
-  onPlay:          () => void;
   onAddToPlaylist: (playlistId: string) => void;
   onNewPlaylist:   () => void;
   onInfo:          () => void;
@@ -17,9 +18,11 @@ export interface TrackListContextMenuProps {
 }
 
 export function TrackListContextMenu({
-  x, y, isSelected, playlists,
-  onSelect, onPlay, onAddToPlaylist, onNewPlaylist, onInfo, onClose,
+  x, y, track, isSelected, activeSource, playlists,
+  onSelect, onAddToPlaylist, onNewPlaylist, onInfo, onClose,
 }: TrackListContextMenuProps) {
+  const { onDelete } = React.useContext(DeleteTrackContext);
+  const onPlay = React.useContext(TrackPlayContext);
   return (
     <ul
       className="tracklist__context-menu"
@@ -34,7 +37,7 @@ export function TrackListContextMenu({
       </li>
       <li
         className="tracklist__context-menu-item"
-        onClick={() => { onPlay(); onClose(); }}
+        onClick={() => { if (activeSource) { onPlay(track, activeSource); } onClose(); }}
       >
         Play
       </li>
@@ -63,6 +66,12 @@ export function TrackListContextMenu({
         onClick={() => { onInfo(); onClose(); }}
       >
         Information
+      </li>
+      <li
+        className="tracklist__context-menu-item"
+        onClick={() => { onDelete(track.id); onClose(); }}
+      >
+        Delete
       </li>
     </ul>
   );

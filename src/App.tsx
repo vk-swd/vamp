@@ -11,7 +11,7 @@ import { LibraryWidget } from "./db/LibraryWidget";
 import { SCPlayer } from "./players/SCPlayer";
 import { getTrackSource } from "./common/utils";
 import { PlaylistsTab } from "./playlist/PlaylistsTab";
-import { TrackPlayProvider } from "./db/data/TrackItem";
+import { TrackPlayProvider } from "./ui/playContext";
 import { TrackPlayContext1 } from "./players/playingContext";
 
 // ── helpers ───────────────────────────────────────────────────────────────────

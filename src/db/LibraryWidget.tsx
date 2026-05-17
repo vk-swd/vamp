@@ -3,7 +3,8 @@ import { SearchWidget } from "./filter/SearchWidget";
 import { TrackList } from './data/TrackList';
 import { Button } from '../ui/elements';
 import { TrackInfoDialog, type TrackData } from './track/TrackInfo';
-import { addTrack, getTracksWithSources, getAllTags, getTagsByPattern, type Tag } from './tauriDb';
+import { addTrack, getTracksWithSources, getAllTags, getTagsByPattern, deleteTrack, type Tag } from './tauriDb';
+import { DeleteTrackContext } from '../ui/deleteContext';
 import type { TrackWithSources } from './data/TrackItem';
 import { log } from '../logger';
 import { usePlayerStore } from '../store';
@@ -73,7 +74,10 @@ export function LibraryWidget() {
     loadPage(prevCursor);
   }
 
+  const deleteCtx = { onDelete: (id: number) => deleteTrack(id).then(() => loadPage(cursor)) };
+
   return (
+    <DeleteTrackContext.Provider value={deleteCtx}>
     <DataLookupContext.Provider value={dataGetter}>
     <TagLookupContext.Provider value={tagGetter}>
       <div className="filter-widget">
@@ -102,6 +106,7 @@ export function LibraryWidget() {
             const id = createPlaylist(name);
             addTrackToPlaylist(id, track);
           }}
+          onInfo={(track) => { /* TODO: show track information panel */ }}
         />
         <Button onClick={() => setDialogOpen(true)}>Add Track</Button>
         <Button variant="secondary" onClick={() => loadPage(cursor)}>↻ Refresh</Button>
@@ -131,5 +136,6 @@ export function LibraryWidget() {
       )}
     </TagLookupContext.Provider>
     </DataLookupContext.Provider>
+    </DeleteTrackContext.Provider>
   );
 }
