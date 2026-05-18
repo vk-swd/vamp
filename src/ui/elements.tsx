@@ -410,6 +410,31 @@ export function Dialog({ title, onConfirm, onCancel, confirmDisabled, children }
   );
 }
 
+// ─── Label ───────────────────────────────────────────────────────────────────
+
+export type LabelVariant = 'default' | 'muted' | 'error' | 'warn' | 'success';
+
+export interface LabelProps extends React.HTMLAttributes<HTMLSpanElement> {
+  variant?: LabelVariant;
+}
+
+const LABEL_COLORS: Record<LabelVariant, string> = {
+  default: 'var(--ui-text)',
+  muted:   'var(--ui-text-muted)',
+  error:   'var(--ui-danger)',
+  warn:    'var(--ui-warning)',
+  success: 'var(--ui-success)',
+};
+
+export function Label({ variant = 'default', style, ...rest }: LabelProps) {
+  return (
+    <span
+      style={{ fontSize: 'var(--ui-fs-xs)', color: LABEL_COLORS[variant], ...style }}
+      {...rest}
+    />
+  );
+}
+
 // ─── injectGlobalStyles ───────────────────────────────────────────────────────
 
 let _injected = false;

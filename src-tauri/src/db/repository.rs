@@ -29,14 +29,12 @@ pub trait AppRepository: Send + Sync {
     /// Apply a partial update; only `Some` fields are written to the row.
     async fn update_track(&self, id: i64, update: TrackUpdate) -> Result<(), sqlx::Error>;
 
-    /// Cursor-based pagination ordered by `id ASC`.
-    /// Returns rows with `id > cursor`; pass `None` to start from the beginning.
-    /// `criteria` is an optional list of column filters received from the frontend.
+    /// Cursor-based pagination with overfetching.
     async fn get_tracks(
         &self,
         cursor: Option<i64>,
         criteria: Option<Vec<SearchCriteria>>,
-        limit: u32,
+        limit: i64,
     ) -> Result<Vec<TrackRow>, sqlx::Error>;
 
     async fn get_track(&self, id: i64) -> Result<TrackRow, sqlx::Error>;
@@ -124,7 +122,7 @@ pub trait AppRepository: Send + Sync {
         &self,
         cursor: Option<i64>,
         criteria: Option<Vec<SearchCriteria>>,
-        limit: u32,
+        limit: i64,
     ) -> Result<Vec<crate::db::schema::TrackWithSources>, sqlx::Error>;
 
     // ------------------------------------------------------------------

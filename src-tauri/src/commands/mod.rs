@@ -96,7 +96,7 @@ pub async fn get_tracks(
     repo: Repo<'_>,
     cursor: Option<i64>,
     criteria: Option<Vec<SearchCriteria>>,
-    limit: u32,
+    limit: i64,
 ) -> Result<Vec<TrackRow>, String> {
     repo.get_tracks(cursor, criteria, limit)
         .await
@@ -108,7 +108,7 @@ pub async fn get_tracks_with_sources(
     repo: Repo<'_>,
     cursor: Option<i64>,
     criteria: Option<Vec<SearchCriteria>>,
-    limit: u32,
+    limit: i64,
 ) -> Result<Vec<TrackWithSources>, String> {
     repo.get_tracks_with_sources(cursor, criteria, limit)
         .await

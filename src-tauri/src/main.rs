@@ -19,7 +19,7 @@ struct AppConfig {
 }
 
 fn main() {
-    let port: u16 = 9527;
+    let port: u16 = 1420;
     tauri::Builder::default()
         .plugin(tauri_plugin_localhost::Builder::new(port.clone()).build())
         .setup(move |app| {

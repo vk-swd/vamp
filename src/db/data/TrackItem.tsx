@@ -57,7 +57,7 @@ export function TrackItem({
 
       <div className="tracklist-item__info">
         <span className="tracklist-item__artist">{track.artist}</span>
-        <span className="tracklist-item__name">{track.track_name}</span>
+        <span className="tracklist-item__name">{`${track.track_name}`}</span>
       </div>
 
       <span className="tracklist-item__duration">

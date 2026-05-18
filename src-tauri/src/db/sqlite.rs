@@ -297,7 +297,7 @@ impl AppRepository for SqliteRepository {
         &self,
         cursor: Option<i64>,
         criteria: Option<Vec<SearchCriteria>>,
-        limit: u32,
+        limit: i64,
     ) -> Result<Vec<TrackRow>, sqlx::Error> {
         const ALLOWED_COLUMNS: &[&str] = &[
             "id", "artist", "track_name", "length_seconds",
@@ -307,8 +307,8 @@ impl AppRepository for SqliteRepository {
         let after = cursor.unwrap_or(0);
         // All column conditions use the `ti.` alias so they remain unambiguous
         // whether or not the tag JOIN is added later.
-        let mut conditions: Vec<String> = vec!["ti.id >= ?".to_string()];
-        let mut bind_vals: Vec<BindVal> = vec![BindVal::Int(after)];
+        let mut conditions: Vec<String> = vec![];
+        let mut bind_vals: Vec<BindVal> = vec![];
         // Tag IDs are collected separately; they define whether a JOIN is done.
         enum TagFilter { Any(Vec<i64>), All(Vec<i64>) }
         let mut tag_filter: Option<TagFilter> = None;
@@ -392,15 +392,18 @@ impl AppRepository for SqliteRepository {
 
         let sql = match &tag_filter {
             None => {
-                bind_vals.push(BindVal::Int(limit as i64));
-                format!(
-                    "SELECT ti.* FROM track_info ti WHERE {} ORDER BY ti.id ASC LIMIT ?",
-                    conditions.join(" AND ")
-                )
+                if (conditions.is_empty()) {
+                    // No WHERE clause needed if there are no conditions.
+                    "SELECT * FROM track_info".to_string()
+                } else {
+                    format!(
+                        "SELECT ti.* FROM track_info ti WHERE {}",
+                        conditions.join(" AND ")
+                    )
+                }
             }
             Some(TagFilter::Any(tag_ids)) => {
                 let placeholders = vec!["?"; tag_ids.len()].join(", ");
-                bind_vals.push(BindVal::Int(limit as i64));
                 format!(
                     "SELECT ti.* \
                      FROM (SELECT DISTINCT track_id FROM tag_assignments WHERE tag_id IN ({placeholders}) AND track_id >= ?) ta \
@@ -413,7 +416,6 @@ impl AppRepository for SqliteRepository {
             }
             Some(TagFilter::All(tag_ids)) => {
                 let placeholders = vec!["?"; tag_ids.len()].join(", ");
-                bind_vals.push(BindVal::Int(limit as i64));
                 format!(
                     "SELECT ti.* \
                      FROM (SELECT track_id FROM tag_assignments \
@@ -427,8 +429,16 @@ impl AppRepository for SqliteRepository {
                 )
             }
         };
-
-        let mut q = sqlx::query_as::<_, TrackRow>(&sql);
+        let sql1 = format!("with s1 as ({}),  \
+                oPrior as (select * from s1 where id < ? order by id desc limit ?), \
+                    oAfter as (select * from s1 where id >= ? order by id asc limit ?) \
+                    select * from oPrior union all  select * from oAfter order by id asc",
+                sql);                   
+        bind_vals.push(BindVal::Int(after));
+        bind_vals.push(BindVal::Int(limit));
+        bind_vals.push(BindVal::Int(after));
+        bind_vals.push(BindVal::Int(limit));
+        let mut q = sqlx::query_as::<_, TrackRow>(&sql1);
         match tag_filter {
             Some(TagFilter::Any(tag_ids)) => {
                 for id in tag_ids {
@@ -450,7 +460,7 @@ impl AppRepository for SqliteRepository {
             q = match bv {
                 BindVal::Int(v)   => q.bind(v),
                 BindVal::Float(v) => q.bind(v),
-                BindVal::Text(v)  => q.bind(v),
+                BindVal::Text(v)  => q.bind(v)
             };
         }
 
@@ -751,7 +761,7 @@ impl AppRepository for SqliteRepository {
         &self,
         cursor: Option<i64>,
         criteria: Option<Vec<SearchCriteria>>,
-        limit: u32,
+        limit: i64,
     ) -> Result<Vec<crate::db::schema::TrackWithSources>, sqlx::Error> {
         let tracks = self.get_tracks(cursor, criteria, limit).await?;
         if tracks.is_empty() {

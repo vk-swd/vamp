@@ -4,7 +4,7 @@ import { YoutubePlayerOwner } from "./YoutubePlayer";
 import { PlayerControls } from "./PlayerControls";
 import { usePlayerStore } from "./store";
 import "./App.css";
-import { addListenedSeconds } from "./db/tauriDb";
+import { addListenedSeconds, deleteTrack } from "./db/tauriDb";
 import { log } from "./logger";
 import { ListenTracker } from "./useListenTracker";
 import { LibraryWidget } from "./db/LibraryWidget";
@@ -13,6 +13,7 @@ import { getTrackSource } from "./common/utils";
 import { PlaylistsTab } from "./playlist/PlaylistsTab";
 import { TrackPlayProvider } from "./ui/playContext";
 import { TrackPlayContext1 } from "./players/playingContext";
+import { PendingTasksWidget, type PendingTask } from "./ui/PendingTasksWidget";
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -116,6 +117,33 @@ export default function App() {
   const [duration, setDuration] = useState<number>(0);
   const [scKey, setScKey] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
+  const [libraryCursor, setLibraryCursor] = useState<number | null>(null);
+  const [pendingTasks, setPendingTasks] = useState<Map<string, PendingTask>>(new Map());
+
+  function deleteTrackForLibrary(id: number): Promise<void> {
+    const taskId = crypto.randomUUID();
+    setPendingTasks(prev => new Map(prev).set(taskId, { description: `Deleting track #${id}…`, createdAt: new Date(), error: null }));
+    return deleteTrack(id)
+      .then(() => setPendingTasks(prev => { const next = new Map(prev); next.delete(taskId); return next; }))
+      .catch((e: unknown) => {
+        setPendingTasks(prev => new Map(prev).set(taskId, { ...prev.get(taskId)!, error: String(e) }));
+        throw e;
+      });
+  }
+
+  function clearLastPendingError() {
+    setPendingTasks(prev => {
+      const entries = [...prev.entries()];
+      for (let i = entries.length - 1; i >= 0; i--) {
+        if (entries[i][1].error !== null) {
+          const next = new Map(prev);
+          next.delete(entries[i][0]);
+          return next;
+        }
+      }
+      return prev;
+    });
+  }
   const listenTracker = useRef<ListenTracker | null>(null);
   useEffect(() => {
     if (!listenTracker.current) {
@@ -216,7 +244,7 @@ export default function App() {
               playTrack(sourceUrl, `${track.artist} - ${track.track_name}`, track.id);
               setPlayPlaylist(undefined);
             }}>
-              <LibraryWidget/>
+              <LibraryWidget cursor={libraryCursor} onCursorChange={setLibraryCursor} onDeleteTrack={deleteTrackForLibrary} />
             </TrackPlayProvider>
           </div>
         )}
@@ -233,6 +261,7 @@ export default function App() {
       {/* ── Persistent bottom bar ── */}
       <footer className="bottom-bar">
         <PlayerControls trackLabel={`${track?.label}`} duration={duration} isPlaying={isPlaying} />
+        <PendingTasksWidget tasks={pendingTasks} onClearLastError={clearLastPendingError} />
       </footer>
     </div>
   );

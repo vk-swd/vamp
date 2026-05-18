@@ -3,13 +3,15 @@ import { SearchWidget } from "./filter/SearchWidget";
 import { TrackList } from './data/TrackList';
 import { Button } from '../ui/elements';
 import { TrackInfoDialog, type TrackData } from './track/TrackInfo';
-import { addTrack, getTracksWithSources, getAllTags, getTagsByPattern, deleteTrack, type Tag } from './tauriDb';
+import { addTrack, getTracksWithSources, getAllTags, getTagsByPattern, type Tag } from './tauriDb';
 import { DeleteTrackContext } from '../ui/deleteContext';
 import type { TrackWithSources } from './data/TrackItem';
 import { log } from '../logger';
 import { usePlayerStore } from '../store';
 
+const HALF_PAGE_SIZE = 10;
 const PAGE_SIZE = 20;
+const PAGE_STEP = 10;
 
 class TagLookupContextValue {
   async getAllTags(): Promise<Tag[]> {
@@ -32,49 +34,57 @@ const dataGetter = new DataLookupContextValue()
 export const DataLookupContext = createContext(dataGetter);
 
 
-export function LibraryWidget() {
+export interface LibraryWidgetProps {
+  cursor: number | null;
+  onCursorChange: (cursor: number | null) => void;
+  onDeleteTrack: (id: number) => Promise<void>;
+}
+
+export function LibraryWidget({ cursor, onCursorChange, onDeleteTrack }: LibraryWidgetProps) {
   const [dialogOpen, setDialogOpen] = useState(false);
 
   const [tracks,      setTracks]      = useState<TrackWithSources[]>([]);
-  const [cursor,      setCursor]      = useState<number | null>(null);
-  const [prevCursors, setPrevCursors] = useState<(number | null)[]>([]);
-  const [hasNext,     setHasNext]     = useState(false);
-
+  // TODO: make a variable holding current items request so that if i get some response for old unprocessed requests
+  // those are safely ignored and i only deal with current requests. Make this thing generalised.
   const selectedTracks = usePlayerStore((s) => s.selectedTracks);
   const setSelectedTracks = usePlayerStore((s) => s.setSelectedTracks);
   const playlists = usePlayerStore((s) => s.playlists);
   const addTrackToPlaylist = usePlayerStore((s) => s.addTrackToPlaylist);
   const createPlaylist = usePlayerStore((s) => s.createPlaylist);
-
   function loadPage(fromCursor: number | null) {
-    getTracksWithSources(fromCursor, null, PAGE_SIZE)
+    const limit = fromCursor === null ? PAGE_SIZE : HALF_PAGE_SIZE;
+    getTracksWithSources(fromCursor, null, limit)
       .then((withSources: TrackWithSources[]) => {
+        const pos = Math.max(0, Math.min(withSources.length - 1, HALF_PAGE_SIZE));
+        onCursorChange(withSources[pos]?.id ?? null);
         setTracks(withSources);
-        setHasNext(withSources.length === PAGE_SIZE);
       })
       .catch(e => log(`Failed to load tracks: ${e}`));
   }
 
   // Load first page on mount.
-  useEffect(() => { loadPage(null); }, []);
+  useEffect(() => { loadPage(cursor); }, []);
+
+  function paginate(idx: number) {
+    if (tracks.length === 0) {
+      loadPage(null);
+    } else {
+      const a = HALF_PAGE_SIZE + HALF_PAGE_SIZE / 2;
+      const b = Math.max(0, Math.min(idx, tracks.length - 1));
+      loadPage(tracks[b].id);
+    }
+  }
 
   function handlePageNext() {
-    if (!hasNext || tracks.length === 0) return;
-    const nextCursor = tracks[tracks.length - 1].id;
-    setPrevCursors(prev => [...prev, cursor]);
-    setCursor(nextCursor);
-    loadPage(nextCursor);
+    paginate(HALF_PAGE_SIZE + HALF_PAGE_SIZE / 2);
   }
-
   function handlePagePrev() {
-    if (prevCursors.length === 0) return;
-    const prevCursor = prevCursors[prevCursors.length - 1];
-    setPrevCursors(prev => prev.slice(0, -1));
-    setCursor(prevCursor);
-    loadPage(prevCursor);
+    paginate(HALF_PAGE_SIZE / 2);
   }
 
-  const deleteCtx = { onDelete: (id: number) => deleteTrack(id).then(() => loadPage(cursor)) };
+  const deleteCtx = {
+    onDelete: (id: number) => onDeleteTrack(id).then(() => loadPage(cursor)),
+  };
 
   return (
     <DeleteTrackContext.Provider value={deleteCtx}>
@@ -98,8 +108,8 @@ export function LibraryWidget() {
           }}
           onPagePrev={handlePagePrev}
           onPageNext={handlePageNext}
-          hasPrev={prevCursors.length > 0}
-          hasNext={hasNext}
+          hasPrev={true}
+          hasNext={true}
           playlists={playlists}
           onAddToPlaylist={(track, playlistId) => addTrackToPlaylist(playlistId, track)}
           onCreatePlaylistWithTrack={(track, name) => {

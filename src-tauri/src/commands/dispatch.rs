@@ -45,7 +45,7 @@ pub struct UpdateTrackArgs {
 pub struct GetTracksArgs {
     pub cursor: Option<i64>,
     pub criteria: Option<Vec<SearchCriteria>>,
-    pub limit: u32,
+    pub limit: i64,
 }
 
 #[derive(Deserialize)]
