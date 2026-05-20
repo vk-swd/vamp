@@ -66,7 +66,7 @@ export function TrackItem({
 
       <div className="tracklist-item__source">
         <Selector
-          className="tracklist-src-select"
+          compact
           options={track.sources.map(s => ({ value: s.url, label: s.url }))}
           value={activeSource ?? ''}
           disabled={track.sources.length === 0}

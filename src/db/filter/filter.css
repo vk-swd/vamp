@@ -77,6 +77,11 @@
   display: flex;
   gap: 6px;
   align-items: center;
+  width: 100%;
+}
+
+.filter-number-selector .ui-field:last-child {
+  flex: 1;
 }
 
 .filter-number-input {

@@ -11,7 +11,7 @@ import {
 import { NumberSelector } from './NumberSelector';
 import { TagSelector } from './TagSelector';
 import { CriteriaPills } from './CriteriaPills';
-import { Button } from '../../ui/elements';
+import { Button, LineEdit, Selector } from '../../ui/elements';
 
 // ── Context consumed by TagSelector ───────────────────────────────────────
 interface TagLookupContext1Value {
@@ -68,12 +68,10 @@ interface WidgetProps {
 
 function TextWidget({ type, state, update, onCommit }: WidgetProps) {
   return (
-    <input
-      className="filter-input"
-      type="text"
+    <LineEdit
       value={state.text ?? ''}
       placeholder={`Search ${CRITERIA_LABELS[type]}…`}
-      onChange={e => update({ text: e.target.value })}
+      onChange={val => update({ text: val })}
       onKeyDown={e => { if (e.key === 'Enter') onCommit(); }}
     />
   );
@@ -168,20 +166,18 @@ export function CriteriaInput() {
   return (
     <div>
       <div className="ctrl-row">
-        <select
+        <Selector
+          vStretch={true}
+          options={ALL_CRITERIA.map(k => ({ value: k, label: CRITERIA_LABELS[k] }))}
           value={type}
-          onChange={e => { setType(e.target.value as CriteriaType); setSelectedType(null); }}
-        >
-          {ALL_CRITERIA.map(k => (
-            <option key={k} value={k}>{CRITERIA_LABELS[k]}</option>
-          ))}
-        </select>
+          onChange={val => { setType(val as CriteriaType); setSelectedType(null); }}
+        />
 
-        <div className="filter-value-control">
+        <div className="filter-value-control" style={{ flex: 1 }}>
           {CRITERIA_WIDGET[type]({ type, state: stateMap[type], update, onCommit: handleAdd })}
         </div>
 
-        <Button  onClick={handleAdd}>
+        <Button style={{ alignSelf: 'stretch' }} onClick={handleAdd}>
           Add
         </Button>
       </div>

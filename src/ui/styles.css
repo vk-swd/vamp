@@ -357,6 +357,15 @@ body {
   color: var(--ui-text-dim);
 }
 
+.ui-select--compact {
+  background-color: var(--ui-surface-3);
+  border-width:     1px;
+  border-radius:    var(--ui-r-sm);
+  font-size:        var(--ui-fs-xs);
+  height:           28px;
+  padding:          0 var(--ui-sp-8) 0 var(--ui-sp-2);
+}
+
 /* ── Label ───────────────────────────────────────────────────────────────── */
 .ui-label {
   color:          var(--ui-text-muted);

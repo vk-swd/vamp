@@ -67,13 +67,17 @@ export function Button({
 
 export interface LineEditProps
   extends Omit<React.InputHTMLAttributes<HTMLInputElement>, 'onChange'> {
-  label?:    string;
-  error?:    string;
-  hint?:     string;
+  label?:       string;
+  error?:       string;
+  hint?:        string;
+  /** Renders the input as type="number". */
+  numeric?:     boolean;
+  /** Style applied to the outer field wrapper div. */
+  fieldStyle?:  React.CSSProperties;
   /** Icon / adornment rendered inside the input on the left. */
-  leading?:  React.ReactNode;
+  leading?:     React.ReactNode;
   /** Icon / adornment rendered inside the input on the right. */
-  trailing?: React.ReactNode;
+  trailing?:    React.ReactNode;
   onChange?: (value: string, event: React.ChangeEvent<HTMLInputElement>) => void;
 }
 
@@ -81,6 +85,8 @@ export function LineEdit({
   label,
   error,
   hint,
+  numeric,
+  fieldStyle,
   leading,
   trailing,
   className,
@@ -103,13 +109,14 @@ export function LineEdit({
     <input
       id={inputId}
       className={inputCls}
+      type={numeric ? 'number' : undefined}
       onChange={e => onChange?.(e.target.value, e)}
       {...rest}
     />
   );
 
   return (
-    <div className="ui-field">
+    <div className="ui-field" style={fieldStyle}>
       {label && (
         <label className="ui-label" htmlFor={inputId}>
           {label}
@@ -156,6 +163,9 @@ export interface SelectorProps
   options:      SelectorOption[];
   placeholder?: string;
   label?:       string;
+  vStretch?:    boolean;
+  /** Compact variant: smaller height, tighter padding, xs font — matches row-level selects. */
+  compact?:     boolean;
   onChange?:    (value: string, event: React.ChangeEvent<HTMLSelectElement>) => void;
 }
 
@@ -163,7 +173,8 @@ export function Selector({
   options,
   placeholder,
   label,
-  className,
+  vStretch,
+  compact,
   onChange,
   value,
   id,
@@ -173,7 +184,7 @@ export function Selector({
   const selectId = id ?? autoId;
 
   return (
-    <div className="ui-field">
+    <div className="ui-field" style={vStretch ? { alignSelf: 'stretch' } : undefined}>
       {label && (
         <label className="ui-label" htmlFor={selectId}>
           {label}
@@ -181,7 +192,8 @@ export function Selector({
       )}
       <select
         id={selectId}
-        className={['ui-select', className].filter(Boolean).join(' ')}
+        style={vStretch ? { height: '100%' } : undefined}
+        className={['ui-select', compact && 'ui-select--compact'].filter(Boolean).join(' ')}
         onChange={e => onChange?.(e.target.value, e)}
         value={value ?? ''}
         {...rest}
