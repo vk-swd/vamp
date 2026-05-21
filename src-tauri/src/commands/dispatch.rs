@@ -13,6 +13,7 @@ use serde::Deserialize;
 use crate::db::{
     repository::ArcRepo,
     schema::{NewTrack, SearchCriteria, TagAssignment, TrackUpdate},
+    filtered_schema::SearchCriteriaFiltered,
 };
 use std::fs;
 use base64::{Engine, engine::general_purpose::STANDARD};
@@ -45,6 +46,13 @@ pub struct UpdateTrackArgs {
 pub struct GetTracksArgs {
     pub cursor: Option<i64>,
     pub criteria: Option<Vec<SearchCriteria>>,
+    pub limit: i64,
+}
+
+#[derive(Deserialize)]
+pub struct GetTracksFilteredArgs {
+    pub cursor: Option<i64>,
+    pub criteria: Option<Vec<SearchCriteriaFiltered>>,
     pub limit: i64,
 }
 
@@ -138,6 +146,7 @@ pub enum Command {
     UpdateTrack(UpdateTrackArgs),
     GetTracks(GetTracksArgs),
     GetTracksWithSources(GetTracksArgs),
+    GetTracksFiltered(GetTracksFilteredArgs),
     GetTrack(IdArg),
     DeleteTrack(IdArg),
     // Listen history
@@ -190,6 +199,9 @@ pub async fn execute(repo: &ArcRepo, cmd: Command) -> Result<serde_json::Value, 
 
         Command::GetTracksWithSources(GetTracksArgs { cursor, criteria, limit }) =>
             to_val(repo.get_tracks_with_sources(cursor, criteria, limit).await)?,
+
+        Command::GetTracksFiltered(GetTracksFilteredArgs { cursor, criteria, limit }) =>
+            to_val(repo.get_tracks_filtered(cursor, criteria, limit).await)?,
 
         Command::GetTrack(IdArg { id }) =>
             to_val(repo.get_track(id).await)?,

@@ -9,6 +9,7 @@ use crate::db::schema::{
     ListenInfo, NewError, NewTrack, NewTrackConflict, SearchCriteria, SearchParam, Tag,
     TagAssignment, TrackMeta, TrackRow, TrackSource, TrackUpdate,
 };
+use crate::db::filtered_schema::{CriteriaName, FilterSearchParam, SearchCriteriaFiltered};
 
 /// Schema version tracked at deletion time so the JSON archive records which DB layout
 /// was active when the track was removed.  Bump this whenever a new migration is added.
@@ -465,6 +466,35 @@ impl AppRepository for SqliteRepository {
         }
 
         self.try_log("get_tracks", q.fetch_all(&self.pool).await).await
+    }
+
+    async fn get_tracks_filtered(
+        &self,
+        cursor: Option<i64>,
+        criteria: Option<Vec<SearchCriteriaFiltered>>,
+        limit: i64,
+    ) -> Result<Vec<TrackRow>, sqlx::Error> {
+        let criteria = criteria.unwrap_or_default();
+        let mut criteria_map: std::collections::HashMap<CriteriaName, Vec<FilterSearchParam>> =
+            std::collections::HashMap::new();
+        for c in criteria {
+            criteria_map.entry(c.filter_name).or_default().extend(c.criteria);
+        }
+        let _has_tag_criteria = criteria_map.contains_key(&CriteriaName::Tags);
+        // TODO: implement query using criteria_map
+        Ok(vec!["hello".to_string(), "world".to_string()]
+            .into_iter()
+            .map(|s| TrackRow {
+                id: 0,
+                artist: s.clone(),
+                track_name: s,
+                length_seconds: Some(0),
+                bitrate_kbps: Some(0),
+                tempo_bpm: Some(0.0),
+                addition_time: "0".to_string(),
+                listened_seconds: 0,
+            })
+            .collect())
     }
 
     async fn get_track(&self, id: i64) -> Result<TrackRow, sqlx::Error> {

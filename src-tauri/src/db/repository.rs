@@ -5,6 +5,7 @@ use crate::db::schema::{
     ListenInfo, NewError, NewTrack, NewTrackConflict, SearchCriteria, Tag, TagAssignment,
     TrackMeta, TrackRow, TrackSource, TrackUpdate,
 };
+use crate::db::filtered_schema::SearchCriteriaFiltered;
 
 /// Shared-ownership, type-erased repository handle used as Tauri managed state.
 pub type ArcRepo = Arc<dyn AppRepository + Send + Sync>;
@@ -34,6 +35,14 @@ pub trait AppRepository: Send + Sync {
         &self,
         cursor: Option<i64>,
         criteria: Option<Vec<SearchCriteria>>,
+        limit: i64,
+    ) -> Result<Vec<TrackRow>, sqlx::Error>;
+
+    /// Rework of [`get_tracks`] + specta test
+    async fn get_tracks_filtered(
+        &self,
+        cursor: Option<i64>,
+        criteria: Option<Vec<SearchCriteriaFiltered>>,
         limit: i64,
     ) -> Result<Vec<TrackRow>, sqlx::Error>;
 

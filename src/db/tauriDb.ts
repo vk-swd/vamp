@@ -1,4 +1,6 @@
 import { dispatch } from './dispatchClient';
+import type { CriteriaName, SearchCriteriaFiltered } from './generatedTypes';
+export type { CriteriaName, SearchCriteriaFiltered } from './generatedTypes';
 // ─── Types mirroring src-tauri/src/db/schema.rs ─────────────────────────────
 
 export type TrackRow = {
@@ -145,6 +147,13 @@ export const getTracksWithSources = (
 
 export const getTrack = (id: number): Promise<TrackRow> =>
   dispatch('GetTrack', { id });
+
+export const getTracksFiltered = (
+  cursor: number | null,
+  criteria: SearchCriteriaFiltered[] | null,
+  limit: number,
+): Promise<TrackRow[]> =>
+  dispatch('GetTracksFiltered', { cursor, criteria, limit });
 
 export const deleteTrack = (id: number): Promise<void> =>
   dispatch('DeleteTrack', { id });

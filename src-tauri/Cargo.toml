@@ -26,6 +26,8 @@ rustls-pemfile = "2"
 futures-util = "0.3"
 base64 = "0.22"
 tauri-plugin-localhost = "2"
+specta = { version = "2.0.0-rc.25", features = ["derive"] }
+specta-typescript = "0.0.12"
 
 [dev-dependencies]
 webrtc = "0.11"

@@ -1,4 +1,4 @@
-import { addTrack, getTracks } from "../../db/tauriDb";
+import { addTrack, getTracks, getTracksFiltered } from "../../db/tauriDb";
 import { log } from "../../logger";
 
 let globalCounter = 0;
@@ -23,9 +23,9 @@ export async function initDb() {
     await addTrack(makeTrack("test track 2"));
     await addTrack(makeTrack("test track 3"));
     await addTrack(makeTrack("test track 4"));
-    const tracks = await getTracks(0, [
+    const tracks = await getTracksFiltered(0, [
         {
-            column_name: "artist", 
+            filter_name: "artist", 
             criteria: [
                 {mode: "text_like", pattern: "1", case_sensitive: false},
                 {mode: "text_like", pattern: "2", case_sensitive: false}

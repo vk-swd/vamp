@@ -10,9 +10,12 @@
 // sqlx::query_as), never the compile-time macros (query! / query_as!).
 // ============================================================
 
+pub mod filtered_schema;
 pub mod repository;
 pub mod schema;
 pub mod sqlite;
 
+#[cfg(test)]
+mod specta_export;
 #[cfg(test)]
 mod testdb;
