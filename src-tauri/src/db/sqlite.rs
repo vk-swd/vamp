@@ -474,27 +474,69 @@ impl AppRepository for SqliteRepository {
         criteria: Option<Vec<SearchCriteriaFiltered>>,
         limit: i64,
     ) -> Result<Vec<TrackRow>, sqlx::Error> {
+        use sea_query::{Condition, Expr, Iden, Query, SqliteQueryBuilder};
+        use sea_query_binder::SqlxBinder;
+
+        #[derive(Iden)]
+        enum TrackInfo {
+            #[iden = "track_info"]
+            Table,
+            #[iden = "track_name"]
+            TrackName,
+            #[iden = "artist"]
+            Artist,
+        }
+
         let criteria = criteria.unwrap_or_default();
         let mut criteria_map: std::collections::HashMap<CriteriaName, Vec<FilterSearchParam>> =
             std::collections::HashMap::new();
         for c in criteria {
             criteria_map.entry(c.filter_name).or_default().extend(c.criteria);
         }
-        let _has_tag_criteria = criteria_map.contains_key(&CriteriaName::Tags);
-        // TODO: implement query using criteria_map
-        Ok(vec!["hello".to_string(), "world".to_string()]
-            .into_iter()
-            .map(|s| TrackRow {
-                id: 0,
-                artist: s.clone(),
-                track_name: s,
-                length_seconds: Some(0),
-                bitrate_kbps: Some(0),
-                tempo_bpm: Some(0.0),
-                addition_time: "0".to_string(),
-                listened_seconds: 0,
-            })
-            .collect())
+
+        let mut select = Query::select();
+        select.expr(Expr::asterisk()).from(TrackInfo::Table);
+
+        if let Some(params) = criteria_map.get(&CriteriaName::TrackName) {
+            let mut group = Condition::any();
+            for p in params {
+                match p {
+                    FilterSearchParam::TextIn { values } if !values.is_empty() => {
+                        group = group.add(Expr::col(TrackInfo::TrackName).is_in(values.clone()));
+                    }
+                    FilterSearchParam::TextLike { pattern, .. } => {
+                        group = group.add(Expr::col(TrackInfo::TrackName).like(format!("%{}%", pattern)));
+                    }
+                    _ => {}
+                }
+            }
+            select.cond_where(group);
+        }
+        if let Some(params) = criteria_map.get(&CriteriaName::Artist) {
+            let mut group = Condition::any();
+            for p in params {
+                match p {
+                    FilterSearchParam::TextIn { values } if !values.is_empty() => {
+                        group = group.add(Expr::col(TrackInfo::Artist).is_in(values.clone()));
+                    }
+                    FilterSearchParam::TextLike { pattern, .. } => {
+                        group = group.add(Expr::col(TrackInfo::Artist).like(format!("%{}%", pattern)));
+                    }
+                    _ => {}
+                }
+            }
+            select.cond_where(group);
+        }
+
+        let (sql, values) = select.build_sqlx(SqliteQueryBuilder);
+
+        self.try_log(
+            "get_tracks_filtered",
+            sqlx::query_as_with::<_, TrackRow, _>(&sql, values)
+                .fetch_all(&self.pool)
+                .await,
+        )
+        .await
     }
 
     async fn get_track(&self, id: i64) -> Result<TrackRow, sqlx::Error> {
