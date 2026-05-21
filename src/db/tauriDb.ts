@@ -69,7 +69,7 @@ export type NumericBetween = {
 export type TextLike = {
   mode: 'text_like';
   pattern: string;       // e.g. "%rock%", "The%", "%band"
-  caseSensitive: boolean;
+  case_sensitive: boolean;
 };
 
 export type TextIn = {
