@@ -17,14 +17,15 @@ pub enum FilterNumericOperator {
 
 #[derive(Debug, Clone, Deserialize, specta::Type)]
 #[serde(tag = "mode", rename_all = "snake_case")]
+
 pub enum FilterSearchParam {
     NumericComparison { operator: FilterNumericOperator, value: f64 },
     NumericBetween    { min: f64, max: f64 },
     TextLike          { pattern: String, case_sensitive: bool },
     TextIn            { values: Vec<String> },
     NullCheck         { is_null: bool },
-    TagsIn            { tag_ids: Vec<i64> },
-    TagsAll           { tag_ids: Vec<i64> },
+    TagsAny            { tag_ids: Vec<i32> },
+    TagsAll           { tag_ids: Vec<i32> },
 }
 
 /// Strongly-typed filter names accepted by `get_tracks_filtered`.

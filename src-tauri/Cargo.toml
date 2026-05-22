@@ -28,6 +28,7 @@ base64 = "0.22"
 tauri-plugin-localhost = "2"
 specta = { version = "2.0.0-rc.25", features = ["derive"] }
 specta-typescript = "0.0.12"
+specta-serde = "0.0.12"
 sea-query = { version = "0.32", features = ["derive", "backend-sqlite"] }
 sea-query-binder = { version = "0.7", features = ["sqlx-sqlite"] }
 

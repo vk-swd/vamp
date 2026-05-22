@@ -393,7 +393,7 @@ impl AppRepository for SqliteRepository {
 
         let sql = match &tag_filter {
             None => {
-                if (conditions.is_empty()) {
+                if conditions.is_empty() {
                     // No WHERE clause needed if there are no conditions.
                     "SELECT * FROM track_info".to_string()
                 } else {
@@ -481,10 +481,22 @@ impl AppRepository for SqliteRepository {
         enum TrackInfo {
             #[iden = "track_info"]
             Table,
+            #[iden = "id"]
+            Id,
             #[iden = "track_name"]
             TrackName,
             #[iden = "artist"]
             Artist,
+        }
+
+        #[derive(Iden)]
+        enum TagAssignments {
+            #[iden = "tag_assignments"]
+            Table,
+            #[iden = "track_id"]
+            TrackId,
+            #[iden = "tag_id"]
+            TagId,
         }
 
         let criteria = criteria.unwrap_or_default();
@@ -526,6 +538,31 @@ impl AppRepository for SqliteRepository {
                 }
             }
             select.cond_where(group);
+        }
+        if let Some(params) = criteria_map.get(&CriteriaName::Tags) {
+            for p in params {
+                match p {
+                    FilterSearchParam::TagsAny { tag_ids } if !tag_ids.is_empty() => {
+                        let mut sub = Query::select();
+                        sub.distinct()
+                            .column(TagAssignments::TrackId)
+                            .from(TagAssignments::Table)
+                            .and_where(Expr::col(TagAssignments::TagId).is_in(tag_ids.clone()));
+                        select.and_where(Expr::col(TrackInfo::Id).in_subquery(sub));
+                    }
+                    FilterSearchParam::TagsAll { tag_ids } if !tag_ids.is_empty() => {
+                        let n = tag_ids.len() as i64;
+                        let mut sub = Query::select();
+                        sub.column(TagAssignments::TrackId)
+                            .from(TagAssignments::Table)
+                            .and_where(Expr::col(TagAssignments::TagId).is_in(tag_ids.clone()))
+                            .group_by_col(TagAssignments::TrackId)
+                            .and_having(Expr::cust(format!("COUNT(DISTINCT tag_id) = {}", n)));
+                        select.and_where(Expr::col(TrackInfo::Id).in_subquery(sub));
+                    }
+                    _ => {}
+                }
+            }
         }
 
         let (sql, values) = select.build_sqlx(SqliteQueryBuilder);
