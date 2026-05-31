@@ -10,6 +10,7 @@
 
 use serde::Deserialize;
 
+use crate::commands::listen_guard::ArcListenGuard;
 use crate::db::{
     repository::ArcRepo,
     schema::{NewTrack, SearchCriteria, TagAssignment, TrackUpdate},
@@ -180,7 +181,7 @@ pub enum Command {
 
 /// Execute a `Command` against the repository and return a JSON-serialised result.
 /// Called by both the Tauri IPC command and the WebSocket server.
-pub async fn execute(repo: &ArcRepo, cmd: Command) -> Result<serde_json::Value, String> {
+pub async fn execute(repo: &ArcRepo, guard: &ArcListenGuard, cmd: Command) -> Result<serde_json::Value, String> {
     let value = match cmd {
         // ── Tracks ─────────────────────────────────────────────────────────
         Command::AddTrack(track) =>
@@ -219,7 +220,9 @@ pub async fn execute(repo: &ArcRepo, cmd: Command) -> Result<serde_json::Value, 
             to_val(repo.get_listens_for_track(track_id).await)?,
 
         Command::AddListenedSeconds(AddListenedSecondsArgs { track_id, seconds }) => {
-            repo.add_listened_seconds(track_id, seconds).await.map_err(|e| e.to_string())?;
+            if guard.should_record(track_id, seconds) {
+                repo.add_listened_seconds(track_id, seconds).await.map_err(|e| e.to_string())?;
+            }
             serde_json::Value::Null
         }
 
@@ -315,13 +318,14 @@ pub async fn execute(repo: &ArcRepo, cmd: Command) -> Result<serde_json::Value, 
 #[tauri::command]
 pub async fn dispatch(
     repo: Repo<'_>,
+    guard: tauri::State<'_, ArcListenGuard>,
     kind: String,
     payload: Option<serde_json::Value>,
 ) -> Result<serde_json::Value, String> {
     let payload = payload.unwrap_or(serde_json::Value::Null);
     let cmd: Command = serde_json::from_value(serde_json::json!({ "kind": kind, "payload": payload }))
-        .map_err(|e| e.to_string())?;
-    execute(&*repo, cmd).await
+         .map_err(|e| e.to_string())?;
+    execute(&*repo, &*guard, cmd).await
 }
 
 // ─── Helper ───────────────────────────────────────────────────────────────────

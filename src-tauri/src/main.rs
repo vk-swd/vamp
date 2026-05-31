@@ -67,12 +67,14 @@ fn main() {
 
             if !matches!(launch_mode, LaunchMode::Test) {
                 let repo = app.handle().state::<ArcRepo>().inner().clone();
+                let guard = app.handle().state::<crate::commands::listen_guard::ArcListenGuard>().inner().clone();
                 let cert_path = user_config.db_path.join("cert.pem");
                 let key_path = user_config.db_path.join("key.pem");
                 tauri::async_runtime::block_on(
-                    // transport::ws_server::start(repo, "127.0.0.1:8090".parse().unwrap(), &cert_path, &key_path)
+                    // transport::ws_server::start(repo, guard, "127.0.0.1:8090".parse().unwrap(), &cert_path, &key_path)
                     transport::ws_server::start(
                         repo,
+                        guard,
                         "0.0.0.0:8090".parse().unwrap(),
                         &cert_path,
                         &key_path,

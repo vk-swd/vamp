@@ -20,6 +20,7 @@ use tokio_rustls::TlsAcceptor;
 use tokio_tungstenite::{accept_async, tungstenite::Message};
 
 use crate::commands::dispatch::{execute, Command};
+use crate::commands::listen_guard::ArcListenGuard;
 use crate::db::repository::ArcRepo;
 
 fn load_tls_config(cert_path: &Path, key_path: &Path) -> Result<ServerConfig, String> {
@@ -48,24 +49,25 @@ fn load_tls_config(cert_path: &Path, key_path: &Path) -> Result<ServerConfig, St
 
 /// Bind to `addr` with TLS, then spawn a background task that accepts secure WebSocket
 /// connections and dispatches commands to `repo`.  Returns as soon as the listener is bound.
-pub async fn start(repo: ArcRepo, addr: SocketAddr, cert_path: &Path, key_path: &Path) -> Result<(), String> {
+pub async fn start(repo: ArcRepo, guard: ArcListenGuard, addr: SocketAddr, cert_path: &Path, key_path: &Path) -> Result<(), String> {
     let tls_config = load_tls_config(cert_path, key_path)?;
     let acceptor = TlsAcceptor::from(Arc::new(tls_config));
 
     let listener = TcpListener::bind(addr).await.map_err(|e| e.to_string())?;
     println!("[WSS] listening on {addr}");
-    tokio::spawn(accept_loop(listener, repo, acceptor));
+    tokio::spawn(accept_loop(listener, repo, guard, acceptor));
     Ok(())
 }
 
-async fn accept_loop(listener: TcpListener, repo: ArcRepo, acceptor: TlsAcceptor) {
+async fn accept_loop(listener: TcpListener, repo: ArcRepo, guard: ArcListenGuard, acceptor: TlsAcceptor) {
     loop {
         match listener.accept().await {
             Ok((stream, peer)) => {
                 let repo = repo.clone();
+                let guard = guard.clone();
                 let acceptor = acceptor.clone();
                 tokio::spawn(async move {
-                    if let Err(e) = handle_connection(stream, repo, acceptor).await {
+                    if let Err(e) = handle_connection(stream, repo, guard, acceptor).await {
                         eprintln!("[WSS] {peer}: {e}");
                     }
                 });
@@ -78,6 +80,7 @@ async fn accept_loop(listener: TcpListener, repo: ArcRepo, acceptor: TlsAcceptor
 async fn handle_connection(
     stream: tokio::net::TcpStream,
     repo: ArcRepo,
+    guard: ArcListenGuard,
     acceptor: TlsAcceptor,
 ) -> Result<(), String> {
     let tls_stream = acceptor.accept(stream).await.map_err(|e| e.to_string())?;
@@ -91,7 +94,7 @@ async fn handle_connection(
             _ => continue,
         };
 
-        let response = route(&text, &repo).await;
+        let response = route(&text, &repo, &guard).await;
         if write.send(Message::Text(response)).await.is_err() {
             break;
         }
@@ -101,7 +104,7 @@ async fn handle_connection(
 
 /// Parse `{ "id": N, "kind": "…", "payload": … }`, execute the command, return a JSON reply.
 /// The `id` field is echoed back so the client can match the response to its request.
-async fn route(text: &str, repo: &ArcRepo) -> String {
+async fn route(text: &str, repo: &ArcRepo, guard: &ArcListenGuard) -> String {
     println!("[WS] received: {text}");
     let v: serde_json::Value = match serde_json::from_str(text) {
         Ok(v) => v,
@@ -112,7 +115,7 @@ async fn route(text: &str, repo: &ArcRepo) -> String {
         Ok(c) => c,
         Err(e) => return err_json(id.as_ref(), e.to_string()),
     };
-    match execute(repo, cmd).await {
+    match execute(repo, guard, cmd).await {
         Ok(val) => {
             let mut res = serde_json::json!({ "ok": val });
             if let Some(id) = &id { res["id"] = id.clone(); }

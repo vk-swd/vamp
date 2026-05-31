@@ -32,6 +32,7 @@
 //! ```
 
 pub mod dispatch;
+pub mod listen_guard;
 
 use tauri::Manager;
 
@@ -65,6 +66,7 @@ pub async fn setup_database(handle: tauri::AppHandle, db_full_path: std::path::P
     // Managing a single database connection because SQLite is used.
     let repo: ArcRepo = std::sync::Arc::new(repo);
     handle.manage(repo);
+    handle.manage(crate::commands::listen_guard::ListenGuard::new());
     Ok(())
 }
 
