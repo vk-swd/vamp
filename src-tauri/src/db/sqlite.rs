@@ -184,6 +184,30 @@ async fn delete_track_unlogged(app_rep: &SqliteRepository, track_id: i64) -> Res
     tx.commit().await.map(|_| ())
 }
 
+async fn assign_tags_unlogged(app_rep: &SqliteRepository, assignments: Vec<TagAssignment>) -> Result<(), sqlx::Error> {
+    const SQLITE_LIMIT_VARIABLE_NUMBER: usize = 1000;
+    const PARAMS_PER_ROW: usize = 2;
+    const BATCH_SIZE: usize = SQLITE_LIMIT_VARIABLE_NUMBER / PARAMS_PER_ROW;
+
+    let mut tx = app_rep.pool.begin().await?;
+
+    let all_pairs: Vec<(i64, i64)> = assignments.iter()
+        .flat_map(|a| a.tag_ids.iter().map(move |&tag_id| (a.track_id, tag_id)))
+        .collect();
+
+    for chunk in all_pairs.chunks(BATCH_SIZE) {
+        let placeholders = chunk.iter().map(|_| "(?, ?)").collect::<Vec<_>>().join(", ");
+        let sql = format!("INSERT OR IGNORE INTO tag_assignments (track_id, tag_id) VALUES {}", placeholders);
+        let mut q = sqlx::query(&sql);
+        for (track_id, tag_id) in chunk {
+            q = q.bind(track_id).bind(tag_id);
+        }
+        q.execute(&mut *tx).await?;
+    }
+
+    tx.commit().await.map(|_| ())
+}
+
 async fn add_track_unlogged(app_rep: &SqliteRepository, t: NewTrack) -> Result<i64, sqlx::Error> {
     let mut tx = app_rep.pool.begin().await?;
 
@@ -207,29 +231,54 @@ impl AppRepository for SqliteRepository {
     }
 
     async fn add_tracks(&self, t: Vec<NewTrack>) -> Result<Vec<i64>, sqlx::Error> {
+        const SQLITE_LIMIT_VARIABLE_NUMBER: usize = 1000;
+        const PARAMS_PER_TRACK: usize = 6;
+        const BATCH_SIZE: usize = SQLITE_LIMIT_VARIABLE_NUMBER / PARAMS_PER_TRACK;
+
         let mut tx = self
             .try_log("add_tracks: begin transaction", self.pool.begin().await)
             .await?;
 
         let mut ids: Vec<i64> = Vec::with_capacity(t.len());
-        for track in &t {
-            let row = self
-                .try_log(
-                    "add_tracks: insert track_info",
-                    add_track_bind(track).execute(&mut *tx).await,
-                )
-                .await?;
-            ids.push(row.last_insert_rowid());
+
+        for chunk in t.chunks(BATCH_SIZE) {
+            let placeholders = chunk.iter().map(|_| "(?, ?, ?, ?, ?, ?)").collect::<Vec<_>>().join(", ");
+            let sql = format!(
+                "INSERT INTO track_info (artist, track_name, length_seconds, bitrate_kbps, tempo_bpm, addition_time) VALUES {}",
+                placeholders
+            );
+            let mut q = sqlx::query(&sql);
+            for track in chunk {
+                q = q.bind(&track.artist)
+                     .bind(&track.track_name)
+                     .bind(track.length_seconds)
+                     .bind(track.bitrate_kbps)
+                     .bind(track.tempo_bpm)
+                     .bind(&track.addition_time);
+            }
+            let result = self.try_log("add_tracks: insert batch", q.execute(&mut *tx).await).await?;
+            let last_id = result.last_insert_rowid();
+            let n = chunk.len() as i64;
+            for i in (0..n).rev() {
+                ids.push(last_id - i);
+            }
         }
 
-        for (track, &track_id) in t.iter().zip(ids.iter()) {
-            for url in &track.sources {
-                self.try_log(
-                    "add_tracks: insert track_sources",
-                    add_track_source_bind(track_id, url).execute(&mut *tx).await,
-                )
-                .await?;
+        const PARAMS_PER_SOURCE: usize = 2;
+        const SOURCE_BATCH_SIZE: usize = SQLITE_LIMIT_VARIABLE_NUMBER / PARAMS_PER_SOURCE;
+
+        let all_sources: Vec<(i64, &String)> = t.iter().zip(ids.iter())
+            .flat_map(|(track, &track_id)| track.sources.iter().map(move |url| (track_id, url)))
+            .collect();
+
+        for chunk in all_sources.chunks(SOURCE_BATCH_SIZE) {
+            let placeholders = chunk.iter().map(|_| "(?, ?)").collect::<Vec<_>>().join(", ");
+            let sql = format!("INSERT INTO track_sources (track_id, url) VALUES {}", placeholders);
+            let mut q = sqlx::query(&sql);
+            for (track_id, url) in chunk {
+                q = q.bind(track_id).bind(*url);
             }
+            self.try_log("add_tracks: insert track_sources batch", q.execute(&mut *tx).await).await?;
         }
 
         self.try_log("add_tracks: commit", tx.commit().await).await?;
@@ -248,20 +297,7 @@ impl AppRepository for SqliteRepository {
     }
 
     async fn assign_tags(&self, assignments: Vec<TagAssignment>) -> Result<(), sqlx::Error> {
-        let mut tx = self
-            .try_log("assign_tags: begin transaction", self.pool.begin().await)
-            .await?;
-        for a in &assignments {
-            for &tag_id in &a.tag_ids {
-                self.try_log(
-                    "assign_tags",
-                    assign_tag_bind(a.track_id, tag_id).execute(&mut *tx).await,
-                )
-                .await?;
-            }
-        }
-        self.try_log("assign_tags: commit", tx.commit().await).await?;
-        Ok(())
+        self.try_log("assign_tags", assign_tags_unlogged(self, assignments).await).await
     }
 
     async fn update_track(&self, id: i64, u: TrackUpdate) -> Result<(), sqlx::Error> {
@@ -565,8 +601,26 @@ impl AppRepository for SqliteRepository {
             }
         }
 
-        let (sql, values) = select.build_sqlx(SqliteQueryBuilder);
+        let after = cursor.unwrap_or(0);
 
+        let (inner_sql, mut values) = select.build_sqlx(SqliteQueryBuilder);
+
+        // Extend bindings with the four cursor/limit params for the pagination CTEs.
+        // SqlxValues and sea_query::Values both expose their inner Vec as pub fields.
+        values.0.0.push(sea_query::Value::BigInt(Some(after)));
+        values.0.0.push(sea_query::Value::BigInt(Some(limit)));
+        values.0.0.push(sea_query::Value::BigInt(Some(after)));
+        values.0.0.push(sea_query::Value::BigInt(Some(limit)));
+
+        // Wrap the filtered base query in pagination CTEs.
+        // oPrior backfills from before the cursor when oAfter has fewer than limit rows.
+        let sql = format!(
+            "WITH s1 AS ({}), \
+             oPrior AS (SELECT * FROM s1 WHERE id < ? ORDER BY id DESC LIMIT ?), \
+             oAfter AS (SELECT * FROM s1 WHERE id >= ? ORDER BY id ASC LIMIT ?) \
+             SELECT * FROM oPrior UNION ALL SELECT * FROM oAfter ORDER BY id ASC",
+            inner_sql
+        );
         self.try_log(
             "get_tracks_filtered",
             sqlx::query_as_with::<_, TrackRow, _>(&sql, values)

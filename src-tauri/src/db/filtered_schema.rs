@@ -40,6 +40,7 @@ pub enum CriteriaName {
     TempoBpm,
     AdditionTime,
     Tags,
+    ListenedSeconds,
 }
 
 /// Like `SearchCriteria` but with a typed `CriteriaName` and specta-exported params.
