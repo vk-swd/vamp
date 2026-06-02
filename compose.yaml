@@ -1,0 +1,73 @@
+
+
+networks:
+  edge:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/24
+          gateway: 172.20.0.1
+  vps_net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.21.0.0/24
+          gateway: 172.21.0.1
+
+services:
+  # browser:
+  #   build:
+  #     dockerfile_inline: |
+  #       FROM node:24-slim
+  #       WORKDIR ${WORKDIR}
+  #       COPY ./package.json ${WORKDIR}/package.json
+  #       RUN apt update; apt install -y procps net-tools iputils-ping curl wget apache2-utils; npm install
+  #   image: my-backend
+
+  # nginx_server:
+  #   image: nginx:mainline-alpine3.22
+  #   container_name: nginx_server
+  #   env_file:
+  #     - ../${ALL_VARS_FILE_NAME}
+  #   volumes:
+  #   - ${FRONTEND_DEPLOY_FOLDER_HOST}:${NGINX_FOLDER}
+  #   - ${NGINX_CONF_FILE}:${NGINX_ENVSUBST_TEMPLATE_DIR}/f.conf.template
+  #   - ${LOG_MOUNT_HOST}:${LOG_MOUNT}
+  #   ports:
+  #   - "${NGINX_HOST_ADDR}:${NGINX_PORT}"
+
+  vps_front:
+    build:
+      dockerfile_inline: |
+        FROM alpine:3.22.4
+        RUN apk update; apk add iptables iproute2 tcpdump curl wget apache2-utils procps net-tools iputils-ping
+    tty: true
+    stdin_open: true
+    container_name: vps_front
+    cap_add:
+      - NET_ADMIN
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        echo 1 > /proc/sys/net/ipv4/ip_forward
+        iptables -t nat -A PREROUTING -i edgenic -j DNAT --to-destination 172.21.0.3
+        iptables -t nat -A POSTROUTING -o vpsnic -j MASQUERADE
+        tail -f /dev/null
+    networks:
+      edge:
+        interface_name: edgenic
+        ipv4_address: 172.20.0.2
+      vps_net:
+        interface_name: vpsnic
+        ipv4_address: 172.21.0.2
+
+  sigturn:
+    image: alpine:3.22.4
+    tty: true
+    stdin_open: true
+    container_name: sigturn
+    networks:
+      vps_net:
+        ipv4_address: 172.21.0.3
+  
