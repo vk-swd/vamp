@@ -1,49 +1,39 @@
-
-
 networks:
   edge:
     driver: bridge
     ipam:
       config:
-        - subnet: 172.20.0.0/24
-          gateway: 172.20.0.1
-  vps_net:
+        - subnet: ${EDGE_SUBNET}
+  local_v:
     driver: bridge
     ipam:
       config:
-        - subnet: 172.21.0.0/24
-          gateway: 172.21.0.1
+        - subnet: ${LOCAL_V_SUBNET}
+  local_a:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: ${LOCAL_A_SUBNET}
+  local_b:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: ${LOCAL_B_SUBNET}
 
 services:
-  # browser:
-  #   build:
-  #     dockerfile_inline: |
-  #       FROM node:24-slim
-  #       WORKDIR ${WORKDIR}
-  #       COPY ./package.json ${WORKDIR}/package.json
-  #       RUN apt update; apt install -y procps net-tools iputils-ping curl wget apache2-utils; npm install
-  #   image: my-backend
-
-  # nginx_server:
-  #   image: nginx:mainline-alpine3.22
-  #   container_name: nginx_server
-  #   env_file:
-  #     - ../${ALL_VARS_FILE_NAME}
-  #   volumes:
-  #   - ${FRONTEND_DEPLOY_FOLDER_HOST}:${NGINX_FOLDER}
-  #   - ${NGINX_CONF_FILE}:${NGINX_ENVSUBST_TEMPLATE_DIR}/f.conf.template
-  #   - ${LOG_MOUNT_HOST}:${LOG_MOUNT}
-  #   ports:
-  #   - "${NGINX_HOST_ADDR}:${NGINX_PORT}"
-
-  vps_front:
+  router:
     build:
       dockerfile_inline: |
         FROM alpine:3.22.4
-        RUN apk update; apk add iptables iproute2 tcpdump curl wget apache2-utils procps net-tools iputils-ping
+        RUN apk update; apk add iptables iproute2 tcpdump curl wget procps net-tools iputils-ping
+    image: router
+    profiles: ["build"]
+
+  vps_front:
+    image: router
     tty: true
     stdin_open: true
-    container_name: vps_front
+    container_name: ${VPS_FRONT_NAME}
     cap_add:
       - NET_ADMIN
     entrypoint:
@@ -51,23 +41,101 @@ services:
       - -c
       - |
         echo 1 > /proc/sys/net/ipv4/ip_forward
-        iptables -t nat -A PREROUTING -i edgenic -j DNAT --to-destination 172.21.0.3
-        iptables -t nat -A POSTROUTING -o vpsnic -j MASQUERADE
+        iptables -t nat -A PREROUTING -i ${VPS_FRONT_EDGE_NIC} -j DNAT --to-destination ${SIGTURN_IP}
+        iptables -t nat -A POSTROUTING -o ${VPS_FRONT_EDGE_NIC} -j MASQUERADE
         tail -f /dev/null
     networks:
       edge:
-        interface_name: edgenic
-        ipv4_address: 172.20.0.2
-      vps_net:
-        interface_name: vpsnic
-        ipv4_address: 172.21.0.2
+        interface_name: ${VPS_FRONT_EDGE_NIC}
+      local_v:
+        interface_name: ${VPS_FRONT_LOCAL_NIC}
+        ipv4_address: ${VPS_FRONT_LOCAL_ADDR}
 
   sigturn:
     image: alpine:3.22.4
     tty: true
     stdin_open: true
-    container_name: sigturn
+    container_name: ${SIGTURN_NAME}
+    cap_add:
+      - NET_ADMIN
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        apk add --no-cache iproute2
+        ip route add ${EDGE_SUBNET} via ${VPS_FRONT_LOCAL_ADDR}
+        tail -f /dev/null
     networks:
-      vps_net:
-        ipv4_address: 172.21.0.3
-  
+      local_v:
+        ipv4_address: ${SIGTURN_IP}
+  nat_b:
+    image: router
+    tty: true
+    stdin_open: true
+    container_name: ${NAT_B_NAME}
+    cap_add:
+      - NET_ADMIN
+    entrypoint: ["/bin/sh", "/configure_nat_node.sh", "${NAT_B_LOCAL_NIC}", "${NAT_B_EDGE_NIC}"]
+    volumes:
+      - ./configure_nat_node.sh:/configure_nat_node.sh
+    networks:
+      local_b:
+        interface_name: ${NAT_B_LOCAL_NIC}
+        ipv4_address: ${NAT_B_ADDR}
+      edge:
+        interface_name: ${NAT_B_EDGE_NIC}
+
+  browser:
+    image: node:24-slim
+    container_name: ${BROWSER_NAME}
+    tty: true
+    stdin_open: true
+    cap_add:
+      - NET_ADMIN
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        apt-get update -qq && apt-get install -y -qq iproute2
+        ip route add ${EDGE_SUBNET} via ${NAT_B_ADDR}
+        tail -f /dev/null
+    networks:
+      - local_b
+    depends_on:
+      - nat_b
+
+  nat_a:
+    image: router
+    tty: true
+    stdin_open: true
+    container_name: ${NAT_A_NAME}
+    cap_add:
+      - NET_ADMIN
+    entrypoint: ["/bin/sh", "/configure_nat_node.sh", "${NAT_A_LOCAL_NIC}", "${NAT_A_EDGE_NIC}"]
+    volumes:
+      - ./configure_nat_node.sh:/configure_nat_node.sh
+    networks:
+      local_a:
+        interface_name: ${NAT_A_LOCAL_NIC}
+        ipv4_address: ${NAT_A_ADDR}
+      edge:
+        interface_name: ${NAT_A_EDGE_NIC}
+
+  appserver:
+    image: alpine:3.22.4
+    container_name: ${APPSERVER_NAME}
+    tty: true
+    stdin_open: true
+    cap_add:
+      - NET_ADMIN
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        apk add --no-cache iproute2
+        ip route add ${EDGE_SUBNET} via ${NAT_A_ADDR}
+        tail -f /dev/null
+    networks:
+      - local_a
+    depends_on:
+      - nat_a
