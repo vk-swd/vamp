@@ -1,8 +1,6 @@
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::env;
-use std::fs;
-use std::io::BufReader;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
@@ -58,22 +56,21 @@ struct SharedState {
 }
 
 type State = Arc<Mutex<SharedState>>;
-pub fn hello() {
-      println!("Hello from wsserver!");
-}
 // ── connection handler ────────────────────────────────────────────────────────
 
-
+pub fn msg_to_txt(msg: &Message) -> Option<String> {
+    match msg {
+        Message::Text(t) => Some(t.clone()),
+        Message::Binary(b) => match String::from_utf8(b.clone()) {
+            Ok(s) => Some(s),
+            Err(_) => None,
+        },
+        _ => None,
+    }
+}
 fn get_routing_info(raw: tokio_tungstenite::tungstenite::Message) -> Option<SSMsg> {
     // Accept text; treat binary as UTF-8 text (mirrors WS onmessage .toString()).
-    let text = match &raw {
-        Message::Text(t) => t.clone(),
-        Message::Binary(b) => match String::from_utf8(b.clone()) {
-            Ok(s) => s,
-            Err(_) => return None,
-        },
-        _ => return None,
-    };
+    let text = msg_to_txt(&raw)?;
     // log::info!("[SS] Incoming message (id={socket_id}): {text}");
     match serde_json::from_str(&text) {
         Ok(d) => d,
@@ -84,12 +81,13 @@ fn get_routing_info(raw: tokio_tungstenite::tungstenite::Message) -> Option<SSMs
     }
 }
 
-enum Result {
+enum FwdResult {
     FlagConnection(String),
     Forwarded(String),
     Result(String),
 }
-fn record_and_q_forwarding(shared_state: &mut SharedState, socket_id: u64, data: &SSMsg, raw: tokio_tungstenite::tungstenite::Message) -> Result {
+
+fn record_and_q_forwarding(shared_state: &mut SharedState, socket_id: u64, data: &SSMsg, raw: tokio_tungstenite::tungstenite::Message) -> FwdResult {
     // Signalling is meant to exchange offers/answers for a single datachannel connection.
     // Since I want to make things simple and with no authorisation, connecting participants should 
     // not be able to get any information about each other and should not store any state.
@@ -100,29 +98,32 @@ fn record_and_q_forwarding(shared_state: &mut SharedState, socket_id: u64, data:
 
     let r_table = &mut shared_state.r_table;
     let connections = &mut shared_state.connections;
-    let mb_connection = connections.get(&socket_id);
-    
-    if !mb_connection.is_some() {
-        return Result::Result(format!("[SS] No connection record for socket id={}. Ignore. Will timeout.",socket_id));
-    }
-
-    let mb_existing_record = r_table.get(&data.src);   
+    let connection = match connections.get_mut(&socket_id) {
+        Some(c) => c,
+        None => {
+            return FwdResult::Result(format!("[SS] No connection record for socket id={}. Ignore. Will timeout.",socket_id));
+        }
+    };
+    let mb_existing_record = r_table.get(&data.src);
     if let Some(&existing) = mb_existing_record {
         if existing != socket_id {
-            return Result::FlagConnection(format!("[SS] Dangling record or impersonation. Src: {}. Old id: {}. New id: {}", data.src, existing, socket_id));
+            return FwdResult::FlagConnection(format!("[SS] Dangling record or impersonation. Src: {}. Old id: {}. New id: {}", data.src, existing, socket_id));
         }
     }
 
     // Prevent people hijack multiple sources.
     // Connections are ratelimited outside
     // TODO: the sources are not cleaned...for now it's ok, as the overflow is unlikely now.
-    if mb_connection.map_or(ROUTE_LIMIT, |c| c.local_addrs.len()) >= ROUTE_LIMIT {
-        return Result::Result(format!("[SS] Local address limit reached for socket id={}. Ignore.", socket_id));
+    if connection.local_addrs.len() >= ROUTE_LIMIT {
+        return FwdResult::Result(format!("[SS] Local address limit reached for socket id={}. Ignore.", socket_id));
     }
 
     // Prevent people probe forwarding to different destinations.
-    if mb_connection.map_or(ROUTE_LIMIT, |c| c.remote_addrs.len()) >= ROUTE_LIMIT {
-        return Result::Result(format!("[SS] Remote address limit reached for socket id={}. Ignore.", socket_id));
+    if connection.remote_addrs.len() >= ROUTE_LIMIT {
+        connection.remote_addrs.retain(|addr|  r_table.contains_key(addr));
+        if connection.remote_addrs.len() >= ROUTE_LIMIT {
+            return FwdResult::Result(format!("[SS] Remote address limit reached for socket id={}. Ignore.", socket_id));
+        }
     }
 
     // Register / refresh src → this socket in the routing table.
@@ -135,26 +136,26 @@ fn record_and_q_forwarding(shared_state: &mut SharedState, socket_id: u64, data:
     }
 
     if data.dst == data.src || !r_table.contains_key(&data.dst){
-        return Result::Result(format!("[SS] Didn't forward to {} from {}", data.dst, data.src));
+        return FwdResult::Result(format!("[SS] Didn't forward to {} from {}", data.dst, data.src));
     }
 
     // Forward raw frame to destination socket.
     let dst_id = match r_table.get(&data.dst).copied() {
         Some(id) => id,
         None => {
-            return Result::Result("Destination connection lost mid-route".to_string());
+            return FwdResult::Result("Destination connection lost mid-route".to_string());
         }
     };
 
     match connections.get(&dst_id) {
         Some(dst) => {
             match dst.tx.try_send(raw) {
-                Ok(_) => return Result::Forwarded(format!("[SS] Forwarded message from {} to {}", data.src, data.dst)),
-                Err(_) => return Result::Result(format!("[SS] Forward failed (dst id={dst_id})")),
+                Ok(_) => return FwdResult::Forwarded(format!("[SS] Forwarded message from {} to {}", data.src, data.dst)),
+                Err(_) => return FwdResult::Result(format!("[SS] Forward failed (dst id={dst_id})")),
             }
         },
         None => {
-            return Result::Result(format!("[SS] No live connection for dst id={}. Ignore.", data.dst));
+            return FwdResult::Result(format!("[SS] No live connection for dst id={}. Ignore.", data.dst));
         }
     }
 }
@@ -194,31 +195,37 @@ struct ConnectionTimeoutTracker {
     to_wait: tokio::time::Duration
 }
 const IDLE_TIMEOUT: Duration = Duration::from_secs(60);
-enum ConnectionTimeoutTrackerWaitResult {
-    TimedOut(String),
-    Received(Message),
+
+pub async fn next_msg<T>(source: &mut T) -> SimpleResult<Message>
+where
+    T: Stream<Item = tokio_tungstenite::tungstenite::Result<Message>> + Unpin,
+{
+    match source.next().await {
+        Some(Ok(m)) => SimpleResult::Ok(m),
+        Some(Err(e)) => SimpleResult::Err(e.to_string()),
+        None => SimpleResult::Err("Connection closed".to_string()),
+    }
+}
+
+pub enum SimpleResult<T> {
+    Ok(T),
+    Err(String),
 }
 impl ConnectionTimeoutTracker {
     fn new() -> Self {
         Self { timeout_start: tokio::time::Instant::now(), to_wait: IDLE_TIMEOUT }
     }
-    async fn timed_wait_for_rx(&mut self, source: &mut (impl Stream<Item = std::result::Result<Message, tokio_tungstenite::tungstenite::Error>> + Unpin)) -> ConnectionTimeoutTrackerWaitResult {
-        let res: ConnectionTimeoutTrackerWaitResult = match timeout(self.to_wait, source.next()).await {
-            Ok(Some(r)) => match r {
-                Ok(m) => {
-                    ConnectionTimeoutTrackerWaitResult::Received(m)
-                },
-                Err(e) => {
-                    ConnectionTimeoutTrackerWaitResult::TimedOut(format!("Receive error: {e}"))
-                },
-            },
-            Ok(None) => { ConnectionTimeoutTrackerWaitResult::TimedOut(format!("Stream closed")) },             // stream closed cleanly
-            Err(_) => {
-                ConnectionTimeoutTrackerWaitResult::TimedOut("Connection timed out".to_string())
-            }
+    async fn timed_wait_for_rx<T>(&mut self, source: &mut T) -> SimpleResult<Message>
+    where
+        T: Stream<Item = tokio_tungstenite::tungstenite::Result<Message>> + Unpin,
+    {
+        let result = tokio::select! {
+            biased;
+            msg = next_msg(source) => msg,
+            _ = tokio::time::sleep(self.to_wait) => SimpleResult::Err(String::from("Connection timed out due to inactivity")),
         };
         self.to_wait = IDLE_TIMEOUT - self.timeout_start.elapsed();
-        return res;
+        result
     }
     fn refresh(&mut self) {
         self.timeout_start = tokio::time::Instant::now();
@@ -265,10 +272,8 @@ where
     let mut msg_limiter = MsgLimiter::new();
     loop {
         let msg = match connection_timeout_tracker.timed_wait_for_rx(&mut source).await {
-            ConnectionTimeoutTrackerWaitResult::Received(m) => m,
-            ConnectionTimeoutTrackerWaitResult::TimedOut(e) => {
-                break;
-            }
+            SimpleResult::Ok(m) => m,
+            SimpleResult::Err(_) => break,
         };
         if !msg_limiter.check() {
             log::info!("[SS] Ignoring message from flagged connection (id={socket_id})");
@@ -278,23 +283,22 @@ where
             Some(data) => data,
             None => continue,
         };
-        let mut result_report ="".to_string();
-        {
+        let result_report = {
             let mut s = state.lock().await;
-            result_report = match record_and_q_forwarding(&mut s, socket_id, &routing_info, msg) {
-                Result::Result(info) => {
+            match record_and_q_forwarding(&mut s, socket_id, &routing_info, msg) {
+                FwdResult::Result(info) => {
                     info
                 },
-                Result::Forwarded(info) => {
+                FwdResult::Forwarded(info) => {
                     connection_timeout_tracker.refresh();
                     info
                 },
-                Result::FlagConnection(info) => {
+                FwdResult::FlagConnection(info) => {
                     msg_limiter.flag_bad_connection();
                     info
                 }
             }
-        }
+        };
         log::info!("{}", result_report);
     }
 
@@ -306,11 +310,7 @@ where
             for addr in &con.local_addrs {
                 s.r_table.remove(addr);
             }
-            // TODO: removing dst addrs from other connection records is not needed for now
-            // 1. If client is removed, server will expect it to reappear with the same src
-            //  And the server opens the connection to exchange with a single client.
-            // 2. If server is removed, it is not going to change its src as well, 
-            // so client expecting it will keep waiting for it to reconnect.
+            // Dst records will be removed on demand and will otherwise be removed at timeout.
         }
     }
     send_task.abort();
@@ -339,11 +339,6 @@ async fn shutdown_signal() {
     }
 }
 
-#[derive(Default)]
-struct SigServer {
-    state: State
-}
-
 fn get_sig_server_port() -> u16 {
     env::var("SS_PORT")
         .ok()
@@ -351,8 +346,6 @@ fn get_sig_server_port() -> u16 {
         .unwrap_or(9001)
 }
 
-impl SigServer {
-}
 // ── entry point ───────────────────────────────────────────────────────────────
 pub async fn run_server() {
     let port: u16 = get_sig_server_port();
