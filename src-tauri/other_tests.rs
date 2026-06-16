@@ -97,15 +97,14 @@ where
     log::info!("[SS] Server about to close the connection");
 }
 
-async fn await_noifier(notify: Arc<Notify>, msg: String) {
+async fn make_sure_notifier_blocked(notify: Arc<Notify>, msg: String) {
     for _ in 0..3 {
         tokio::select! {
             _ = sleep(Duration::from_secs(1)) => {
                 log::info!("[SS] Waiting for {msg} to complete...");
             },
             _ = notify.notified() => {
-                log::info!("[SS] task finished");
-                break;
+                panic!("[SS] {msg} unexpectedly finished");
             }
         }
     }
@@ -154,15 +153,15 @@ async fn test_main() {
             SimpleResult::Err(e) => log::error!("[SS] unknown error{e:?}"),
         };
         drop(async_sender_handle);
-        await_noifier(notify_suite.send_task_is_wrapped.clone(), "client send task".to_string()).await;
+        make_sure_notifier_blocked(notify_suite.send_task_is_wrapped.clone(), "client send task".to_string()).await;
         drop(client_tx);
         notify_suite.send_task_is_wrapped.notified().await;
         log::info!("[SS] client send task is wrapped, test done");
     }
-    await_noifier(notify_suite.test_done.clone(), "test done".to_string()).await;
+    make_sure_notifier_blocked(notify_suite.test_done.clone(), "test done".to_string()).await;
     notify_suite.shutdown.notify_one();
     notify_suite.test_done.notified().await;
-    log::info!("[SS] Server task killed");
+    log::info!("[SS] test_done completed");
 }
 
 async fn tests() {

@@ -25,14 +25,33 @@ services:
     build:
       dockerfile_inline: |
         FROM alpine:3.22.4
-        RUN apk update; apk add iptables iproute2 tcpdump curl wget procps net-tools iputils-ping
+        RUN apk update
+        RUN apk add iptables iproute2 tcpdump curl wget procps net-tools iputils-ping
     image: router
     profiles: ["build"]
-
+  browserpup:
+    build:
+      dockerfile_inline: |
+        FROM node:24-slim 
+        RUN apt update 
+        RUN apt install -y iptables iproute2 tcpdump curl wget procps net-tools iputils-ping
+    image: browserpup
+    profiles: ["build"]
+  sigturn_img:
+    build:
+      dockerfile_inline: |
+        FROM alpine:3.22.4
+        RUN apk update
+        RUN apk add nginx coturn
+        RUN apk add envsubst
+        RUN apk add iptables iproute2 tcpdump curl wget procps net-tools iputils-ping
+    image: sigturn_img
+    profiles: ["build"]
   vps_front:
     image: router
     tty: true
     stdin_open: true
+    hostname: ${VPS_FRONT_NAME}
     container_name: ${VPS_FRONT_NAME}
     cap_add:
       - NET_ADMIN
@@ -47,14 +66,15 @@ services:
     networks:
       edge:
         interface_name: ${VPS_FRONT_EDGE_NIC}
+        ipv4_address: ${VPS_EDGE_IP}
       local_v:
         interface_name: ${VPS_FRONT_LOCAL_NIC}
         ipv4_address: ${VPS_FRONT_LOCAL_ADDR}
-
   sigturn:
-    image: alpine:3.22.4
+    image: sigturn_img
     tty: true
     stdin_open: true
+    hostname: ${SIGTURN_NAME}
     container_name: ${SIGTURN_NAME}
     cap_add:
       - NET_ADMIN
@@ -62,12 +82,25 @@ services:
       - /bin/sh
       - -c
       - |
-        apk add --no-cache iproute2
         ip route add ${EDGE_SUBNET} via ${VPS_FRONT_LOCAL_ADDR}
+        envsubst < /etc/coturn/turnserver.conf.template > /etc/coturn/turnserver.conf
+        turnserver --daemon
         tail -f /dev/null
+    environment:
+      - COTURN_PORT=${COTURN_PORT}
+      - VPS_EDGE_IP=${VPS_EDGE_IP}
+      - VPS_FRONT_LOCAL_ADDR=${VPS_FRONT_LOCAL_ADDR}
+      - VPS_FRONT_NAME=${VPS_FRONT_NAME}
+      - SIGTURN_IP=${SIGTURN_IP}
+      - STUN_CREDENTIALS=${STUN_CREDENTIALS}
+    volumes:
+      - ./test/turn/turnserver.conf.template:/etc/coturn/turnserver.conf.template
     networks:
       local_v:
         ipv4_address: ${SIGTURN_IP}
+    depends_on:
+      - vps_front
+   
   nat_b:
     image: router
     tty: true
@@ -84,9 +117,8 @@ services:
         ipv4_address: ${NAT_B_ADDR}
       edge:
         interface_name: ${NAT_B_EDGE_NIC}
-
   browser:
-    image: node:24-slim
+    image: browserpup
     container_name: ${BROWSER_NAME}
     tty: true
     stdin_open: true
@@ -96,14 +128,15 @@ services:
       - /bin/sh
       - -c
       - |
-        apt-get update -qq && apt-get install -y -qq iproute2
         ip route add ${EDGE_SUBNET} via ${NAT_B_ADDR}
         tail -f /dev/null
+    volumes:
+      - ./test/browser:/browser
+    working_dir: /browser
     networks:
       - local_b
     depends_on:
       - nat_b
-
   nat_a:
     image: router
     tty: true
@@ -120,7 +153,6 @@ services:
         ipv4_address: ${NAT_A_ADDR}
       edge:
         interface_name: ${NAT_A_EDGE_NIC}
-
   appserver:
     image: alpine:3.22.4
     container_name: ${APPSERVER_NAME}
