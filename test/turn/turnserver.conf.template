@@ -1,0 +1,12 @@
+listening-port=$COTURN_PORT
+# tls-listening-port=9011
+listening-ip=$SIGTURN_IP
+external-ip=$VPS_EDGE_IP
+verbose
+user="$STUN_CREDENTIALS"
+realm="$VPS_FRONT_NAME"
+# realm=realm.org
+# cert=/home/coturn/coturn/public/cert.crt
+# pkey=/home/coturn/coturn/private/key.pem
+# log-file=/var/log/coturn/turnserver.log
+simple-log

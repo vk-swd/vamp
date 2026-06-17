@@ -117,6 +117,27 @@ services:
         ipv4_address: ${NAT_B_ADDR}
       edge:
         interface_name: ${NAT_B_EDGE_NIC}
+  pbrowser:
+    image: ghcr.io/puppeteer/puppeteer:25.1.0
+    container_name: pbrowser
+    tty: true
+    stdin_open: true
+    cap_add:
+      - NET_ADMIN
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        ip route add ${EDGE_SUBNET} via ${NAT_B_ADDR}
+        tail -f /dev/null
+    volumes:
+      - ./test/browser:/browser
+    working_dir: /browser
+    networks:
+      - local_b
+    depends_on:
+      - nat_b
+
   browser:
     image: browserpup
     container_name: ${BROWSER_NAME}

@@ -1,0 +1,13 @@
+{
+  "name": "browser-test",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "test": "node test.js"
+  },
+  "dependencies": {
+    "@puppeteer/browsers": "file:puppeteer-browsers-latest.tgz",
+    "puppeteer": "file:puppeteer-latest.tgz",
+    "puppeteer-core": "file:puppeteer-core-latest.tgz"
+  }
+}
