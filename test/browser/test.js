@@ -1,13 +1,9 @@
 import puppeteer from 'puppeteer';
 
-const SIG_URL = 'ws://vps_front:9000';
-const TURN_HOST = 'vps_front';
-const TURN_PORT = 9001;
-const CLIENT_ID = 'browser-test-client';
-const SERVER_ID = 'browser-test-server';
-
+const COTURN_IP = process.env.COTURN_IP;
+const COTURN_PORT = process.env.COTURN_PORT;
+const STUN_CREDENTIALS = process.env.STUN_CREDENTIALS;
 const browser = await puppeteer.launch({
-    // browser: 'chrome',
     headless: true,
     args: [
         '--no-sandbox',
@@ -23,20 +19,20 @@ page.on('pageerror', err => console.error('[PAGE ERROR]', err.message));
 await page.setContent('<html><body></body></html>');
 
 
-const result = await page.evaluate(() => {
+const result = await page.evaluate((COTURN_IP, COTURN_PORT, STUN_CREDENTIALS) => {
     return new Promise((resolve, reject) => {
-        console.log('Starting WebRTC test');
+        console.log('Starting WebRTC test', COTURN_IP, COTURN_PORT, STUN_CREDENTIALS);
          const iceConfig = {
             iceServers: [
                 {
-                    urls: `turns:host1:9011`,
-                    username: 'username1',
-                    credential: 'pass1',
+                    urls: `turn:${COTURN_IP}:${COTURN_PORT}`,
+                    username: STUN_CREDENTIALS.split(':')[0],
+                    credential: STUN_CREDENTIALS.split(':')[1],
                 },
                 {
-                    urls: `stun:host1:9011`,
-                    username: 'username1',
-                    credential: 'pass1',
+                    urls: `stun:${COTURN_IP}:${COTURN_PORT}`,
+                    username: STUN_CREDENTIALS.split(':')[0],
+                    credential: STUN_CREDENTIALS.split(':')[1],
                 },
             ],
         };
@@ -69,7 +65,7 @@ const result = await page.evaluate(() => {
         pc1.createOffer()
             .then(offer => pc1.setLocalDescription(offer))
     })
-})
+}, COTURN_IP, COTURN_PORT, STUN_CREDENTIALS);
 
 console.log('[RESULT]', result);
 

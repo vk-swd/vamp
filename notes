@@ -1,0 +1,7 @@
+exec (the shell builtin)
+
+When a shell runs exec someprogram, it calls the execve() syscall. This replaces the current process's code, stack, and heap with the new program — same PID, same file descriptors, but completely different code running. The shell process ceases to exist, someprogram takes its place.
+
+gosu
+
+gosu calls setuid()/setgid() to change the user, then immediately calls execve() to replace itself with the target process.
