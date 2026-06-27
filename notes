@@ -1,7 +1,8 @@
 exec (the shell builtin)
-
+https://linuxcommandlibrary.com/man/exec
 When a shell runs exec someprogram, it calls the execve() syscall. This replaces the current process's code, stack, and heap with the new program — same PID, same file descriptors, but completely different code running. The shell process ceases to exist, someprogram takes its place.
 
 gosu
-
+https://stackoverflow.com/questions/36781372/docker-using-gosu-vs-user
+https://docs.docker.com/build/building/best-practices/#:~:text=consider%20using%20%E2%80%9Cgosu%E2%80%9D.
 gosu calls setuid()/setgid() to change the user, then immediately calls execve() to replace itself with the target process.

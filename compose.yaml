@@ -42,11 +42,11 @@ services:
   sigturn_img:
     build:
       dockerfile_inline: |
-        FROM alpine:3.22.4
-        RUN apk update
-        RUN apk add nginx coturn
-        RUN apk add envsubst
-        RUN apk add iptables iproute2 tcpdump curl wget procps net-tools iputils-ping
+        FROM debian:12.0-slim
+        RUN apt update
+        RUN apt install -y nginx coturn
+        RUN apt install -y gettext-base
+        RUN apt install -y iptables iproute2 tcpdump curl wget procps net-tools iputils-ping
     image: sigturn_img
     profiles: ["build"]
   vps_front:
@@ -85,8 +85,9 @@ services:
       - -c
       - |
         ip route add ${EDGE_SUBNET} via ${VPS_FRONT_LOCAL_ADDR}
-        envsubst < /etc/coturn/turnserver.conf.template > /etc/coturn/turnserver.conf
+        envsubst < /etc/coturn/turnserver.conf.template > /etc/turnserver.conf
         turnserver --daemon
+        /signalling_server
         tail -f /dev/null
     environment:
       - COTURN_PORT=${COTURN_PORT}
@@ -95,8 +96,12 @@ services:
       - VPS_FRONT_NAME=${VPS_FRONT_NAME}
       - SIGTURN_IP=${SIGTURN_IP}
       - STUN_CREDENTIALS=${STUN_CREDENTIALS}
+      - SS_PORT=${SS_PORT}
+      - SS_ADDR=0.0.0.0
     volumes:
       - ./test/turn/turnserver.conf.template:/etc/coturn/turnserver.conf.template
+      - ./src-tauri/target/debug/signalling_server:/signalling_server
+      - ./src-tauri/target/debug/:/targets
     networks:
       local_v:
         ipv4_address: ${SIGTURN_IP}
@@ -131,18 +136,21 @@ services:
       - -c
       - |
         ip route add ${EDGE_SUBNET} via ${NAT_B_ADDR}
-        exec gosu pptruser sh -c "cp /browser/test.js ~/test.js; cp /browser/package.json ~/package.json; tail -f /dev/null"
+        exec gosu pptruser sh -c "cp /browser/test.js ~/test.js; cp /browser/package.json ~/package.json; npm run test"
     volumes:
       - ./test/browser:/browser
     environment:
       - COTURN_PORT=${COTURN_PORT}
       - COTURN_IP=${VPS_EDGE_IP}
-      - SS_IP=${VPS_EDGE_IP}
+      - WS_URL=ws://${VPS_EDGE_IP}:${SS_PORT}
       - STUN_CREDENTIALS=${STUN_CREDENTIALS}
+      - RTC_SESSION_ID=${RTC_SESSION_ID}
     networks:
       - local_b
     depends_on:
       - nat_b
+
+
   nat_a:
     image: router
     tty: true
@@ -172,7 +180,15 @@ services:
       - |
         apk add --no-cache iproute2
         ip route add ${EDGE_SUBNET} via ${NAT_A_ADDR}
-        tail -f /dev/null
+        /rtc_client_test
+    environment:
+      - COTURN_PORT=${COTURN_PORT}
+      - COTURN_IP=${VPS_EDGE_IP}
+      - SS_URL=ws://${VPS_EDGE_IP}:${SS_PORT}
+      - STUN_CREDENTIALS=${STUN_CREDENTIALS}
+      - RTC_SESSION_ID=${RTC_SESSION_ID}
+    volumes:
+      - ./src-tauri/target/debug/rtc_client_test:/rtc_client_test
     networks:
       - local_a
     depends_on:

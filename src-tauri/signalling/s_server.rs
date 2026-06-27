@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 use std::collections::HashSet;
-use std::env;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
@@ -23,11 +22,12 @@ const BUFFER_SIZE: usize = 32;
 // ── wire types ────────────────────────────────────────────────────────────────
 
 /// Only src/dst are needed for routing; payload and originType pass through.
-#[derive(Deserialize)]
-struct SSMsg {
-    src: String,
-    dst: String,
-}
+// #[derive(Deserialize)]
+// struct WsMsg {
+//     src: String,
+//     dst: String,
+// // }]
+// mod common_types;
 
 #[derive(Serialize)]
 struct ErrorResponse<'a> {
@@ -68,7 +68,7 @@ pub fn msg_to_txt(msg: &Message) -> Option<String> {
         _ => None,
     }
 }
-fn get_routing_info(raw: tokio_tungstenite::tungstenite::Message) -> Option<SSMsg> {
+fn get_routing_info(raw: tokio_tungstenite::tungstenite::Message) -> Option<WsMsg<String>> {
     // Accept text; treat binary as UTF-8 text (mirrors WS onmessage .toString()).
     let text = msg_to_txt(&raw)?;
     // log::info!("[SS] Incoming message (id={socket_id}): {text}");
@@ -86,8 +86,8 @@ enum FwdResult {
     Forwarded(String),
     Result(String),
 }
-
-fn record_and_q_forwarding(shared_state: &mut SharedState, socket_id: u64, data: &SSMsg, raw: tokio_tungstenite::tungstenite::Message) -> FwdResult {
+use super::common_types::WsMsg;
+fn record_and_q_forwarding(shared_state: &mut SharedState, socket_id: u64, data: &WsMsg<String>, raw: tokio_tungstenite::tungstenite::Message) -> FwdResult {
     // Signalling is meant to exchange offers/answers for a single datachannel connection.
     // Since I want to make things simple and with no authorisation, connecting participants should 
     // not be able to get any information about each other and should not store any state.
@@ -231,7 +231,7 @@ impl ConnectionTimeoutTracker {
         self.timeout_start = tokio::time::Instant::now();
     }
 }
-async fn handle_connection<S>(stream: S, socket_id: u64, state: State)
+async fn spawn_connection<S>(stream: S, socket_id: u64, state: State)
 where
     S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
@@ -248,7 +248,7 @@ where
             return;
         }
     };
- 
+
     let (mut sink, mut source) = ws_stream.split();
     let (tx, mut rx) = mpsc::channel::<Message>(BUFFER_SIZE);
 
@@ -339,20 +339,9 @@ async fn shutdown_signal() {
     }
 }
 
-fn get_sig_server_port() -> u16 {
-    env::var("SS_PORT")
-        .ok()
-        .and_then(|p| p.parse().ok())
-        .unwrap_or(9001)
-}
-
-// ── entry point ───────────────────────────────────────────────────────────────
-pub async fn run_server() {
-    let port: u16 = get_sig_server_port();
-
+pub async fn run_server(addr: SocketAddr) {
     let state: State = Arc::new(Mutex::new(SharedState::default()));
     // Use nginx as reverse proxy to provide encryption
-    let addr = SocketAddr::from(([0, 0, 0, 0], port));
     let listener = TcpListener::bind(addr).await.expect("failed to bind TCP listener");
 
     // Pin shutdown future so it can be polled across loop iterations.
@@ -367,11 +356,11 @@ pub async fn run_server() {
             result = listener.accept() => {
                 match result {
                     Ok((stream, _peer)) => {
-                        log::info!("[SS] New TCP connection form {}, assigning socket id={}", _peer.to_string(), next_id);
+                        log::info!("[SS] New TCP connection from {}, assigning socket id={}", _peer.to_string(), next_id);
                         let socket_id = next_id;
                         next_id += 1;
                         let state = state.clone();
-                        tokio::spawn(handle_connection(stream, socket_id, state));
+                        tokio::spawn(spawn_connection(stream, socket_id, state));
                     }
                     Err(e) => eprintln!("[SS] Accept error: {e}"),
                 }

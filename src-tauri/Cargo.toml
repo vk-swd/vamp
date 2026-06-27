@@ -16,6 +16,9 @@ path = "test_rtc_client.rs"
 name = "other_tests"
 path = "other_tests.rs"
 
+[[bin]]
+name = "signalling_server"
+path = "signalling/server_test.rs"
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
