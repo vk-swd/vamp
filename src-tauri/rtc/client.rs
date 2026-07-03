@@ -139,19 +139,12 @@ fn defaultRTCConfig() -> RTCConfiguration {
     }
 }
 
-
-
-
-
-
 enum WRTCState {
     Idle,
     Connected,
     Failed
 }
 use uuid::Uuid;
-
-
 
 fn defaultWsConfig() -> WebSocketConfig {
     WebSocketConfig {
@@ -188,6 +181,58 @@ async fn connectToSS(config: &WsConfig) -> MyRes<WebSocketStream<MaybeTlsStream<
     };
 }
 // ── public entry point ────────────────────────────────────────────────────────
+type WsSink = futures_util::stream::SplitSink<WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>, Message>;
+type WsStream = futures_util::stream::SplitStream<WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>>;
+
+// returns false when the outer reconnect loop should stop
+async fn ws_receive_loop(abort: &Notify, read: &mut WsStream, ingress_out: &mpsc::Sender<Message>) -> bool {
+    loop {
+        let data = tokio::select! {
+            _ = abort.notified() => return false,
+            msg = read.next() => match msg {
+                Some(Ok(m)) => m,
+                Some(Err(e)) => {
+                    eprintln!("[WSC] Error receiving message: {e}");
+                    break;
+                }
+                None => {
+                    log::info!("[WSC] Connection closed by server");
+                    break;
+                }
+            }
+        };
+        ingress_out.try_send(data).ok();
+    }
+    true
+}
+
+async fn ws_send_loop(abort: Arc<Notify>, mut write: WsSink, mut egress_in: mpsc::Receiver<Message>) -> mpsc::Receiver<Message> {
+    loop {
+        tokio::select! {
+            _ = abort.notified() => break,
+            msg = egress_in.recv() => match msg {
+                Some(msg) => {
+                    match write.send(msg).await {
+                        Err(e) => {
+                            // Let sender know? Just log it and  dont do retries for now.
+                            // Otherwise make a local queue for retries.
+                            eprintln!("[WSC] Failed to send message: {e}");
+                            break;
+                        }
+                        _ => {}
+                    }
+                }
+                None => {
+                    // This shouldn't happen though, unless the other end was destroyed.
+                    log::info!("[WSC] Egress buffer closed, stopping sender task");
+                    break;
+                }
+            }
+        }
+    }
+    egress_in
+}
+
 struct WsConfig {
     url: String,
     is_tls: bool,
@@ -225,54 +270,11 @@ fn connect(config: WsConfig) -> WsHandle {
                     }
                 }
             };
-            let (mut write, mut read) = connection.split();
+            let (write, mut read) = connection.split();
             let abort_send = Arc::new(Notify::new());
-            let abort_send_local = abort_send.clone();
-            let handle = tokio::spawn(async move {
-                loop {
-                    tokio::select! {
-                        _ = abort_send.notified() => break,
-                        msg = egress_in.recv() => match msg {
-                            Some(msg) => {
-                                match write.send(msg).await {
-                                    Err(e) => {
-                                        eprintln!("[WSC] Failed to send message: {e}");
-                                        break;
-                                    }
-                                    _ => {}
-                                }
-                            }
-                            None => {
-                                // This shouldn't happen though.
-                                log::info!("[WSC] Egress buffer closed, stopping sender task");
-                                break;
-                            }
-                        }
-                    }
-                }
-                return egress_in;
-            });
-            loop {
-                let data = tokio::select! {
-                    _ = abort_notify.notified() => {
-                        keep_reconnecting = false;
-                        break;
-                    },
-                    msg = read.next() => match msg {
-                        Some(Ok(m)) => m,
-                        Some(Err(e)) => {
-                            eprintln!("[WSC] Error receiving message: {e}");
-                            break;
-                        }
-                        None => {
-                            log::info!("[WSC] Connection closed by server");
-                            break;
-                        }
-                    }
-                };
-                ingress_out.try_send(data).ok();
-            }
-            abort_send_local.notify_waiters();
+            let handle = tokio::spawn(ws_send_loop(abort_send.clone(), write, egress_in));
+            keep_reconnecting = ws_receive_loop(&abort_notify, &mut read, &ingress_out).await;
+            abort_send.notify_waiters();
             egress_in = handle.await.unwrap();
         }
     });
