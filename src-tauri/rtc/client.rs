@@ -233,6 +233,7 @@ async fn ws_send_loop(abort: Arc<Notify>, mut write: WsSink, mut egress_in: mpsc
     egress_in
 }
 
+#[derive(Clone)]
 struct WsConfig {
     url: String,
     is_tls: bool,
@@ -245,7 +246,7 @@ struct WsHandle {
     task: tokio::task::JoinHandle<()>,
 }
 
-fn connect(config: WsConfig) -> WsHandle {
+fn connect_to_ws(config: WsConfig) -> WsHandle {
     /* Minimal implementation of websocket reconnection logic
         The user does not have to know about the reconnection. 
         It will either send and receive or will wait untill its own timeout.
@@ -289,7 +290,14 @@ impl WsHandle {
         self.egress.try_send(msg).map_err(|e| e.to_string().into())
     }
     async fn nextMsg(&mut self) -> MyRes<Message> {
-        self.ingress.recv().await.ok_or("WebSocket connection closed".into())
+        let ws_end = &mut (self.task);
+        tokio::select! {
+            _ = ws_end => Err("WebSocket task ended".into()),
+            msg = self.ingress.recv() => match msg {
+                Some(m) => Ok(m),
+                None => Err("WebSocket connection closed".into())
+            }
+        }
     }
 }
 
@@ -302,14 +310,84 @@ struct IceCon {
 type MyErr = Box<dyn std::error::Error + Send + Sync>;
 type MyRes<T=()> = std::result::Result<T, MyErr>;
 
-fn start_ice(offer: String, send_answer: impl Fn(String) -> MyRes) -> MyRes<IceCon> {
+fn make_register_msg(session_id: String) -> WsMsg {
+    WsMsg {
+        src: session_id.clone(),
+        dst: session_id.clone(),
+        payload: String::new(),
+    }
+}
+
+async fn await_offer(ws_handle: &mut WsHandle) -> MyRes<WsMsg> {
+    loop {
+        let msg = ws_handle.nextMsg().await;
+        let ws_message = match msg {
+            Ok(message) => message,
+            Err(e) => { return Err(e) }
+        };
+        let text = match ws_message {
+            Message::Text(raw) => raw,
+            _ => {
+                println!("[WSC] Received non-text message: '{ws_message:?}'");
+                continue;
+            }
+        }; 
+            
+        let parsed_msg = match serde_json::from_str::<WsMsg>(&text) {
+            Ok(parsed) => parsed,
+            Err(e) => {
+                eprintln!("[WSC] Failed to parse message as JSON: {e}");
+                continue;
+            }
+        };
+        return Ok(parsed_msg);
+    };
+}
+async fn run_client1(ws_conf: WsConfig, session_id: String) {
+    loop {
+        let mut ws_handle = connect_to_ws(ws_conf.clone());
+        match ws_handle.send(Message::Text(serde_json::to_string(&make_register_msg(session_id.clone())).unwrap())) {
+            Ok(_) => (),
+            Err(e) => eprintln!("[WSC] Failed to send registration message: {e}"),
+        }
+        // let ws_end = &mut (ws_handle.task);
+        let offer = tokio::select! {
+            _ = tokio::time::sleep(Duration::from_secs(100)) => {
+                continue; // Timeout waiting for offer, reconnect
+            }
+            msg = await_offer(&mut ws_handle) => {
+                match msg {
+                    Ok(message) => message,
+                    Err(e) => {
+                        eprintln!("[WSC] Error receiving message: {e}");
+                        continue;
+                    }
+                }
+            }
+        };
+
+    }
+}
+
+struct IceHandle {
+    answer: String,
+    data_channel: Arc<RTCDataChannel>,
+    pc: Arc<RTCPeerConnection>
+}
+
+fn start_ice(offer: String, send_answer: impl Fn(String) -> MyRes) -> MyRes<IceHandle> {
+    // 1. Connect to ws
+    // 2. register itself as a server
+    // 3. wait for offer
+    // 4. start gathering ICE candidates and prepare answer
+    // 5. send answer back
+    // 6. expect oopenned dc
     let api = build_rtc_api().map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
     let pc = Arc::new(api.new_peer_connection(defaultRTCConfig()).await?);
     let dc = Arc::new(pc.create_data_channel("data", None).await?);
     // Set up the rest of the ICE connection process here...
-    Ok(IceCon {
-        offer,
-        config: defaultRTCConfig(),
+    Ok(IceHandle {
+        answer: offer,
         data_channel: dc,
         pc
     })
@@ -319,7 +397,6 @@ fn start_ice(offer: String, send_answer: impl Fn(String) -> MyRes) -> MyRes<IceC
 use std::time::Instant;
 pub async fn run_client(server_url: &str, src_addr: String) {
     //        let selectedPair = pc.sctp.transport.iceTransport.getSelectedCandidatePair()
-
     log::info!("[WSC] Starting client with source address '{src_addr}'");
     let mut connection = match connectToSS(server_url).await {
         Ok(s) => s,
