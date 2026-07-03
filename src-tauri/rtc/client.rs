@@ -161,24 +161,157 @@ fn defaultWsConfig() -> WebSocketConfig {
     }
 }
 
-async fn connectToSS(url: &str) -> std::result::Result<WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>, Box<dyn std::error::Error>> {
+async fn connectToSS(config: &WsConfig) -> MyRes<WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>> {
+    if (!config.is_tls) {
+        log::info!("[WSC] Connecting to url '{}'", config.url);
+        return match tokio_tungstenite::connect_async(&config.url).await {
+            Ok(s) => Ok(s.0),
+            Err(e) => {
+                eprintln!("[WSC] Failed to connect to {}: {}", config.url, e);
+                return Err(Box::new(e));
+            }
+        };
+    }
     let mut root_store = RootCertStore::empty();
     root_store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
     let tls_config = ClientConfig::builder()
         .with_root_certificates(root_store)
         .with_no_client_auth();
     let connector = Connector::Rustls(Arc::new(tls_config));
-    log::info!("[WSC] Connecting to url '{url}'");
-    return match connect_async_tls_with_config(url, Some(defaultWsConfig()), false, Some(connector)).await {
+    log::info!("[WSC] Connecting to url '{}'", config.url);
+    return match connect_async_tls_with_config(&config.url, Some(defaultWsConfig()), false, Some(connector)).await {
         Ok(s) => Ok(s.0),
         Err(e) => {
-            eprintln!("[WSC] Failed to connect to {url}: {e}");
+            eprintln!("[WSC] Failed to connect to {}: {}", config.url, e);
             return Err(Box::new(e));
         }
     };
 }
 // ── public entry point ────────────────────────────────────────────────────────
+struct WsConfig {
+    url: String,
+    is_tls: bool,
+}
 
+struct WsHandle {
+    ingress: mpsc::Receiver<Message>,
+    egress: mpsc::Sender<Message>,
+    abort: Arc<Notify>,
+    task: tokio::task::JoinHandle<()>,
+}
+
+fn connect(config: WsConfig) -> WsHandle {
+    /* Minimal implementation of websocket reconnection logic
+        The user does not have to know about the reconnection. 
+        It will either send and receive or will wait untill its own timeout.
+     */
+    let (tx, rx) = mpsc::channel::<Message>(100);
+    let (out_tx, out_rx) = mpsc::channel::<Message>(100);
+    let abort = Arc::new(Notify::new());
+    let abort_notify = abort.clone();
+    let task = tokio::spawn(async move {
+        let mut egress_in = out_rx;
+        let ingress_out = tx;
+        let mut keep_reconnecting = true;
+        while keep_reconnecting {
+            let connection = match connectToSS(&config).await {
+                Ok(s) => s,
+                Err(e) => {
+                    eprintln!("[WSC] Failed to connect to signalling server: {e}");
+                    // wait a bit and try again
+                    tokio::select! {
+                        _ = abort_notify.notified() => break,
+                        _ = tokio::time::sleep(Duration::from_secs(1)) => continue
+                    }
+                }
+            };
+            let (mut write, mut read) = connection.split();
+            let abort_send = Arc::new(Notify::new());
+            let abort_send_local = abort_send.clone();
+            let handle = tokio::spawn(async move {
+                loop {
+                    tokio::select! {
+                        _ = abort_send.notified() => break,
+                        msg = egress_in.recv() => match msg {
+                            Some(msg) => {
+                                match write.send(msg).await {
+                                    Err(e) => {
+                                        eprintln!("[WSC] Failed to send message: {e}");
+                                        break;
+                                    }
+                                    _ => {}
+                                }
+                            }
+                            None => {
+                                // This shouldn't happen though.
+                                log::info!("[WSC] Egress buffer closed, stopping sender task");
+                                break;
+                            }
+                        }
+                    }
+                }
+                return egress_in;
+            });
+            loop {
+                let data = tokio::select! {
+                    _ = abort_notify.notified() => {
+                        keep_reconnecting = false;
+                        break;
+                    },
+                    msg = read.next() => match msg {
+                        Some(Ok(m)) => m,
+                        Some(Err(e)) => {
+                            eprintln!("[WSC] Error receiving message: {e}");
+                            break;
+                        }
+                        None => {
+                            log::info!("[WSC] Connection closed by server");
+                            break;
+                        }
+                    }
+                };
+                ingress_out.try_send(data).ok();
+            }
+            abort_send_local.notify_waiters();
+            egress_in = handle.await.unwrap();
+        }
+    });
+    WsHandle { ingress: rx, egress: out_tx, abort, task }
+}
+
+impl WsHandle {
+    fn close(&self) {
+        self.abort.notify_waiters();
+    }
+    fn send(&self, msg: Message) -> MyRes {
+        self.egress.try_send(msg).map_err(|e| e.to_string().into())
+    }
+    async fn nextMsg(&mut self) -> MyRes<Message> {
+        self.ingress.recv().await.ok_or("WebSocket connection closed".into())
+    }
+}
+
+struct IceCon {
+    offer: String,
+    config: RTCConfiguration,
+    data_channel: Arc<RTCDataChannel>,
+    pc: Arc<RTCPeerConnection>
+}
+type MyErr = Box<dyn std::error::Error + Send + Sync>;
+type MyRes<T=()> = std::result::Result<T, MyErr>;
+
+fn start_ice(offer: String, send_answer: impl Fn(String) -> MyRes) -> MyRes<IceCon> {
+    let api = build_rtc_api().map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
+    let pc = Arc::new(api.new_peer_connection(defaultRTCConfig()).await?);
+    let dc = Arc::new(pc.create_data_channel("data", None).await?);
+    // Set up the rest of the ICE connection process here...
+    Ok(IceCon {
+        offer,
+        config: defaultRTCConfig(),
+        data_channel: dc,
+        pc
+    })
+}
 /// Connects to the signalling server at `server_url`, registers `src_addr`,
 /// and processes incoming ICE offer messages until the connection is closed.
 use std::time::Instant;
@@ -200,6 +333,10 @@ pub async fn run_client(server_url: &str, src_addr: String) {
     }).unwrap());
     log::info!("[WSC] Sending registration message for source address '{src_addr}'");
     let (mut write, mut read) = connection.split();
+    // use request ids to ignore duplicate offer sends - sender is not notified of any delivery.
+
+
+
     let write_ptr = Arc::new(tokio::sync::Mutex::new(write));
     if let Err(e) = write_ptr.lock().await.send(reg).await {
         eprintln!("[WSC] Failed to send registration message: {e}");
@@ -244,21 +381,21 @@ pub async fn run_client(server_url: &str, src_addr: String) {
         tokio::spawn(async move {
             let wrtc_con = 
             openDC(sdp, 
-                                defaultRTCConfig(), 
-                                |answer| {
-                                    log::info!("[WSC] Delivering answer back to server");
-                                    let wc = write_clone.clone();
-                                    let reply = serde_json::to_string(&WsMsg {
-                                        src: my_addr.clone(),
-                                        dst: offer_src.clone(),
-                                        payload: answer,
-                                    }).unwrap();
-                                    async move {
-                                        wc.lock().await.send(Message::Text(reply)).await
-                                            .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
-                                    }
-                                }
-                            ).await;
+                defaultRTCConfig(), 
+                |answer| {
+                    log::info!("[WSC] Delivering answer back to server");
+                    let wc = write_clone.clone();
+                    let reply = serde_json::to_string(&WsMsg {
+                        src: my_addr.clone(),
+                        dst: offer_src.clone(),
+                        payload: answer,
+                    }).unwrap();
+                    async move {
+                        wc.lock().await.send(Message::Text(reply)).await
+                            .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
+                    }
+                }
+            ).await;
             let wcon = match wrtc_con {
                 Ok(c) => c,
                 Err(e) => {

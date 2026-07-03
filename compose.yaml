@@ -44,6 +44,7 @@ services:
       dockerfile_inline: |
         FROM debian:12.0-slim
         RUN apt update
+        RUN apt install -y gosu
         RUN apt install -y nginx coturn
         RUN apt install -y gettext-base
         RUN apt install -y iptables iproute2 tcpdump curl wget procps net-tools iputils-ping
@@ -167,8 +168,9 @@ services:
         ipv4_address: ${NAT_A_ADDR}
       edge:
         interface_name: ${NAT_A_EDGE_NIC}
+  
   appserver:
-    image: alpine:3.22.4
+    image: sigturn_img
     container_name: ${APPSERVER_NAME}
     tty: true
     stdin_open: true
@@ -178,15 +180,18 @@ services:
       - /bin/sh
       - -c
       - |
-        apk add --no-cache iproute2
         ip route add ${EDGE_SUBNET} via ${NAT_A_ADDR}
-        /rtc_client_test
+        useradd --system --shell /usr/sbin/nologin --no-create-home appuser
+        chown -R appuser:appuser /rtc_client_test
+        exec gosu appuser sh -c "/rtc_client_test; tail -f /dev/null"
     environment:
       - COTURN_PORT=${COTURN_PORT}
       - COTURN_IP=${VPS_EDGE_IP}
       - SS_URL=ws://${VPS_EDGE_IP}:${SS_PORT}
       - STUN_CREDENTIALS=${STUN_CREDENTIALS}
       - RTC_SESSION_ID=${RTC_SESSION_ID}
+      - RUST_LOG=info
+      - RUST_BACKTRACE=1
     volumes:
       - ./src-tauri/target/debug/rtc_client_test:/rtc_client_test
     networks:
