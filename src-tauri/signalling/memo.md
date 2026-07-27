@@ -59,7 +59,169 @@
     2. The [Client takeover](#Note3) is handled ih the same manner as the [Server takeover](#note1)
 12. Guardrails:
     1. Rate limiting:
-       1. <a id = "port_exchaustion">Port exchaustion</a>: To prevent malicious actors taking over all the ports, connections will be dropped if no message arrives after 5 seconds the connection was established. 
+       1. <a id = "idle_connections">Port exchaustion</a>: To prevent malicious actors taking over all the ports, connections will be dropped if no message arrives after 5 seconds the connection was established. 
        2. To limit number of cases blocked by [message restrictions](#message_restrictions), rate limiting should be implemented - only limited number of messages should be handled from a single conenction in na time window.
     1. <a id = "timeout_incomplete_rtts">RTT timeouts</a>: Stale [rtt records](#rtt_records) should have both connections dropped - staleness is defined by lack of messages going back and forth over a time interval. It should be something reasonable which would allow for a lengthy message processing by participants.
     3. <a id= "guardrail_check_rt_source">Check RT in Send</a> message - make sure the connected connection belonging to an [rtt record](#rtt_records) only send [messages](#message_type) containing same [RT](#rtt_tag)
+13. Implementation:
+    Entities:
+      1. ServerTask is spawned to accept connections.
+      1. Connection - a class that keeps handles to spawns a tasksets up a ws connection.
+      ```
+         type ConnectionId = uint64;
+         const SEND_BUFFER_LIMIT = 100
+         struct Connection {
+            send_spsc_q_putter: spsc_message_passing_q; //because of [1-1](#rtt_pair) pair use spsc
+            close_notifyer: CacncelationToken;
+            receiverLoopJoinHandle: JoinHandle
+            close() {
+               close_notifyer.cancel();
+               receiverLoopJoinHandle.await;
+            }
+            send(message) {
+               // fire and forget - loss handling should be done by participants
+               this->send_spsc_q_putter.put(message)
+            }
+            new(tcpConnection, callback: (message) -> void) {
+               [send_spsc_q_getter, send_spsc_q_putter] = new spsc_message_passing_queue(SEND_BUFFER_LIMIT);
+               this->send_spsc_q_putter = send_spsc_q_putter;
+               this->receiverLoopJoinHandle = spawn([this->close_notifyer, callback, tcpConnection, send_spsc_q_getter]{
+                  [ws_ingress, ws_egress] = upgrade_to_ws(tcpConnection).await;
+                  senderLoopJoinHandle = spawn([this->close_notifyer, ws_egress, send_spsc_q_getter]{
+                     loop {
+                        select {
+                           this->close_notifyer.cancelled() {
+                             break 
+                           }
+                           msg = send_spsc_q_getter.get().await {
+                              match ws_egress.send(msg).await {
+                                 ok - continue,
+                                 error - {
+                                    // connection lost. participant reconnect
+                                    this->close_notifyer.cancel();
+                                    break;
+                                 }
+                              }
+                           }
+                        }
+                     }
+                  })
+                  loop {
+                     select {
+                        this->close_notifyer.cancelled() {
+                           break 
+                        }
+                        msg = match ws_ingress.get().await {
+                           error - {
+                              this->close_notifyer.cancel();
+                              break
+                           }
+                        }
+                        callback(msg).await.on_error(ignore it); // socker closure triggered externally.
+                     }
+                  }
+                  senderLoopJoinHandle.await.
+               })
+            }
+         }
+
+      ```
+
+      ```
+         type RoutingTag = String;
+         struct RoutingRecord {
+            listener: Option<ConnectionId>;
+            subscriber: Option<ConnectionId>;
+         }
+      ```
+      ```
+         struct ServerState {
+            rtt: Hash<RoutingTag, RoutingRecord>
+            ct: Hash<ConnectionId, ConnectionHandler>
+         }
+      ```
+      ```
+         struct NonIdleMarker {
+            atomicMarkNonIdle() {
+
+            }
+            atomicReadNonIdleAndSetAsIdle() {
+
+            }
+         }
+         const IDLE_CKECK_TO = 60s;
+         struct ConnectionHandler {
+            connection: sPtr<Connection>;
+            con_stopper: CancellationToken;
+            non_idle_marker: sPtr<NonIdleMarker>>;
+            new(tcpConnection, server_state: sPtr<Lock<ServerState>>) {
+               idle_cc: IdleConnectionChecker;
+               const idle_checking_task = spawn([this->non_idle_marker](){
+                  bool checked_idle = false;
+                  loop {
+                     select {
+                        self->con_stopper.cancelled() {
+                           break;
+                        }
+                        sleep(IDLE_CKECK_TO) {
+                           if (!this->non_idle_marker.atomicReadNonIdleAndSetAsIdle()) {
+                              this->close();
+                              break;
+                           }
+                        }
+                     }
+                  }
+               })
+               const forward_msg = [server_state](rtt_tag, payload: Optional<String>){
+                  // lock server state
+                  // check
+               }
+               const register_msg = [server_state](rtt_tag) {
+                  
+               }
+               bool first_msg = true;
+               const msgProcessingClosure = [idle_cc, rtt_ec, this->non_idle_marker, first_msg](message){
+                  rtt_ec.rate_limit_msg()?;
+                  const parsed_msg = parse_incoming(message)?;
+                  if (first_msg) {
+                     this->non_idle_marker.atomicMarkNonIdle();
+                  }
+                  if (parsed_msg.type == Register) {
+
+                  } else if (parsed_msg.type == Send) {
+                     forward_msg().await?;
+                  } else {
+                     return;
+                  }
+                  this->non_idle_marker.atomicMarkNonIdle();
+               };
+               this->connection = Connection::new(tcpConnection, msgProcessingClosure)
+            }
+            mark_non_idle() {
+               this->non_idle_marker.atomicMarkNonIdle();
+            }
+            close() {
+               this->connection.close();
+            }
+         }
+         IdleConnectionChecker
+            In ConnectionHandler - operates in connection receiver loop....needs to close the connection if there are no meaningful messages after 5 seconds.
+               If only gibberish arrives, also block the thing. The user is given 5 seconds to send something worth looking at. If it registers itself successfully (server) then this check is no longer performed and further checking is done by incomplete rtt monitor.
+
+         rtExpiryChecker (extra task + lock server state):
+            malicious server and client will just keep sending stuff each other, so if two records are connected, dont apply this check
+            con1: RttRecord::lastMsgForwardedTs > 60s => cancel
+            con2
+            con3
+            .
+            .
+            .
+            .
+            conN
+         conHandler
+               Connection
+                     receiverLoop (callback; cancellation; ratelimit)
+      ```
+      1. A list of connections is maintained in the Server.
+    2. Connection - a class that handles data receipt and delivery from and to a participant.
+    1. State - 
