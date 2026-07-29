@@ -45,7 +45,7 @@
        1. <a id = "sec_idle_connections">Port exchaustion</a>: To prevent malicious actors taking over all the ports, connections will be dropped if no message arrives after 5 seconds the connection was established. 5 seconds are chosen because it is expected that [HS1](#hs1) and [HS2](#hs2) and [HS3](#hs3) with [HS4](#hs4) should happen in an immediate sequence, so if someone just opens a connection to let it sit, he will get filtered. And if it tries opening connection to often, it will potentially get blocked by an external protection service.
        2. <a id = "sec_message_limits">Message limits</a>: since the server handles signalling, it is expected that any participant pair should exchange a limited number of messages per session. Single connection is expected to service a single session, so to contain abuse, a message limit can be imposed on any given connection.
     1. <a id = "sec_ignore_flagged">Flagged connections</a>: when messages inconsistent [rtt tag](#message_el_rtt_tag) arrive form a single connection, drop it and if it tries to reconnect let the external rate limiter block it. Don't touch the other participant - it might be a normal one. Though it should also be able to detect impostors.
-    1. <a id = "timeout_incomplete_rtts">RTT timeouts</a>: Stale [rtt records](#rtt_records) should have both connections dropped - staleness is defined by lack of messages going back and forth over a time interval. It should be something reasonable which would allow for a lengthy message processing by participants.
+    1. <a id = "sec_lack_of_forwarding">Stale connections</a>: Stale [rtt records](#rtt_records) mean no forwarding occurs due to lack of other participant or not sending any payload. In a signalling exchange both parties should send something so if one does not send anything to be forwarded, it is removed. It should be something reasonable which would allow for a lengthy message processing by participants.
 13. Implementation:
     Entities:
       1. ServerTask is spawned to accept connections.
@@ -53,59 +53,27 @@
       ```
          type ConnectionId = uint64;
          const SEND_BUFFER_LIMIT = 100
-         struct Connection {
-            send_spsc_q_putter: spsc_message_passing_q; //because of [1-1](#rtt_pair) pair use spsc
-            close_notifyer: CacncelationToken;
-            receiverLoopJoinHandle: JoinHandle
-            close() {
-               close_notifyer.cancel();
-               receiverLoopJoinHandle.await;
-            }
-            send(message) {
-               // fire and forget - loss handling should be done by participants
-               this->send_spsc_q_putter.put(message)
-            }
-            new(tcpConnection, callback: (message) -> void) {
-               [send_spsc_q_getter, send_spsc_q_putter] = new spsc_message_passing_queue(SEND_BUFFER_LIMIT);
-               this->send_spsc_q_putter = send_spsc_q_putter;
-               this->receiverLoopJoinHandle = spawn([this->close_notifyer, callback, tcpConnection, send_spsc_q_getter]{
-                  [ws_ingress, ws_egress] = upgrade_to_ws(tcpConnection).await;
-                  senderLoopJoinHandle = spawn([this->close_notifyer, ws_egress, send_spsc_q_getter]{
-                     loop {
-                        select {
-                           this->close_notifyer.cancelled() {
-                             break 
-                           }
-                           msg = send_spsc_q_getter.get().await {
-                              match ws_egress.send(msg).await {
-                                 ok - continue,
-                                 error - {
-                                    // connection lost. participant reconnect
-                                    this->close_notifyer.cancel();
-                                    break;
-                                 }
-                              }
-                           }
-                        }
+         
+         fn spawnEgressTask(close_notifyer, ws_egress, send_spsc_q_getter) {
+            return spawn([close_notifyer, ws_egress, send_spsc_q_getter] {
+               loop {
+                  select {
+                     close_notifyer.cancelled() {
+                        break;
                      }
-                  })
-                  loop {
-                     select {
-                        this->close_notifyer.cancelled() {
-                           break 
-                        }
-                        msg = match ws_ingress.get().await {
+                     msg = send_spsc_q_getter.get().await {
+                        match ws_egress.send(msg).await {
+                           ok - continue,
                            error - {
-                              this->close_notifyer.cancel();
-                              break
+                              // connection lost. participant reconnect
+                              close_notifyer.cancel();
+                              break;
                            }
                         }
-                        callback(msg).await.on_error(ignore it); // socker closure triggered externally.
                      }
                   }
-                  senderLoopJoinHandle.await.
-               })
-            }
+               }
+            })
          }
 
       ```
@@ -125,132 +93,179 @@
       ```
       ```
          struct NonIdleMarker {
-            atomicMarkNonIdle() {
-
-            }
+            // Plan for it to be used on the first message and 
+            atomic_incrememnt_incoming();
+            atomic_incrememnt_forwarded();
+            atomic_get_incoming();
+            atomic_get_forwarded();
             atomicReadNonIdleAndSetAsIdle() {
 
             }
          }
+         struct MsgRateLimiter {
+            tag: Option<RttTag>;
+            rateLimitByTime();
+            limitMessages();
+            tryBrandRttTag(tag) {
+               if (!this->tag) {
+                  this->tag = tag;
+               }
+               if (this->tag != tag) {
+                  return Err("impostor")
+               }
+            }
+         }
+         // enough time to upgrade to ws and receive forwardable message
+         // so a strong sequence of ws upgrade => 1 message receive => start waiting is required.
          const IDLE_CKECK_TO = 60s;
-         fn setUpWsConnection(tcp_connection, server_state) {
-            idle_cc: IdleConnectionChecker;
-            con_stopper: CancellationToken;
-            non_idle_marker: sPtr<NonIdleMarker>>;
-
+         const FIRST_MESSAGE_MAX_DELAY = 5s;
+         fn startIdleChecker(non_idle_marker, con_stopper) -> JoinHandle {
             const idle_checking_task = spawn([non_idle_marker, con_stopper](){
                bool checked_idle = false;
+               // #sec_idle_connections
+               let timeout = FIRST_MESSAGE_MAX_DELAY;
+               let incoming = 0;
+               let forwarded = 0;
+               const check_incoming = [](){
+                  const new_incoming = non_idle_marker.atomic_get_incoming();
+                  if (new_incoming == incoming) {
+                     return false;
+                  }
+                  incoming.assign(new_incoming);
+                  return true;
+               }
+               const check_forwarded = [](){
+                  const new_forwarded = non_idle_marker.atomic_get_incoming();
+                  if (new_forwarded == forwarded) {
+                     return false;
+                  }
+                  forwarded.assign(new_forwarded);
+                  return true;
+               }
+               let checker = check_incoming;
                loop {
                   select {
                      con_stopper.cancelled() {
                         break;
                      }
-                     sleep(IDLE_CKECK_TO) {
-                        if (!non_idle_marker.atomicReadNonIdleAndSetAsIdle()) {
+                     sleep(timeout) {
+                        if (!checker()) {
                            con_stopper.cancel();
                            break;
                         }
                      }
                   }
+                  timeout = IDLE_CKECK_TO; 
+                  checker = check_forwarded;
                }
             })
-            const forward_msg = [server_state,](rtt_tag, payload: Optional<String>){
-               // lock server state
-               // check #message_restrictions
+            return idle_checking_task;
+         }
+         fn recordConnection(tcp_connection_bundle, cid, sercer_state) {
+            const lock_guard = server_state.lock();
+            server_state.rtt.get(cid, tcp_connection_bundle);
+         }
+         fn record_rtr_and_get_forwarding_queue(rtt_tag, cid, server_state) {
+            const locked_state = server_state.lock();
+            const connection = locked_state.get(cid);
+            if (!locked.state.rtt.has(rtt_tag)) {
+               locked.state.rtt.insert(rtt_tag, [cid]);
+               return null_opt;
             }
-            
-            bool first_msg = true;
-            const msgProcessingClosure = [idle_cc, rtt_ec, non_idle_marker, first_msg](message){
-               rtt_ec.rate_limit_msg()?;
-               const parsed_msg = parse_incoming(message)?;
-               if (first_msg) {
-                  non_idle_marker.atomicMarkNonIdle();
-                  first_msg = false;
-               }
-            
-            };
-            connection = Connection::new(tcpConnection, msgProcessingClosure)
-            return {
-               connection,
-               con_stopper,
-               non_idle_marker
+            const rtt_record = locked.state.rtt.get(rtt_tag);
+            if (rtt_record.pair.full() && !rtt_record.pair.contains(cid)) {
+               // rtt_tag occupied - let connection expire
+               return null_opt;
+            }
+            if (!rtt_record.pair.full() && !rtt_record.pair.contains(cid)) {
+               // rtt_tag occupied - let connection expire
+               rtt_record.pair.append(cid);
+            }
+            const other = get_other_con(rtt_record.pair);
+            if (!other) {
+               return null_opt;
+            }
+            return locked_state.ct.get(other)?.send_spsc_q_putter.clone();
+         }
+
+         fn makeFwdCallback(server_state, src_con_id) {
+            return [server_state, src_con_id](rtt_tag, message){
+               const get_dst_sender = record_rtr_and_get_forwarding_queue(rtt_tag, src_con_id, server_state)
+               return get_dst_sender.try_send(message)?
             }
          }
-         struct ConnectionHandler {
-            connection: sPtr<Connection>;
-            con_stopper: CancellationToken;
-            non_idle_marker: sPtr<NonIdleMarker>>;
-            new(tcpConnection, server_state: sPtr<Lock<ServerState>>) {
-               idle_cc: IdleConnectionChecker;
-               const idle_checking_task = spawn([this->non_idle_marker](){
-                  bool checked_idle = false;
-                  loop {
-                     select {
-                        self->con_stopper.cancelled() {
-                           break;
-                        }
-                        sleep(IDLE_CKECK_TO) {
-                           if (!this->non_idle_marker.atomicReadNonIdleAndSetAsIdle()) {
-                              this->close();
-                              break;
-                           }
-                        }
-                     }
-                  }
-               })
-               const forward_msg = [server_state](rtt_tag, payload: Optional<String>){
-                  // lock server state
-                  // check
-               }
-               const register_msg = [server_state](rtt_tag) {
+         fn makeMsgProcessingClosure(msg_rate_limiter, non_idle_marker, con_stopper, fwd_msg_cb) {
+            return [msg_rate_limiter, non_idle_marker, con_stopper](message) {
+               // #sec_message_flood
+               msg_rate_limiter.rateLimitByTime()?;
+               // #sec_busy_work
+               msg_rate_limiter.limitMessages()?;
 
-               }
-               bool first_msg = true;
-               const msgProcessingClosure = [idle_cc, rtt_ec, this->non_idle_marker, first_msg](message){
-                  rtt_ec.rate_limit_msg()?;
-                  const parsed_msg = parse_incoming(message)?;
-                  if (first_msg) {
-                     this->non_idle_marker.atomicMarkNonIdle();
-                  }
-                  if (parsed_msg.type == Register) {
-
-                  } else if (parsed_msg.type == Send) {
-                     forward_msg().await?;
-                  } else {
+               const parsed_msg = parse_incoming(message)?;
+               non_idle_marker.atomic_incrememnt_incoming();
+               match msg_rate_limiter.tryBrandRttTag(parsed_msg.rtt_tag) {
+                  ok -> {}
+                  err -> {
+                     con_stopper.cancel();
                      return;
                   }
-                  this->non_idle_marker.atomicMarkNonIdle();
-               };
-               this->connection = Connection::new(tcpConnection, msgProcessingClosure)
-            }
-            mark_non_idle() {
-               this->non_idle_marker.atomicMarkNonIdle();
-            }
-            close() {
-               this->connection.close();
-            }
+               }  
+               fwd_msg_cb(parsed_msg.rtt_tag, message)?
+               non_idle_marker.atomic_incrememnt_forwarded();
+            };
+         }
+         fn setUpWsConnection(tcp_connection, server_state) {
+            con_stopper: CancellationToken;
+            non_idle_marker: sPtr<NonIdleMarker>>;
+
+            const src_con_id = CID::generate();
+
+            const fwd_callback = makeFwdCallback(server_state, src_con_id);
+            spawn([server_state, fwd_callback](){
+               const msg_rate_limiter = new MsgRateLimiter;               
+               const [ws_ingress, ws_egress] = upgrade_to_ws(tcp_connection).await?;
+               connection = Connection::new(con_stopper, tcpConnection, msgProcessingClosure).await
+               idle_check_task = startIdleChecker(non_idle_marker.clone(), con_stopper.clone());
+
+               close_notifyer: CacncelationToken;
+               [send_spsc_q_getter, send_spsc_q_putter] = new spsc_message_passing_queue(SEND_BUFFER_LIMIT);
+
+               const msg_process_callback = makeMsgProcessingClosure(msg_rate_limiter, non_idle_marker, con_stopper, fwd_callback);
+               const receiving_join_handle = listen_task(close_notifyer, msg_process_callback, ws_ingress);
+               const send_join_handle = spawnEgressTask(close_notifyer, ws_egress, send_spsc_q_getter);
+               recordConnection(src_con_id, {
+                  spawn(connection.listen()),
+                  con_stopper,
+                  non_idle_marker
+               })
+               await_both(receiving_join_handle, receiving_join_handle);
+               removeRecordsFor(src_con_id);
+            })
+         }
+         
+         async listen_task(close_notifyer, msg_process_callback, ws_ingress) {
+            return spawn([close_notifyer, msg_process_callback, ws_ingress]{
+               loop {
+                  select {
+                     close_notifyer.cancelled() {
+                        return Err; 
+                     }
+                     msg = match ws_ingress.get().await {
+                        error - {
+                           close_notifyer.cancel();
+                           return Err;
+                        }
+                     }
+                     msg_process_callback(msg).await.on_error(ignore it); // socker closure triggered externally.
+                  }
+               }
+            })
          }
          IdleConnectionChecker
             In ConnectionHandler - operates in connection receiver loop....needs to close the connection if there are no meaningful messages after 5 seconds.
                If only gibberish arrives, also block the thing. The user is given 5 seconds to send something worth looking at. If it registers itself successfully (server) then this check is no longer performed and further checking is done by incomplete rtt monitor.
-
-         rtExpiryChecker (extra task + lock server state):
-            malicious server and client will just keep sending stuff each other, so if two records are connected, dont apply this check
-            con1: RttRecord::lastMsgForwardedTs > 60s => cancel
-            con2
-            con3
-            .
-            .
-            .
-            .
-            conN
-         conHandler
-               Connection
-                     receiverLoop (callback; cancellation; ratelimit)
       ```
-      1. A list of connections is maintained in the Server.
-    2. Connection - a class that handles data receipt and delivery from and to a participant.
-    1. State - 
+     
 
 UPD notes:
 1. Removing message roles and types, because 
