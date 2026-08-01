@@ -12,3 +12,6 @@ pub fn get_env_num(var_name: &str, default: u16) -> u16 {
         .and_then(|p| p.parse().ok())
         .unwrap_or(default)
 }
+
+pub type MyErr = Box<dyn std::error::Error + Send + Sync>;
+pub type MyRes<T=()> = std::result::Result<T, MyErr>;

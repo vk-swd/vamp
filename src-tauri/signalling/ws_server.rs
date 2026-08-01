@@ -27,8 +27,8 @@ const DEFAULT_MESSAGES_PER_CONNECTION: usize = 128;
 const FIRST_MESSAGE_MAX_DELAY: Duration = Duration::from_secs(5);
 const IDLE_CHECK_TIMEOUT: Duration = Duration::from_secs(60);
 
-type SharedServerState = Arc<Mutex<ServerState>>;
-type CloseNotifier = CancellationToken;
+pub(crate) type SharedServerState = Arc<Mutex<ServerState>>;
+pub(crate) type CloseNotifier = CancellationToken;
 
 #[derive(Clone, Debug)]
 pub struct ServerConfig {
@@ -57,7 +57,7 @@ pub async fn run_server_with_config(addr: SocketAddr, config: ServerConfig) {
     let listener = TcpListener::bind(addr).await.expect("failed to bind signalling websocket listener");
     let server_state = Arc::new(Mutex::new(ServerState::default()));
     let mut next_connection_id = 0;
-
+	let metrics = Arc::new(ServerMetrics::default());
     log::info!("[SS2] Listening on {addr}");
 
     loop {
@@ -71,6 +71,7 @@ pub async fn run_server_with_config(addr: SocketAddr, config: ServerConfig) {
                     connection_id,
                     server_state.clone(),
                     config.clone(),
+					metrics.clone(),
                 ));
             }
             Err(error) => log::error!("[SS2] Accept error: {error}"),
@@ -83,6 +84,7 @@ struct MsgProcessor {
     src_connection_id: ConnectionId,
     msg_rate_limiter: MsgRateLimiter,
     non_idle_marker: Arc<NonIdleMarker>,
+	metrics: Arc<ServerMetrics>
 }
 impl MsgProcessor {
     fn new(
@@ -91,6 +93,7 @@ impl MsgProcessor {
         src_connection_id: ConnectionId,
         msg_rate_limiter: MsgRateLimiter,
         non_idle_marker: Arc<NonIdleMarker>,
+		metrics: Arc<ServerMetrics>
     ) -> Self {
         Self {
             close_notifier,
@@ -98,28 +101,46 @@ impl MsgProcessor {
             src_connection_id,
             msg_rate_limiter,
             non_idle_marker,
+			metrics,
         }
     }
     async fn process(self: &mut Self, message: Message) -> MyRes<()> {
-        self.msg_rate_limiter.rate_limit_by_time()?;
-        self.msg_rate_limiter.limit_messages()?;
+		self.metrics.record_incoming_msg();
+        if self.msg_rate_limiter.rate_limit_by_time().is_err() {
+            // Rate-limited by time just means this message is dropped; the connection
+            // itself is healthy and should keep listening for future messages.
+            self.metrics.record_time_rate_limit();
+            return Ok(());
+        }
+        if let Err(err) = self.msg_rate_limiter.limit_messages() {
+            // Breaching the total per-connection message cap is treated as a busy-work
+            // guard: terminate the offending connection.
+            self.metrics.record_count_rate_limit();
+            return Err(err);
+        }
 
         let parsed_msg = parse_incoming(&message)?;
         self.non_idle_marker.increment_incoming();
         if let Err(error) = self.msg_rate_limiter.try_brand_rtt_tag(&parsed_msg.rtt_tag) {
             self.close_notifier.cancel();
+			self.metrics.record_bad_routing_tag();
             return Err(error).into();
         }
 
         let rtt_tag = parsed_msg.rtt_tag.clone();
         let has_payload = parsed_msg.has_payload;
         
-        let dst_con_handler =  self.server_state.lock().await
-        .record_rtr_and_get_forwarding_queue(rtt_tag, self.src_connection_id, has_payload)?;
-        
+        let Ok(dst_con_handler) = self.server_state.lock().await
+        .record_rtr_and_get_forwarding_queue(rtt_tag, self.src_connection_id, has_payload) else {
+            // Any non-forwardable outcome (no payload yet, no peer registered yet, etc.)
+            // just means this message is skipped; the connection stays open.
+            return Ok(());
+        };
+
         dst_con_handler.send_spsc_q_putter.try_send(message)
         .map_err(|err| build_err(&parsed_msg.rtt_tag, self.src_connection_id, ("failed to send message to destination")))?;
-        self.non_idle_marker.increment_forwarded();
+        self.metrics.record_forwarded();
+		self.non_idle_marker.increment_forwarded();
         return Ok(());
     }
 }
@@ -130,6 +151,7 @@ async fn set_up_ws_connection(
     src_connection_id: ConnectionId,
     server_state: SharedServerState,
     config: ServerConfig,
+	metrics: Arc<ServerMetrics>
 )
 {
     let ws_config = WebSocketConfig {
@@ -147,24 +169,60 @@ async fn set_up_ws_connection(
     };
 
     let (ws_egress, ws_ingress) = ws_connection.split();
+
+    log::info!("[SS2] Connection opened id={src_connection_id} peer={peer}");
+    run_connection(src_connection_id, server_state, config, metrics, ws_ingress, ws_egress).await;
+    log::info!("[SS2] Connection closed id={src_connection_id} peer={peer}");
+}
+
+// Marker traits bundling the bounds needed to drive a connection's ingress/egress
+// halves. Kept generic over the stream/sink types (rather than the concrete websocket
+// types) so tests can swap in plain mpsc channels to emulate connections without a
+// real websocket/TCP transport.
+pub(crate) trait MsgSource: futures_util::Stream<Item = Result<Message, Self::Err>> + Unpin + Send + 'static {
+    type Err: std::fmt::Display + Send + 'static;
+}
+impl<T, E> MsgSource for T
+where
+    T: futures_util::Stream<Item = Result<Message, E>> + Unpin + Send + 'static,
+    E: std::fmt::Display + Send + 'static,
+{
+    type Err = E;
+}
+
+pub(crate) trait MsgSink: futures_util::Sink<Message, Error = Self::Err> + Unpin + Send + 'static {
+    type Err: Send + 'static;
+}
+impl<T, E> MsgSink for T
+where
+    T: futures_util::Sink<Message, Error = E> + Unpin + Send + 'static,
+    E: Send + 'static,
+{
+    type Err = E;
+}
+
+pub(crate) async fn run_connection<In: MsgSource, Out: MsgSink>(
+    src_connection_id: ConnectionId,
+    server_state: SharedServerState,
+    config: ServerConfig,
+    metrics: Arc<ServerMetrics>,
+    ws_ingress: In,
+    ws_egress: Out,
+) {
     let (send_spsc_q_putter, send_spsc_q_getter) = mpsc::channel::<Message>(config.send_buffer_limit);
     let close_notifier = CloseNotifier::new();
     let non_idle_marker = Arc::new(NonIdleMarker::default());
 
-
-    log::info!("[SS2] Connection opened id={src_connection_id} peer={peer}");
     let msg_rate_limiter = MsgRateLimiter::new(config.messages_per_second, config.messages_per_connection);
-    let connection_close_notifier = close_notifier.clone();
-    let msg_server_state = server_state.clone();
 
-    let msg_process_callback = MsgProcessor::new(close_notifier.clone(), server_state.clone(), src_connection_id, msg_rate_limiter, non_idle_marker.clone());
+    let msg_process_callback = MsgProcessor::new(close_notifier.clone(), server_state.clone(), src_connection_id, msg_rate_limiter, non_idle_marker.clone(), metrics.clone());
 
     let receiving_join_handle = tokio::spawn(listen_task(
         close_notifier.clone(),
         msg_process_callback,
         ws_ingress,
     ));
-    let send_join_handle = tokio::spawn(spawn_egress_task(
+    let send_join_handle = tokio::spawn(egress_task(
         close_notifier.clone(),
         ws_egress,
         send_spsc_q_getter,
@@ -196,16 +254,13 @@ async fn set_up_ws_connection(
         let mut unlocked_state = server_state.lock().await;
         unlocked_state.remove_records_for(src_connection_id, rtt_tag.as_ref());
     }
-    log::info!("[SS2] Connection closed id={src_connection_id} peer={peer}");
 }
 
-async fn spawn_egress_task<S>(
+async fn egress_task<Out: MsgSink>(
     close_notifier: CloseNotifier,
-    mut ws_egress: S,
+    mut ws_egress: Out,
     mut send_spsc_q_getter: mpsc::Receiver<Message>,
-) where
-    S: futures_util::Sink<Message, Error = tokio_tungstenite::tungstenite::Error> + Unpin,
-{
+) {
     loop {
         tokio::select! {
             _ = close_notifier.cancelled() => break,
@@ -225,10 +280,10 @@ async fn spawn_egress_task<S>(
     let _ = ws_egress.close().await;
 }
 
-async fn listen_task(
+async fn listen_task<In: MsgSource>(
     close_notifier: CloseNotifier,
     mut msg_process_callback: MsgProcessor,
-    mut ws_ingress: futures_util::stream::SplitStream<tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>>,
+    mut ws_ingress: In,
 ) -> Option<RoutingTag> {
     loop {
         tokio::select! {
@@ -379,9 +434,9 @@ enum ForwardResult {
 }
 
 #[derive(Default)]
-struct ServerState {
-    rtt: HashMap<RoutingTag, RoutingRecord>,
-    ct: HashMap<ConnectionId, Arc<ConnectionHandler>>,
+pub(crate) struct ServerState {
+    pub(crate) rtt: HashMap<RoutingTag, RoutingRecord>,
+    pub(crate) ct: HashMap<ConnectionId, Arc<ConnectionHandler>>,
 }
 
 fn build_err(rtt_tag: &RoutingTag, cid: ConnectionId, msg: &str) -> MyErr {
@@ -389,14 +444,14 @@ fn build_err(rtt_tag: &RoutingTag, cid: ConnectionId, msg: &str) -> MyErr {
 }
 
 impl ServerState {
-    fn record_connection(
+    pub(crate) fn record_connection(
         self: &mut Self,
         cid: ConnectionId,
         tcp_connection_bundle: ConnectionHandler
     ) {
         self.ct.insert(cid, Arc::new(tcp_connection_bundle));
     }
-    fn record_rtr_and_get_forwarding_queue(
+    pub(crate) fn record_rtr_and_get_forwarding_queue(
         self: &mut Self,
         rtt_tag: RoutingTag,
         cid: ConnectionId,
@@ -433,7 +488,7 @@ impl ServerState {
         Ok(Arc::clone(other_connection))
     }
 
-    fn remove_records_for(self: &mut Self, connection_id: ConnectionId, rtt_tag: Option<&RoutingTag>) {
+    pub(crate) fn remove_records_for(self: &mut Self, connection_id: ConnectionId, rtt_tag: Option<&RoutingTag>) {
         self.ct.remove(&connection_id);
 
         let Some(rtt_tag) = rtt_tag else {
@@ -450,18 +505,18 @@ impl ServerState {
 
 }
 #[derive(Clone)]
-struct ConnectionHandler {
-    send_spsc_q_putter: mpsc::Sender<Message>,
-    close_notifier: CloseNotifier,
+pub(crate) struct ConnectionHandler {
+    pub(crate) send_spsc_q_putter: mpsc::Sender<Message>,
+    pub(crate) close_notifier: CloseNotifier,
 }
 
 #[derive(Default)]
-struct RoutingRecord {
+pub(crate) struct RoutingRecord {
     pair: Vec<ConnectionId>,
 }
 
 impl RoutingRecord {
-    fn contains(&self, connection_id: ConnectionId) -> bool {
+    pub(crate) fn contains(&self, connection_id: ConnectionId) -> bool {
         self.pair.contains(&connection_id)
     }
 
@@ -488,15 +543,6 @@ impl RoutingRecord {
     }
 }
 
-enum ForwardingDecision {
-    Forward {
-        dst_connection_id: ConnectionId,
-        tx: mpsc::Sender<Message>,
-    },
-    RecordOnly,
-    Drop,
-}
-
 #[derive(Debug, Deserialize)]
 struct WireMessage {
     #[serde(alias = "rtt_tag", alias = "rt")]
@@ -505,12 +551,12 @@ struct WireMessage {
     payload: Option<serde_json::Value>,
 }
 
-struct ParsedMessage {
-    rtt_tag: RoutingTag,
-    has_payload: bool,
+pub(crate) struct ParsedMessage {
+    pub(crate) rtt_tag: RoutingTag,
+    pub(crate) has_payload: bool,
 }
 
-fn parse_incoming(message: &Message) -> MyRes<ParsedMessage> {
+pub(crate) fn parse_incoming(message: &Message) -> MyRes<ParsedMessage> {
     let text = match message {
         Message::Text(text) => text.clone(),
         Message::Binary(bytes) => String::from_utf8(bytes.clone()).map_err(|_| MyErr::from("binary message is not utf-8"))?,
@@ -528,91 +574,45 @@ fn parse_incoming(message: &Message) -> MyRes<ParsedMessage> {
     })
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn text_message(tag: &str, payload: Option<&str>) -> Message {
-        match payload {
-            Some(payload) => Message::Text(format!(r#"{{"tag":"{tag}","payload":"{payload}"}}"#)),
-            None => Message::Text(format!(r#"{{"tag":"{tag}"}}"#)),
-        }
-    }
-
-    #[test]
-    fn first_message_without_payload_registers_without_forwarding() {
-        let mut state = ServerState::default();
-        let (tx, _rx) = mpsc::channel(1);
-        state.record_connection(
-            1,
-            ConnectionHandler {
-                send_spsc_q_putter: tx,
-                close_notifier: CloseNotifier::new(),
-            },
-        );
-
-        let result = state.record_rtr_and_get_forwarding_queue("room".to_string(), 1, false);
-
-        assert!(result.is_err());
-        assert!(state.rtt.get("room").expect("route should exist").contains(1));
-    }
-
-    #[test]
-    fn second_participant_payload_is_forwarded_to_first() {
-        let mut state = ServerState::default();
-        let (tx1, _rx1) = mpsc::channel(1);
-        let (tx2, _rx2) = mpsc::channel(1);
-        state.record_connection(
-            1,
-            ConnectionHandler {
-                send_spsc_q_putter: tx1,
-                close_notifier: CloseNotifier::new(),
-            },
-        );
-        state.record_connection(
-            2,
-            ConnectionHandler {
-                send_spsc_q_putter: tx2,
-                close_notifier: CloseNotifier::new(),
-            },
-        );
-
-        state.record_rtr_and_get_forwarding_queue("room".to_string(), 1, false).ok();
-        let result = state.record_rtr_and_get_forwarding_queue("room".to_string(), 2, true);
-
-        let forwarded_to = result.expect("should forward to first connection");
-        assert!(Arc::ptr_eq(&forwarded_to, state.ct.get(&1).expect("connection 1 should exist")));
-    }
-
-    #[test]
-    fn third_participant_for_full_room_is_dropped() {
-        let mut state = ServerState::default();
-        for connection_id in [1, 2, 3] {
-            let (tx, _rx) = mpsc::channel(1);
-            state.record_connection(
-                connection_id,
-                ConnectionHandler {
-                    send_spsc_q_putter: tx,
-                    close_notifier: CloseNotifier::new(),
-                },
-            );
-        }
-
-        state.record_rtr_and_get_forwarding_queue("room".to_string(), 1, false).ok();
-        state.record_rtr_and_get_forwarding_queue("room".to_string(), 2, true).ok();
-        let result = state.record_rtr_and_get_forwarding_queue("room".to_string(), 3, true);
-
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn parser_accepts_tag_aliases_and_optional_payload() {
-        let parsed = parse_incoming(&Message::Text(r#"{"rtt_tag":"room","payload":{"sdp":"x"}}"#.to_string())).unwrap();
-        assert_eq!(parsed.rtt_tag, "room");
-        assert!(parsed.has_payload);
-
-        let parsed = parse_incoming(&text_message("room", None)).unwrap();
-        assert_eq!(parsed.rtt_tag, "room");
-        assert!(!parsed.has_payload);
-    }
+#[derive(Clone, Default)]
+pub(crate) struct ServerMetrics {
+    rate_limited_by_time: Arc<std::sync::atomic::AtomicUsize>,
+    rate_limited_by_count: Arc<std::sync::atomic::AtomicUsize>,
+    forwarded: Arc<std::sync::atomic::AtomicUsize>,
+	bad_routing_tag: Arc<std::sync::atomic::AtomicUsize>,
+	incoming_msg: Arc<std::sync::atomic::AtomicUsize>,
 }
+
+impl ServerMetrics {
+    fn record_time_rate_limit(&self) {
+        self.rate_limited_by_time.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+    fn record_count_rate_limit(&self) {
+        self.rate_limited_by_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+    fn record_forwarded(&self) {
+        self.forwarded.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+	fn record_bad_routing_tag(&self) {
+		self.bad_routing_tag.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+	}
+	fn record_incoming_msg(&self) {
+		self.incoming_msg.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+	}
+	pub(crate) fn forwarded_count(&self) -> usize {
+		self.forwarded.load(std::sync::atomic::Ordering::Relaxed)
+	}
+	pub(crate) fn rate_limited_by_time_count(&self) -> usize {
+		self.rate_limited_by_time.load(std::sync::atomic::Ordering::Relaxed)
+	}
+	pub(crate) fn rate_limited_by_count_count(&self) -> usize {
+		self.rate_limited_by_count.load(std::sync::atomic::Ordering::Relaxed)
+	}
+	pub(crate) fn bad_routing_tag_count(&self) -> usize {
+		self.bad_routing_tag.load(std::sync::atomic::Ordering::Relaxed)
+	}
+	pub(crate) fn incoming_msg_count(&self) -> usize {
+		self.incoming_msg.load(std::sync::atomic::Ordering::Relaxed)
+	}
+}
+

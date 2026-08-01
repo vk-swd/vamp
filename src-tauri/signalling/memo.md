@@ -279,3 +279,15 @@ UPD notes:
     3. The tag must be announced immediately. After that, everything is rate limited and the pair is monitored for activity. 
     4. If someone sends wrong rtt_tag this connection should be closed.
     5. Messages without payload will beused to register participant in rtt or will be dropped/rate limited. rtt.
+
+Tests:
+   1. General use:
+      1. Three participants: S1, C1, C2, SS - four participants: SS - signalling server; S1, C1, C2 - participants connecting to the SS. S1 will open connection and wait until C1 or C2 to connect to it. Different scenarios are to be tested to perform several execution flows:
+         1. Happy path - participants connect to SS and exchange data
+            1. Check that messages sent within all the restrictions enforced by the server are delivered on both sides.
+         2. Test [](#sec_busy_work) prevention
+         3. Test [](#sec_idle_connections) prevention (use shorter timeouts in server config)
+         4. Test [](#sec_ignore_flagged) - bad connection should be closed
+         5. Test [](#sec_lack_of_forwarding) - connect, register but dont send
+         6. Test [](#sec_message_flood) - configure 1 msg per forever, send 10, fwd 1. Then test shorter window (couldb e flaky test due to network conditions).
+         7. Test [](#sec_message_limits) - set 3 msgs, send 10, receive 3. Count drop stats.
