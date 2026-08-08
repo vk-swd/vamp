@@ -199,12 +199,12 @@ if i get ack to element in the out q , then i get another one when i resend it a
 struct WireMessage<T> {
     // look up ws_server implementation, probably should make a common type
     tag: String,
-    message:  Option<T>
+    message: Option<T>
 }
-struct WsTransportMsg {
+struct WsTransportMsg<T> {
     seq_num: u64,
     node_id: String
-    payload: serde_json::Value
+    payload: Option<T>
 }
 
 enum InterruptorMsg {
@@ -212,16 +212,15 @@ enum InterruptorMsg {
     RestartWsSocket // if added after ws restart - the queue will be cleaned up before starting
 }
 
-struct IncomingMsgHandler {
+struct IncomingMsgHandler<T> {
     IncomingMsgHandler() {
         
     }
-    handle(text_msg) {
-        const msg = match convertToMsg(text_msg) {
-            Ok -> msg,
-            Err -> return;
-        }
-
+    to_transport(msg: String) => WireMessage<WsTransportMsg<T>> {
+        return sede_parse_or_something(msg)?;
+    }
+    handle(s_msg: T) {
+        
     }
 }
 
@@ -261,49 +260,63 @@ fn handle_wire_msg(wire_msg, last_seq_num, last_node_id, receipt_handler) {
 
 }
 
-
+fn startReceiveTask<T>(rx, stopper, receipt_handler, ack_q, send_q) -> JoinHandle {
+    return tokio::spawn(move [rx, stopper, receipt_handler, ack_q, send_q]() => {
+        while {
+            select {
+                match rx.next() {
+                    Ok(msg_raw) => {
+                        const wire_msg: WireMessage<WsTransportMsg<T>> = receipt_handler.to_transport(msg_raw);
+                        const t_msg = wire_msg.message;
+                        const ack = {t_msg.seq_num, t_msg.node_id};
+                        if (t_msg.payload) {
+                            send_q(ack)
+                            handle_wire_msg(wire_msg);
+                            receipt_handler(msg_raw).ignore_error();
+                        } else {
+                            ack_q.send({t_msg.seq_num, t_msg.node_id})
+                        }
+                    }
+                    Err() => {
+                        stopper.cancel();
+                        break;
+                    }
+                }
+                stopper_clone.cancelled() {
+                    break;
+                }
+            }
+        }
+        return { rx, last_node_id, last_seq_num }
+    })
+}
 struct WsConnector {
     sender_task: JoinHandle
     receiver_task: JoinHandle;
     send_fb: mpsc_out_handle;
-    send_q: mpsc_in_handle
-    alt_q;
+    send_q: mpsc_in_handle;
+    ack_q: mpsc_in_handle;
     stopper: CancelToken;
+
+    last_seq_num: Wrapped<u64>;
+    last_in_node_id: String;
+
+    seq_num_out: Wrapped<u64>;
+    node_id_out: String;
     receipt_handler: Arc<IncomingMsgHandler>; //could be a generic trait with a handle(T) function 
     new(url, rtt_tag, node_id, last_seq_number) => ConnectionHandler {
-        node_id = new Uuid();
+        this.last_in_node_id = node_id;
     }
     
     makeSender(send_fb_in: mspc_in_handle) {
         loop {
             const (rx, tx) = tungstenite_whatever::open(url);
-            const stopper_clone = this.stopper.clone()
-            const receipt_handler_clone = this.receipt_handler.clone();
-            const send_q_clone = this.send_q.clone();
-            const receive_handle = tokio::spawn([rx, stopper_clone, receipt_handler_clone, send_q_clone]() => {
-                while {
-                    select {
-                        match rx.next() {
-                            Ok(msg_raw) => {
-                                const wire_msg: WireMessage<WsTransportMsg> = to_transport(msg_raw);
-
-                                send_q_clone({})
-
-                                handle_wire_msg(wire_msg);
-                                receipt_handler_clone(msg_raw).ignore_error();
-                            }
-                            Err() => {
-                                stopper_clone.cancel();
-                                break;
-                            }
-                        }
-                        stopper_clone.cancelled() {
-                            break;
-                        }
-                    }
-                }
-                return { rx, last_node_id, last_seq_num }
-            })
+            const receive_handle = startReceiveTask(rx, 
+                                                    this.stopper.clone(),
+                                                    this.receipt_handler.clone(),
+                                                    this.ack_q.clone(),
+                                                    this.send_q.clone()
+            );
             select {
                 receive_handle
                 this.stopper.cancelled() {
@@ -317,43 +330,69 @@ struct WsConnector {
     stop() {
         this.stopper.cancel();
     }
-    send(msg: SignalMsg) {
-        // infinite send. can be blocked by cancelling the delivery from outside
-        // because there is no reason to handle redelivery elsewhere
+    send_and_wait_ack(msg_out: WsTransportMsg<SignalMsg>,
+                      ack_q&, send_q&) {
+        match send_q.try_send(msg_out).await {
+            Ok() => _;
+            Err() => {
+                // can't send the message (buffer full or somehting else) to ws - restart connection
+            }
+        }
+
         loop {
-            match send_q.try_send(msg).await {
-                Ok() => _;
-                Err() => // can't send the message (buffer full or somehting else) to ws - restart connection            
-            }
-            const seq_num = select {
-                match send_fb.next().await {
-                    Ok(seq_num) => seq_num;
-                    Err() => // can't send the message (buffer full or somehting else) to ws - restart connection
-                }
-                this.stopper.is_cancelled() => Err(restart connection)
-            }
-            let timeout = 6s;
-            let now = now();  
-            loop {  
-                select {
-                    match incoming_ack_q.next() {
-                        Ok(ack) => {
-                            //we might be getting old acks, those are safe to be ignored.
-                            if (seq_num == ack.seq_num) {
-                                return Ok();
-                            }
-                        }
-                        Err() => queue closed for some reason...likely fatal. log and record metrics for the event and drop the connection 
+            match send_fb.next().await {
+                Ok(seq_num, id) => {
+                    if (seq_num != sn || id != msg_out) {
+                        //some cancelled leftovers
+                        continue;
                     }
-                    sleep(timeout) => {
-                        //failed send, retry delivery.
-                        break;
-                    }
-                    this.stopper.is_cancelled() => Err(restart connection)
+                    break;
                 }
-                const elapsed = now() - now;
-                timeout = timeout - Math.min(timeout, elapsed);
+                Err() => // can't send the message (buffer full or somehting else) to ws - restart connection
             }
+        }
+        loop {
+            match this.ack_q.next() {
+                Ok(ack) => {
+                    //we might be getting old acks, those are safe to be ignored.
+                    if (seq_num == ack.seq_num) {
+                        return Ok();
+                    }
+                    //ignore unexpected akk and keep waiting.
+                    continue;
+                }
+                Err() => queue closed for some reason...likely fatal. log and record metrics for the event and drop the connection to have it restarted
+            }
+        }      
+    }
+    send_and_wait_ack_repeated(msg_out: WsTransportMsg<SignalMsg>,
+                      ack_q&, send_q&) {
+        loop {
+            select {
+                sleep(6s) => {
+                    continue;
+                }
+                match send_and_wait_ack() {
+                    Ok() => return Ok()
+                    Err() => Err(drop the connection - somethingwent wrong)
+                }
+            }            
+        }               
+    }
+    send_ack(sn, id) {
+        const msg_out: WsTransportMsg<SignalMsg> = {sn, id};
+
+
+    }
+    send(msg: SignalMsg) {
+        const sn = this.seq_num_out.next();
+        const id = this.node_id_out;
+        const msg_out: WsTransportMsg<SignalMsg> = {sn, id, msg};
+        // infinite send. can be blocked by cancelling the delivery from outside
+        // there is no reason to handle redelivery elsewhere, so it will be handled at this level
+        select {
+            send_and_wait_ack_repeated(msg_out, this.ack_q, this.send_q)
+            this.stopper.is_cancelled() => Err(the stopper wil decide what to do)
         }
     }
 }
