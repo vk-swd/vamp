@@ -228,40 +228,8 @@ fn schedule_ack_send(send_q_handle: mpsc_handle) {
 
 }
 
-fn handle_wire_msg(wire_msg, last_seq_num, last_node_id, receipt_handler) {
-    const transport_msg = wire_msg.payload;
-    send_ack(transport_msg.node_id, transport_msg.seq_num)
-    if (last_node_id == transport_msg.node_id) {
-        if (last_seq_num + 1 != transport_msg.seq_num) {
-            if (transport_msg.seq_num > last_seq_num + 1) {
-                //log a warning or add a metric
-            }
-            old msg, dont handle it.
-            return {
-                last_node_id,
-                last_seq_num
-            };
-        }
-        receipt_handler(transport_msg.payload).await;
-        return {
-            last_node_id,
-            last_seq_num + 1
-        }
-    }
-
-    // To avoid creating some chaos in the negotiation layer,
-    // the handle id and seq number are promised to be carried
-    // into restarted/recreated WsConnector objects.
-    receipt_handler(transport_msg.payload).await;
-
-    //   seq_num: u64,
-    //   node_id: String
-    //   payload: serde_json::Value
-
-}
-
-fn startReceiveTask<T>(rx, stopper, receipt_handler, ack_q, send_q) -> JoinHandle {
-    return tokio::spawn(move [rx, stopper, receipt_handler, ack_q, send_q]() => {
+fn startReceiveTask<T>(rx, stopper, receipt_handler, mb_filter_msg, ack_q, send_q) -> JoinHandle {
+    return tokio::spawn(move [rx, stopper, mb_filter_msg, receipt_handler, ack_q, send_q]() => {
         while {
             select {
                 match rx.next() {
@@ -270,8 +238,8 @@ fn startReceiveTask<T>(rx, stopper, receipt_handler, ack_q, send_q) -> JoinHandl
                         const t_msg = wire_msg.message;
                         const ack = {t_msg.seq_num, t_msg.node_id};
                         if (t_msg.payload) {
-                            send_q(ack)
-                            handle_wire_msg(wire_msg);
+                            send_ack(t_msg.id, t_msg.seq_num);
+                            mb_filter_msg(t_msg);
                             receipt_handler(msg_raw).ignore_error();
                         } else {
                             ack_q.send({t_msg.seq_num, t_msg.node_id})
@@ -307,7 +275,11 @@ struct WsConnector {
     new(url, rtt_tag, node_id, last_seq_number) => ConnectionHandler {
         this.last_in_node_id = node_id;
     }
-    
+    mb_filter_msg(seq_num, node_id) {
+        //if neger seen this id, assign and start tracking, 
+        // otherwise check if this seq num is not smaller or the same as the one received before; 
+        // Add required state.
+    }
     makeSender(send_fb_in: mspc_in_handle) {
         loop {
             const (rx, tx) = tungstenite_whatever::open(url);
@@ -379,10 +351,18 @@ struct WsConnector {
             }            
         }               
     }
+    
     send_ack(sn, id) {
         const msg_out: WsTransportMsg<SignalMsg> = {sn, id};
-
-
+        match send_q.try_send(msg_out).await {
+            Ok() => _;
+            Err() => {
+                // can't send the message (buffer full or somehting else) to ws - restart connection
+            }
+        }
+        // Don't wait for feedback - acks are plumbing
+        // ans should be sent at best effort
+        // Sender queue should not schedule feedback for those
     }
     send(msg: SignalMsg) {
         const sn = this.seq_num_out.next();
