@@ -142,6 +142,46 @@ There are several parallel contorl flows:
 if i get ack to element in the out q , then i get another one when i resend it and i cant get one before i send it.
 
 ```mermaid
+flowchart RL
+    subgraph Block1["Negotiator"]
+        A1["Incoming Msg Queue"]
+        A11["IceRestartQueue"]
+        A2["Processing Task"]
+        A22["IceRestartDebouncer"]
+        A3["Current Session Id"]
+        A4["RtcPeerConnection"]
+
+        A4 -->|Candidates| A1
+        A4 -->|"ICE (dis)connected"| A22
+        A2 -->|"Negotiation started/ended"| A22
+        A22 -->|"Signal restart"| A11
+        A11--> |"Get restart signal"| A2
+        A1 -->|Handle negotiation messages| A2
+        A2 -->|Start/end negotiation| A3
+    end
+
+   
+
+    subgraph wsc["WsConnector"]
+        subgraph queues["Async Queues"]
+            C1["Send<br>Queue"]
+            C2["Ack Queue"]
+            C3["Feedback<br>Queue"]
+        end
+        C4["Sender Task"]
+        C5["Receiver Task"]
+        C1-->|Schedule delivery|C4
+        C4-->|Msg sent<br>Websocket not closed|C3
+        C5-->A1
+        C5-->|Ack for our sent msg|C2
+        C5-->|Ack to received msg|C1
+    end
+
+    A2 --> |Reliable send| queues
+    
+```
+
+```mermaid
     sequenceDiagram
         participant p as Other<br>Peer
         participant ss as Signalling<br>Server
@@ -276,9 +316,9 @@ struct WsConnector {
         this.last_in_node_id = node_id;
     }
     mb_filter_msg(seq_num, node_id) {
-        //if neger seen this id, assign and start tracking, 
+        //if never seen this id, assign and start tracking, 
         // otherwise check if this seq num is not smaller or the same as the one received before; 
-        // Add required state.
+        // Add required state
     }
     makeSender(send_fb_in: mspc_in_handle) {
         loop {
@@ -351,7 +391,7 @@ struct WsConnector {
             }            
         }               
     }
-    
+
     send_ack(sn, id) {
         const msg_out: WsTransportMsg<SignalMsg> = {sn, id};
         match send_q.try_send(msg_out).await {
