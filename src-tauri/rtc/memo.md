@@ -166,12 +166,10 @@ flowchart RL
         subgraph queues["Async Queues"]
             C1["Send<br>Queue"]
             C2["Ack Queue"]
-            C3["Feedback<br>Queue"]
         end
         C4["Sender Task"]
         C5["Receiver Task"]
         C1-->|Schedule delivery|C4
-        C4-->|Msg sent<br>Websocket not closed|C3
         C5-->A1
         C5-->|Ack for our sent msg|C2
         C5-->|Ack to received msg|C1
@@ -272,6 +270,9 @@ fn startReceiveTask<T>(rx, stopper, receipt_handler, mb_filter_msg, ack_q, send_
     return tokio::spawn(move [rx, stopper, mb_filter_msg, receipt_handler, ack_q, send_q]() => {
         while {
             select {
+                stopper.cancelled() {
+                    break;
+                }
                 match rx.next() {
                     Ok(msg_raw) => {
                         const wire_msg: WireMessage<WsTransportMsg<T>> = receipt_handler.to_transport(msg_raw);
@@ -280,18 +281,21 @@ fn startReceiveTask<T>(rx, stopper, receipt_handler, mb_filter_msg, ack_q, send_
                         if (t_msg.payload) {
                             send_ack(t_msg.id, t_msg.seq_num);
                             mb_filter_msg(t_msg);
-                            receipt_handler(msg_raw).ignore_error();
+                            receipt_handler.handle(t_msg.payload).ignore_error();
                         } else {
-                            ack_q.send({t_msg.seq_num, t_msg.node_id})
+                            ack_q.try_send({t_msg.seq_num, t_msg.node_id}) {
+                                ok -> _
+                                err -> {
+                                    //log and record metric. Normally it should not happen
+                                    // but if nobody drains acks while by not sending something while having a malfunction on other end, it might happen.
+                                }
+                            }
                         }
                     }
                     Err() => {
-                        stopper.cancel();
+                        // dont reset connection, it will be restarted from outside
                         break;
                     }
-                }
-                stopper_clone.cancelled() {
-                    break;
                 }
             }
         }
@@ -301,16 +305,10 @@ fn startReceiveTask<T>(rx, stopper, receipt_handler, mb_filter_msg, ack_q, send_
 struct WsConnector {
     sender_task: JoinHandle
     receiver_task: JoinHandle;
-    send_fb: mpsc_out_handle;
     send_q: mpsc_in_handle;
     ack_q: mpsc_in_handle;
     stopper: CancelToken;
 
-    last_seq_num: Wrapped<u64>;
-    last_in_node_id: String;
-
-    seq_num_out: Wrapped<u64>;
-    node_id_out: String;
     receipt_handler: Arc<IncomingMsgHandler>; //could be a generic trait with a handle(T) function 
     new(url, rtt_tag, node_id, last_seq_number) => ConnectionHandler {
         this.last_in_node_id = node_id;
@@ -320,47 +318,79 @@ struct WsConnector {
         // otherwise check if this seq num is not smaller or the same as the one received before; 
         // Add required state
     }
-    makeSender(send_fb_in: mspc_in_handle) {
+    makeSender() {
         loop {
+            const local_stopper = new TokioCancelToken();
             const (rx, tx) = tungstenite_whatever::open(url);
             const receive_handle = startReceiveTask(rx, 
-                                                    this.stopper.clone(),
+                                                    local_stopper.clone(),
                                                     this.receipt_handler.clone(),
                                                     this.ack_q.clone(),
                                                     this.send_q.clone()
             );
+            const sender_handle = startSenderTask(tx, this.send_q.clone(), local_stopper);
+            fn startSenderTask(tx, send_q, stopper) {
+                return spawn([tx, send_q, stopper](){
+                    loop {
+                        select {
+                            stopper.cancelled(),
+                            match send.next() => {
+                                Ok(msg) => {
+                                    match tx.send.await {
+                                        Ok() => _
+                                        Err() => {
+                                            // something wrong with websocket, need restart
+                                            stopper.cancel();
+                                            break;
+                                        }
+                                    }
+                                }
+                                Err() => {
+                                    // This should not happen, but add a log and metric here and retry after a timeout
+                                    sleep(1s);
+                                }
+                            }
+                        }
+                    }
+                })
+            }
+            spawn([tx, ](){
+                while 
+            })
             select {
-                receive_handle
                 this.stopper.cancelled() {
-                    tx.close()
-                    return;
+                    local_stopper.cancel();
+                    receive_handle.await();
+                    sender_handle.await();
+                    break;
+                }
+                receive_handle {
+                    // likely some error occurred needing reconnection
+                    local_stopper.cancel();
+                    sender_handle.await();
+                    // continue and restart connection
+                }
+                sender_hadnle {
+                    // likely some error occurred needing reconnection
+                    local_stopper.cancel();
+                    receive_handler.await();
+                    // continue and restart connection
                 }
             }
         }
-        makeSender(send_fb_in)
     }
     stop() {
         this.stopper.cancel();
     }
     send_and_wait_ack(msg_out: WsTransportMsg<SignalMsg>,
                       ack_q&, send_q&) {
+        // not a thread safe function - ack queue can only be 
+        // polled by a single task at a time
         match send_q.try_send(msg_out).await {
             Ok() => _;
             Err() => {
-                // can't send the message (buffer full or somehting else) to ws - restart connection
-            }
-        }
-
-        loop {
-            match send_fb.next().await {
-                Ok(seq_num, id) => {
-                    if (seq_num != sn || id != msg_out) {
-                        //some cancelled leftovers
-                        continue;
-                    }
-                    break;
-                }
-                Err() => // can't send the message (buffer full or somehting else) to ws - restart connection
+                // can't send the message (buffer full or somehting else) 
+                // retry with a delay + connection restart is handled in makeSender
             }
         }
         loop {
@@ -373,7 +403,10 @@ struct WsConnector {
                     //ignore unexpected akk and keep waiting.
                     continue;
                 }
-                Err() => queue closed for some reason...likely fatal. log and record metrics for the event and drop the connection to have it restarted
+                Err() => {
+                    // ack queue is not closed for anything
+                    // should never happen but in case it does add logs and metrics
+                }
             }
         }      
     }
@@ -386,9 +419,11 @@ struct WsConnector {
                 }
                 match send_and_wait_ack() {
                     Ok() => return Ok()
-                    Err() => Err(drop the connection - somethingwent wrong)
+                    Err() => continue; // if connection related problems will be handled by
+                    // 
                 }
-            }            
+            }
+            sleep(1s);           
         }               
     }
 
@@ -417,87 +452,4 @@ struct WsConnector {
     }
 }
 
-struct ConnectionHandler {
-    node_id: String;
-    (tx,rx): wsstreams;
-    negotiation_queue: mpsc;
-    prioritized_queue: mpsc;
-    interruptor_queue: mpsc;
-    new(url) => ConnectionHandler {
-        node_id = new Uuid();
-        this.(rx, tx) = tungstenite_whatever::open(url);
-    }
-    send(msg: SignalMsg, interruptor) {
-
-    }
-}
-```
-2. Negotiation:
-Don't optimise incoming message queue: if i have offer2 and a queue holds [candidate2, candidate1, offer1], i won't remove scheduled messages, to separate concerns and because such cases should be rare.
-
-```
-
-struct SignalType {
-    Offer,
-    Answer,
-    Candidates
-}
-
-struct SignalMsg {
-    neg_sid: String,
-    type: SignalType,
-    payload: JSONValue
-}
-
-```
-Single task per NSession to serialise state updates.
-```
-struct NSession {
-    id: String;
-    is_polite: bool;
-    is_negotiating: bool;
-    new(rtc_con) {
-        rtc_con.on_ice_con_state_change
-        (state => {
-            // serialise hanling
-            if state == failed 
-        })
-
-        rtc_con.on_ice_candidate(candidate=> {
-            //serialise handling
-        })
-
-        rtc_con.on_negotiation_needed(() => {
-            //serialise handling
-        })
-    }
-    drop() {
-        //retract pending sdps.
-    }
-    start() => RtcPeerConnection {
-
-    }
-    handleOffer(session_id, offer) {
-        /* Possible cases:
-        1. same offer
-        2. new offer
-        3. old offer - can't be in current set up. Can be in complex deployment and a service routing glitch. Not handled.
-        */
-    }
-    handleAnswer(session_id, answer) {
-        /* Possible cases:
-        1. Answer to old offer
-        2. Answer to current offer
-        3. Answer when no offer (session will be closed outside - unexpected)
-        // note - RTCPeerConnection::signaling_state - for state
-        if (this.session_id != session_id) {
-            return;
-        }
-    }
-    handleCandidate(session_id, candidate) {
-        if (this.session_id != session_id) {
-            return;
-        }
-    }
-}
 ```
