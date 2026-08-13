@@ -144,19 +144,26 @@ if i get ack to element in the out q , then i get another one when i resend it a
 ```mermaid
 flowchart RL
     subgraph Block1["Negotiator"]
-        A1["Incoming Msg Queue"]
-        A11["IceRestartQueue"]
+        subgraph IQ["Incoming Queues"]
+            A1["Answers and Candidates"]
+            A12["Offers"]
+        end
         A2["Processing Task"]
-        A22["IceRestartDebouncer"]
-        A3["Current Session Id"]
+        subgraph Db["Ice Restart Debouncer"]
+            A11["IceRestartQueue"]
+            A22["IceRestartDebouncer"]
+        end
+        A3["Session Id Filter"]
         A4["RtcPeerConnection"]
 
+        A12 -->|Politely restart negotiation| A2
         A4 -->|Candidates| A1
+        A1 -->A3
+        A3 -->|Handle negotiation messages| A2
         A4 -->|"ICE (dis)connected"| A22
         A2 -->|"Negotiation started/ended"| A22
         A22 -->|"Signal restart"| A11
         A11--> |"Get restart signal"| A2
-        A1 -->|Handle negotiation messages| A2
         A2 -->|Start/end negotiation| A3
     end
 
@@ -169,8 +176,11 @@ flowchart RL
         end
         C4["Sender Task"]
         C5["Receiver Task"]
+        C6["Filter Old and Duplicate msgs"]
         C1-->|Schedule delivery|C4
-        C5-->A1
+        C5-->C6
+        C6-->A1
+        C6 --> A12
         C5-->|Ack for our sent msg|C2
         C5-->|Ack to received msg|C1
     end
@@ -262,10 +272,6 @@ struct IncomingMsgHandler<T> {
     }
 }
 
-fn schedule_ack_send(send_q_handle: mpsc_handle) {
-
-}
-
 fn startReceiveTask<T>(rx, stopper, receipt_handler, mb_filter_msg, ack_q, send_q) -> JoinHandle {
     return tokio::spawn(move [rx, stopper, mb_filter_msg, receipt_handler, ack_q, send_q]() => {
         while {
@@ -287,7 +293,7 @@ fn startReceiveTask<T>(rx, stopper, receipt_handler, mb_filter_msg, ack_q, send_
                                 ok -> _
                                 err -> {
                                     //log and record metric. Normally it should not happen
-                                    // but if nobody drains acks while by not sending something while having a malfunction on other end, it might happen.
+                                    // but if nobody drains acks (no signalling happening sends), it might happen.
                                 }
                             }
                         }
@@ -299,7 +305,31 @@ fn startReceiveTask<T>(rx, stopper, receipt_handler, mb_filter_msg, ack_q, send_
                 }
             }
         }
-        return { rx, last_node_id, last_seq_num }
+    })
+}
+
+fn startSenderTask(tx, send_q, stopper) {
+    return spawn([tx, send_q, stopper]() {
+        loop {
+            select {
+                stopper.cancelled(),
+                match send.next() => {
+                    Ok(msg) => {
+                        match tx.send(msg).await {
+                            Ok() => _
+                            Err() => {
+                                // something wrong with websocket, need restart
+                                break;
+                            }
+                        }
+                    }
+                    Err() => {
+                        // This should not happen, but add a log and metric here and retry after a timeout
+                        sleep(1s);
+                    }
+                }
+            }
+        }
     })
 }
 struct WsConnector {
@@ -329,34 +359,6 @@ struct WsConnector {
                                                     this.send_q.clone()
             );
             const sender_handle = startSenderTask(tx, this.send_q.clone(), local_stopper);
-            fn startSenderTask(tx, send_q, stopper) {
-                return spawn([tx, send_q, stopper](){
-                    loop {
-                        select {
-                            stopper.cancelled(),
-                            match send.next() => {
-                                Ok(msg) => {
-                                    match tx.send.await {
-                                        Ok() => _
-                                        Err() => {
-                                            // something wrong with websocket, need restart
-                                            stopper.cancel();
-                                            break;
-                                        }
-                                    }
-                                }
-                                Err() => {
-                                    // This should not happen, but add a log and metric here and retry after a timeout
-                                    sleep(1s);
-                                }
-                            }
-                        }
-                    }
-                })
-            }
-            spawn([tx, ](){
-                while 
-            })
             select {
                 this.stopper.cancelled() {
                     local_stopper.cancel();
@@ -377,6 +379,7 @@ struct WsConnector {
                     // continue and restart connection
                 }
             }
+            // add a metric for connection restarts
         }
     }
     stop() {
@@ -423,6 +426,7 @@ struct WsConnector {
                     // 
                 }
             }
+            // sleep in case send_and_wait_ack fails fast - dont want a flood
             sleep(1s);           
         }               
     }
@@ -435,16 +439,21 @@ struct WsConnector {
                 // can't send the message (buffer full or somehting else) to ws - restart connection
             }
         }
-        // Don't wait for feedback - acks are plumbing
-        // ans should be sent at best effort
-        // Sender queue should not schedule feedback for those
+        // Don't wait for acks on acks
+        // Lost ack = deliver retry
     }
+
     send(msg: SignalMsg) {
+        // If cancelled, should not have leftover state:
+        // send_q will be emptied by sender task
+        // might loose some acks, but i won't need those acks if send is cancelled
+
         const sn = this.seq_num_out.next();
         const id = this.node_id_out;
         const msg_out: WsTransportMsg<SignalMsg> = {sn, id, msg};
+
         // infinite send. can be blocked by cancelling the delivery from outside
-        // there is no reason to handle redelivery elsewhere, so it will be handled at this level
+        // delivery retries will done indefinitely here
         select {
             send_and_wait_ack_repeated(msg_out, this.ack_q, this.send_q)
             this.stopper.is_cancelled() => Err(the stopper wil decide what to do)
