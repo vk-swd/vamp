@@ -150,8 +150,8 @@ flowchart RL
         end
         A2["Processing Task"]
         subgraph Db["Ice Restart Debouncer"]
-            A11["IceRestartQueue"]
-            A22["IceRestartDebouncer"]
+            A11["Runner task"]
+            A22["Event Queue"]
         end
         A3["Session Id Filter"]
         A4["RtcPeerConnection"]
@@ -159,12 +159,14 @@ flowchart RL
         A12 -->|Politely restart negotiation| A2
         A4 -->|Candidates| A1
         A1 -->A3
-        A3 -->|Handle negotiation messages| A2
-        A4 -->|"ICE (dis)connected"| A22
-        A2 -->|"Negotiation started/ended"| A22
-        A22 -->|"Signal restart"| A11
-        A11--> |"Get restart signal"| A2
-        A2 -->|Start/end negotiation| A3
+        A3 -->|Handle<br>negotiation<br>messages| A2
+        A4 -->|"ICE (dis)connected <br> Signaling (un)stable"| A22
+
+        A2 -->|"Reset debounce timeout"| A22
+
+        A11 --> |"[1]"| A22
+        A2--> |"[2]"| A11
+        A2 -->|Start/end<br>negotiation| A3
     end
 
    
@@ -188,6 +190,9 @@ flowchart RL
     A2 --> |Reliable send| queues
     
 ```
+#### Footnotes
+* [1]: get events - update state - switch between timed (debouncing) or passive queue polling
+* [2]: Spawn task - poll completion - trigger ice restart
 
 ```mermaid
     sequenceDiagram
