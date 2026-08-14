@@ -3,7 +3,7 @@
 
 
 
-function send_ack(send_q: SpMcQueueStreamOut<Ack>, msg: NormalMsg): void {
+function send_ack(send_q: MpScQueueStreamProducer<Ack>, msg: NormalMsg): void {
     send_q.try_send({type: 'ack', sn: msg.sn, node_id: msg.node_id}).catch(() => {
         // can't send the message (buffer full or somehting else) to ws - restart connection
     });
@@ -34,12 +34,12 @@ class SNFilter {
 
 
 function startReceiveTask(
-    wsStreamIn: SpMcQueueStreamIn<string>,
+    wsStreamIn: MpScQueueStreamConsumer<string>,
     stopper: CancelToken,
     receiptHandler: (msg: SignalMsg) => Promise<void>,
     snFilter: SNFilter,
-    ackQ: SpMcQueueStreamOut<Ack>,
-    sendQ: SpMcQueueStreamOut<TransportMsg>,
+    ackQ: MpScQueueStreamProducer<Ack>,
+    sendQ: MpScQueueStreamProducer<TransportMsg>,
 ): JoinHandle<void> {
     return rustSpawn(async () => {
         while (1) {
@@ -74,11 +74,11 @@ function toWireMsg(rttTag: string, msg: TransportMsg): string {
     return JSON.stringify({ tag: rttTag, message: msg });
 }
 function startSenderTask(
-    tx: SpMcQueueStreamOut<string>,
-    sendQRx: SpMcQueueStreamIn<TransportMsg>,
+    tx: MpScQueueStreamProducer<string>,
+    sendQRx: MpScQueueStreamConsumer<TransportMsg>,
     stopper: CancelToken,
     rttTag: string = "default"
-): JoinHandle<SpMcQueueStreamIn<TransportMsg>> {
+): JoinHandle<MpScQueueStreamConsumer<TransportMsg>> {
     return rustSpawn(async () => {
         while (1) {
             await rustSelect([
@@ -108,7 +108,7 @@ function move<T>(item: T): T {
 class WsConnector {
     private asyncRunner: JoinHandle<void>;
     private ackQ = new SpMcQueue<Ack>();
-    private sendQTx: SpMcQueueStreamOut<TransportMsg>;
+    private sendQTx: MpScQueueStreamProducer<TransportMsg>;
     private stopper = new CancelToken(); // To stop async tasks
     private seqNumOut = 0;
     private nodeIdOut = crypto.randomUUID();
@@ -126,7 +126,7 @@ class WsConnector {
         });
     }
 
-    async asyncRun(sendQRx: SpMcQueueStreamIn<TransportMsg>): Promise<void> {
+    async asyncRun(sendQRx: MpScQueueStreamConsumer<TransportMsg>): Promise<void> {
         //make it static and return the handle
         const snFilter = new SNFilter();
         while (1) {

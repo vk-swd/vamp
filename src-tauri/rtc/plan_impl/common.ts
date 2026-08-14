@@ -23,7 +23,7 @@ type JoinHandle<T> = Promise<T>;
 function rustSpawn<T>(f: () => Promise<T>): JoinHandle<T> {
     return f();
 }
-class SpMcQueueStreamOut<T> {
+class MpScQueueStreamProducer<T> {
     send(item: T): Promise<void> {
         return Promise.resolve();
     }
@@ -32,15 +32,15 @@ class SpMcQueueStreamOut<T> {
     }
 }
 
-class SpMcQueueStreamIn<T> {
+class MpScQueueStreamConsumer<T> {
     next(): Promise<T> {
         return Promise.resolve({} as T);
     }
 }
 
 class SpMcQueue<T> {
-    tx = new SpMcQueueStreamOut<T>();
-    rx = new SpMcQueueStreamIn<T>();
+    tx = new MpScQueueStreamProducer<T>();
+    rx = new MpScQueueStreamConsumer<T>();
 }
 
 type WireMessages = {
