@@ -10,9 +10,9 @@
 function rBreak() {}
 function fContinue() {}
 function fReturn() {}
-function rustSelect(promises: Promise<any>[]): Promise<void> {
+function rustSelect<T>(promises: Promise<any>[]): Promise<T> {
     // Placeholder implementation used for pseudocode.
-    return Promise.resolve();
+    return Promise.resolve() as Promise<T>;
 }
 function sleep(ms: number): Promise<void> {
     return new Promise(resolve => setTimeout(resolve, ms));

@@ -21,6 +21,9 @@ name = "signalling_server"
 path = "signalling/server_test.rs"
 
 [[bin]]
+name = "select_test"
+path = "sanity_checks/selects.rs"
+[[bin]]
 name = "rtc_client_test"
 path = "rtc/client_test.rs"
 
@@ -37,6 +40,7 @@ sqlx        = { version = "0.8", features = ["sqlite", "runtime-tokio", "macros"
 async-trait = "0.1"
 chrono = "0.4"
 tokio = { version = "1", features = ["full"] }
+tokio-util = "0.7"
 tokio-tungstenite = { version = "0.23", features = ["rustls-tls-webpki-roots"] }
 tokio-rustls = "0.26"
 rustls-pemfile = "2"
@@ -51,7 +55,7 @@ sea-query-binder = { version = "0.7", features = ["sqlx-sqlite"] }
 env_logger = "0.11"
 rustls            = "0.23"
 webpki-roots      = "0.26"
-webrtc            = "0.11"
+webrtc            = "0.17.1"
 webrtc-sdp        = "0.3"
 anyhow = "1"
 uuid = { version = "1", features = ["v4"] }
