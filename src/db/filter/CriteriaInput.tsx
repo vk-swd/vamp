@@ -12,6 +12,7 @@ import { NumberSelector } from './NumberSelector';
 import { TagSelector } from './TagSelector';
 import { CriteriaPills } from './CriteriaPills';
 import { Button, LineEdit, Selector } from '../../ui/elements';
+import { SearchCriteria } from '../tauriDb';
 
 // ── Context consumed by TagSelector ───────────────────────────────────────
 interface TagLookupContext1Value {
@@ -115,7 +116,7 @@ const CRITERIA_WIDGET: Record<CriteriaType, (p: WidgetProps) => React.ReactEleme
 
 let _nextId = 1;
 
-export function CriteriaInput() {
+export function CriteriaInput(updateCriteria: (c: SearchCriteria[]) => void) {
   const [type, setType] = useState<CriteriaType>('artist');
   const [stateMap, setStateMap] = useState<CriteriaStateMap>(INITIAL_STATE_MAP);
   // activePills: type → stable pill ID (one pill per criteria type)

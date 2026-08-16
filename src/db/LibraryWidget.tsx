@@ -3,7 +3,7 @@ import { SearchWidget } from "./filter/SearchWidget";
 import { TrackList } from './data/TrackList';
 import { Button } from '../ui/elements';
 import { TrackInfoDialog, type TrackData } from './track/TrackInfo';
-import { addTrack, getTracksWithSources, getAllTags, getTagsByPattern, type Tag } from './tauriDb';
+import { addTrack, getTracksWithSources, getAllTags, getTagsByPattern, type Tag, SearchCriteria } from './tauriDb';
 import { DeleteTrackContext } from '../ui/deleteContext';
 import type { TrackWithSources } from './data/TrackItem';
 import { log } from '../logger';
@@ -51,9 +51,10 @@ export function LibraryWidget({ cursor, onCursorChange, onDeleteTrack }: Library
   const playlists = usePlayerStore((s) => s.playlists);
   const addTrackToPlaylist = usePlayerStore((s) => s.addTrackToPlaylist);
   const createPlaylist = usePlayerStore((s) => s.createPlaylist);
+  const [searchCriteria, setSearchCriteria] = useState<SearchCriteria[]>([]);
   function loadPage(fromCursor: number | null) {
     const limit = fromCursor === null ? PAGE_SIZE : HALF_PAGE_SIZE;
-    getTracksWithSources(fromCursor, null, limit)
+    getTracksWithSources(fromCursor, searchCriteria, limit)
       .then((withSources: TrackWithSources[]) => {
         const pos = Math.max(0, Math.min(withSources.length - 1, HALF_PAGE_SIZE));
         onCursorChange(withSources[pos]?.id ?? null);
