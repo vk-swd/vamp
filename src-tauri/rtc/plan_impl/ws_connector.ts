@@ -105,7 +105,7 @@ function move<T>(item: T): T {
 }
 
 
-class WsConnector {
+export class WsConnector {
     private asyncRunner: JoinHandle<void>;
     private ackQ = new SpMcQueue<Ack>();
     private sendQTx: MpScQueueStreamProducer<TransportMsg>;

@@ -244,7 +244,46 @@ flowchart RL
 
 
 
-#### Implementation
+#### Rust Implementation
+##### Always impolite
+Rust client does not support rollback operations for remote and local sdps.
+So it will be impolite.
+And it will reset RTCPeerConnection if it fails to get out of "have-remote-offer" state.
+
+If the rust tries to restart ice connection and hangs for some reason, it will remain like that
+until it finishes his negotiation session and will ignore any unrelated signalling from the other peer.
+
+The following cases are not handled exclusively as it is unckear what can cause them in current operation:
+
+```mermaid
+sequenceDiagram
+    participant p1 as Rust
+    participant ss
+    participant p2 as Browser
+
+    rect rgb(220, 200, 200)
+    note over p1,p2: UP - Ice restart fails before offer is sent
+    p1 --x p2: "failed create_offer({ice_restart:true})"
+    p1->>p1: debounce timeout
+    p1 ->> p2: fail again or succed with all the remaining steps
+    end
+
+    rect rgb(220, 200, 200)
+    note over p1,p2: UP - Ice restart fails before offer is sent
+    p1 --x p2: failed selLocalDescription
+    p1->>p1: debounce timeout
+    p1 ->> p2: fail again or succed with all the remaining steps
+    end
+
+```
+    
+
+
+
+#### Browser implementation
+Using flags to check for answer setting in progress is needed to see if negotiation is about to finish. BEcause single therad is used to schedule event processing, if flag is not set it would mean no answer was received at all.
+
+
 
 1. Signalling:
 ```

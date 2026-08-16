@@ -1,3 +1,5 @@
+import { SpMcQueue, MpScQueueStreamConsumer, CancelToken, JoinHandle, rustSpawn, rustSelect, fContinue, rBreak, Notifyer, SignalMsg, sleep, MpScQueueStreamProducer } from "./common";
+import { WsConnector } from "./ws_connector";
 
 
 
@@ -16,104 +18,73 @@ class SignalMsgFilter {
     }
 }
 
-enum DebounceEvents {
-    IceConnected,
-    IceDisconnected,
-    SignallingStable,
-    SignallingUnstable,
-    ResetTimer
-}
-type DebounceEvent = {
-    connection?: DebounceEvents.IceConnected | DebounceEvents.IceDisconnected,
-    signalling?: DebounceEvents.SignallingStable | DebounceEvents.SignallingUnstable,
-    resetTimer?: DebounceEvents.ResetTimer
+enum DebounceEvent {
+    Start,
+    End
 }
 class IceRestartDebouncer {
-    eventQueue = new SpMcQueue<DebounceEvent>();
+    // AI instruction - implement a more idiomatic rust version with similar api.
+    eventQueue = new SpMcQueue<{event: DebounceEvent, id: number}>();
     // debounceRequest = new SpMcQueue<number>();
     stopper: CancelToken = new CancelToken();
+    notifyerQueue = new SpMcQueue<number>();
     finishHandle: JoinHandle<void> | undefined = undefined;
-    debState: DebounceEvent = {
-        connection: DebounceEvents.IceDisconnected,
-        signalling: DebounceEvents.SignallingUnstable,
-    };
+    scheduledId: number = 0;
     constructor() {
+        this.run();
         // make idiomatic rust debouncer here
         // which would allow me to work with it using interface I layed out here.
     }
     async stop() {
         this.stopper.cancel();
-        return Promise.resolve();
-    }
-    registerEvent(event: DebounceEvent): Promise<void> {
-        return this.eventQueue.tx.send(event).catch(() => {
-            // log and record a metric. This should not happen, but if it does, ignore the event.
-        });
-    }
-    async reset() {
-        if (!this.finishHandle) {
-            return;
+        if (this.finishHandle) {
+            await this.finishHandle;
+            this.finishHandle = undefined;
         }
-        await this.finishHandle;
-        this.finishHandle = undefined;
+    }
+    async start(): Promise<number> {
+        this.scheduledId += 1;
+        const id = this.scheduledId;
+        await this.eventQueue.tx.send({event: DebounceEvent.Start, id: this.scheduledId})
+        return id;
+    }
+    end(): Promise<void> {
+        return this.eventQueue.tx.send({event: DebounceEvent.End, id: this.scheduledId})
     }
     run() {
         if (this.finishHandle) {
             return;
         }
         this.finishHandle = rustSpawn(async () => {
-            const eventPoll = async (queueCons: MpScQueueStreamConsumer<DebounceEvent>, sigState: DebounceEvent): Promise<DebounceEvent> => {
-                return queueCons.next().then((event: DebounceEvent) => {
-                    if (event.connection) {
-                        sigState.connection = event.connection;
-                    }
-                    if (event.signalling) {
-                        sigState.signalling = event.signalling;
-                    }
-                    if (event.resetTimer) {
-                        // log and record a metric. This should not happen, but if it does, ignore the event.
-                    }
-                    return event
-                }).catch(() => {
-                    // log and record a metric.
-                    return {};
-                });
-            }
+            let debState = DebounceEvent.End;
+            let currentId = 0;
             while (1) {
-                if (this.debState.connection === DebounceEvents.IceConnected && this.debState.signalling === DebounceEvents.SignallingStable) {
+                if (debState === DebounceEvent.End) {
                     await rustSelect([
                         // biased
-                        eventPoll(this.eventQueue.rx, this.debState),
+                        this.eventQueue.rx.next().then(async ({event, id}: {event: DebounceEvent, id: number}) => {
+                            if (event !== DebounceEvent.End) {
+                                currentId = id;
+                            }
+                            debState = event;
+                        }),
                         this.stopper.cancelled().then(async () => {
                             rBreak();
-                        }).catch(async () => {
-                            // This should not happen, but add a log and metric here and retry after a timeout
                         }),
                     ]);
                 } else {
-
-                    const timedEventPoll = async (queueCons: MpScQueueStreamConsumer<DebounceEvent>, sigState: DebounceEvent) =>{
-                        while (1) {
-                            if (sigState.connection === DebounceEvents.IceConnected && sigState.signalling === DebounceEvents.SignallingStable) {
-                                break;
-                                // land on the untimed version to just poll events
-                            } else {
-                                await eventPoll(queueCons, sigState).then(async (event: DebounceEvent) => {
-                                    if (event.resetTimer) {
-                                        // Break and restart external timed await.
-                                        // sigState will be used to signal that no debounce needed
-                                        rBreak();
-                                    }
-                                })
-                            }
-                        }
-                    }
                     await rustSelect([
                         // biased
-                        timedEventPoll(this.eventQueue.rx, this.debState),
+                        this.eventQueue.rx.next().then(async ({event, id}: {event: DebounceEvent, id: number}) => {
+                            if (event !== DebounceEvent.End) {
+                                currentId = id;
+                            }
+                            debState = event;
+                        }),
                         sleep(5000).then(async () => {
                             // log and record a metric. This means previous negotiation took too long and will be restarted.
-                            rBreak();
+                            this.notifyerQueue.tx.send(currentId)
+                            debState = DebounceEvent.End;
                         }),
                         this.stopper.cancelled().then(async () => {
                             rBreak();
@@ -123,11 +94,18 @@ class IceRestartDebouncer {
             }
         });
     }
-    waitForDebounce(): JoinHandle<void> {
-        this.run();
-        return this.finishHandle!;
+    async waitForDebounce(id: number): Promise<void> {
+        while (1) {
+            const val = await this.notifyerQueue.rx.next()
+            if (id == val) {
+                return;
+            }
+        }
     }
 }
+
+
+
 
 class Atomic {
     private value: number = 0;
@@ -171,37 +149,25 @@ class RtcConnectionHandler {
         this.needsRestart = true;
         this.scheduledRemoteSdp = remoteSdp;
     }
-    restartIce(remoteSdp?: string, neg_id: string): Promise<SignalMsg> {
+    restartIce(neg_id: string, remoteSdp?: string): Promise<SignalMsg> {
         if (remoteSdp) {
-            //check for rollback and make rollback where necessary
             // set remote sdp
             // create answer
             // set local sdp
             const localSdp = "local_sdp"; // generate local sdp here
             return Promise.resolve({ type: 'answer', sdp: localSdp, neg_id });
         } else {
-            //check for rollback and make rollback where necessary
-            const localOffer = "local_sdp"; // create offer
+            const localOffer = "make_local_sdp_with_restart"; // create offer
             this.setLocalDescription(localOffer);
-            const localSdp = "local_sdp"; // get local description
+            const localSdp = "got_local_description"; // get local description
             return Promise.resolve({ type: 'offer', sdp: localSdp, neg_id });
-        }
-        this.currentNegotiationId.increment();
-        if (this.scheduledRemoteSdp) {
-
-        }
-        
-        const newSdp = this.scheduledRemoteSdp ? this.scheduledRemoteSdp : "new_sdp"; // generate new sdp here
-        await this.setLocalDescription(newSdp);
-        const answer = await this.getAnswer();
-        // make necessary steps - 
-        this.needsRestart = false;
-        return Promise.resolve(answer);
+        }   
     }
     setOffer(offer: string): Promise<void> {
         return Promise.resolve();
     }
     setAnswer(answer: string): Promise<void> {
+        // set remote sdp
         return Promise.resolve();
     }
     addIceCandidate(candidate: string): Promise<void> {
@@ -221,33 +187,97 @@ class RtcConnectionHandler {
 
 class NegSessionIds {
     currentId: string
-    lastId: string // use it to assign to empty neg ids (local ice candidates)
     constructor(initialId: string) {
         this.currentId = initialId;
-        this.lastId = initialId;
     }
+}
+           
+enum SelectEvents {
+    ConnectionEvent,
+    DebouncerTimeout,
+    IncomingMsg,
+    Error
+}
+type SelectEvent = {
+    type: SelectEvents.ConnectionEvent | SelectEvents.DebouncerTimeout | SelectEvents.IncomingMsg | SelectEvents.Error,
+    data?: any
+}
+const getEvent = async (debouncer: IceRestartDebouncer, debounceId: number,
+    connectionEventQueueRx: MpScQueueStreamConsumer<ConnectionDebounceEvent>,
+    incomingMsgQueueRx: MpScQueueStreamConsumer<SignalMsg>
+): Promise<SelectEvent> => {
+    const res = rustSelect<SelectEvent>([
+        // biased
+        // offerQueueRx.next().then((msg: SignalMsg) => ({ type: SelectEvents.IncomingMsg, data: msg })).catch(() => ({ type: SelectEvents.Error, data: "E1" })),
+        connectionEventQueueRx.next().then((event: ConnectionDebounceEvent) => ({ type: SelectEvents.ConnectionEvent, data: event })).catch(() => ({ type: SelectEvents.Error, data: "E1" })),
+        debouncer.waitForDebounce(debounceId).then(() => ({ type: SelectEvents.DebouncerTimeout, data: "" })).catch(() => ({ type: SelectEvents.Error, data: "E2" })),
+        incomingMsgQueueRx.next().then((msg: SignalMsg) => ({ type: SelectEvents.IncomingMsg, data: msg })).catch(() => ({ type: SelectEvents.Error, data: "E3" })),
+    ]);
+    return res;
+}
+function initiatePeerConnectionCB(rtcPeerCon: RtcConnectionHandler,
+    connectionEvent: MpScQueueStreamProducer<ConnectionDebounceEvent>,
+    incomingMsgQueueTx: MpScQueueStreamProducer<SignalMsg>
+): void {
+    rtcPeerCon.onIceCandidate(async (candidate) => {
+        await  incomingMsgQueueTx.try_send({ type: 'ice-candidate', sdp: candidate, neg_id: rtcPeerCon.currentNegotiationId.load().toFixed() }).catch(() => {
+            // log and record metric.
+        });
+    });
+    rtcPeerCon.onIceStateChange((state) => {
+        if (state === 'failed' || state === 'disconnected') {
+            connectionEvent.try_send(ConnectionDebounceEvent.Disconnected).catch(() => {
+                // log and record metric.
+            });
+        }
+        if (state === 'connected') {
+            connectionEvent.try_send(ConnectionDebounceEvent.Connected).catch(() => {
+                // log and record metric.
+            });
+        }
+    });
+}
 
+async function processConnectionEvent(debouncer: IceRestartDebouncer, event: ConnectionDebounceEvent, isNegotiating: boolean): Promise<void> {
+    
+}
+async function restartIce(rtcPeerCon: RtcConnectionHandler, negs: NegSessionIds, wsConnector: WsConnector): Promise<void> {
+    rtcPeerCon.updateCurrentNegotiationId();
+    negs.currentId = rtcPeerCon.negotiationId();
+    let offerToSend: SignalMsg;
+    try {
+        offerToSend = await rtcPeerCon.restartIce(negs.currentId); 
+    } catch (e) {
+        // log and record a metric.
+        // retry when debouncer hits. No special handling since 
+        // this should be unlikely
+        return;
+    }
+    await wsConnector.send(offerToSend);
+
+}
+
+async function acceptRemoteSdp(rtcPeerCon: RtcConnectionHandler, negs: NegSessionIds, msg: SignalMsg): Promise<void> {
+
+
+}
+enum ConnectionDebounceEvent {
+    Connected,
+    Disconnected
 }
 class Negotiator {
     wsConnector: WsConnector;
     incomingMsgQueue: SpMcQueue<SignalMsg>;
-    incomingOfferQueue: SpMcQueue<SignalMsg>;
+    connectionEventQueue = new SpMcQueue<ConnectionDebounceEvent>();
     runHandle: JoinHandle<void>;
     iceRestartDebouncer: IceRestartDebouncer = new IceRestartDebouncer();
     constructor(url: string, rttTag: string) {
         this.incomingMsgQueue = new SpMcQueue<SignalMsg>();
-        this.incomingOfferQueue = new SpMcQueue<SignalMsg>();
         this.wsConnector = new WsConnector(
             url, rttTag, async (msg: SignalMsg) => {
-                if (msg.type === 'offer') {
-                    await this.incomingOfferQueue.tx.send(msg).catch(() => {
-                        // log and record metric.
-                    }); 
-                } else {
-                    await this.incomingMsgQueue.tx.send(msg).catch(() => {
-                        // log and record metric.
-                    });
-                }
+                await this.incomingMsgQueue.tx.try_send(msg).catch(() => {
+                    // log and record metric.
+                });
             }
         );
         this.runHandle = this.run();
@@ -255,137 +285,117 @@ class Negotiator {
     async run() {
         return rustSpawn(async () => {
             const rtcPeerCon = new RtcConnectionHandler();
-            rtcPeerCon.onIceCandidate(async (candidate) => {
-                await  this.incomingMsgQueue.tx.try_send({ type: 'ice-candidate', sdp: candidate, neg_id: rtcPeerCon.currentNegotiationId.load().toFixed() }).catch(() => {
-                    // log and record metric.
-                });
-            });
-            rtcPeerCon.onIceStateChange((state) => {
-                if (state === 'failed' || state === 'disconnected') {
-                    this.iceRestartDebouncer.registerEvent({ connection: DebounceEvents.IceDisconnected }).catch(() => {
-                        // log and record a metric. This should not happen, but if it does, ignore the event.
-                    });
-                }
-                if (state === 'connected' || state === 'completed') {
-                    this.iceRestartDebouncer.registerEvent({ connection: DebounceEvents.IceConnected }).catch(() => {
-                        // log and record a metric. This should not happen, but if it does, ignore the event.
-                    });
-                }
-            });
+            initiatePeerConnectionCB(rtcPeerCon, this.connectionEventQueue.tx, this.incomingMsgQueue.tx);
             let negs = new NegSessionIds(rtcPeerCon.negotiationId());
-            
-            
-            async function wakeToRemoteOffer(offerQueueRx: MpScQueueStreamConsumer<SignalMsg>, negs: NegSessionIds, peerCon: RtcConnectionHandler, debouncer: IceRestartDebouncer): Promise<void> {
-                return offerQueueRx.next().then(async (msg: SignalMsg) => {
-                    // new offer came, stop current negotiation and start a new one 
-                    if (negs.currentId == msg.neg_id) {
-                        // log and record a metric. Ignore the message.
-                        // This is unexpected.
-                        return;
-                    }
-                    debouncer.registerEvent({ resetTimer: DebounceEvents.ResetTimer });
-                    negs.currentId = msg.neg_id;
-                    peerCon.setForRestart(msg.sdp);
-                }).catch(async () => {
-                    // This should not happen, but add a log and metric here and retry after a timeout
-                })
-            }
-            async function maybeRestartIce(peerCon: RtcConnectionHandler, wsConnector: WsConnector): Promise<void> {
-                return peerCon.maybeRestartIce().then(async (answer?: String) => {
-                    // send the sdp if there is one
-                }).catch(async () => {
-                    // log and metric
-                    // sleep for 1 sec
-                });
-            }
-            enum SelectEvents {
-                RemoteOffer,
-                IceRestart,
-                DebouncerTimeout,
-                IncomingMsg,
-                Error
-            }
-            type SelectEvent = {
-                type: SelectEvents.RemoteOffer | SelectEvents.IceRestart | SelectEvents.DebouncerTimeout | SelectEvents.IncomingMsg | SelectEvents.Error,
-                data?: any
-            }
-            const getEvent = async (offerQueueRx: MpScQueueStreamConsumer<SignalMsg>,
-                debouncer: IceRestartDebouncer,
-                incomingMsgQueueRx: MpScQueueStreamConsumer<SignalMsg>
-            ): Promise<SelectEvent> => {
-                const res = rustSelect<SelectEvent>([
-                    // biased
-                    offerQueueRx.next().then((msg: SignalMsg) => ({ type: SelectEvents.RemoteOffer, data: msg })).catch(() => ({ type: SelectEvents.Error, data: "E1" })),
-                    debouncer.waitForDebounce().then(() => ({ type: SelectEvents.DebouncerTimeout, data: "" })).catch(() => ({ type: SelectEvents.Error, data: "E2" })),
-                    incomingMsgQueueRx.next().then((msg: SignalMsg) => ({ type: SelectEvents.IncomingMsg, data: msg })).catch(() => ({ type: SelectEvents.Error, data: "E3" })),
-                ]);
-                return res;
-            }
+            let connected = false;
+            let negotiating = false;
+            let debounceId = 0;
             while (1) {
-                const event: SelectEvent = await getEvent(this.incomingOfferQueue.rx, this.iceRestartDebouncer, this.incomingMsgQueue.rx);
+                const event: SelectEvent = await getEvent(this.iceRestartDebouncer, debounceId, this.connectionEventQueue.rx, this.incomingMsgQueue.rx);
                 if (event.type === SelectEvents.Error) {
                     // log and record a metric.
                     continue;
                 }
-                if (event.type === SelectEvents.RemoteOffer) {
+                if (event.type === SelectEvents.ConnectionEvent) {
+                    connected = event.data === ConnectionDebounceEvent.Connected;
+                    if (connected && !negotiating) {
+                        await this.iceRestartDebouncer.end();
+                    } else if (!connected && !negotiating) {
+                        debounceId = await this.iceRestartDebouncer.start();
+                    }
+                }
+                if (event.type === SelectEvents.DebouncerTimeout) {
+                    negotiating = true;
+                    debounceId = await this.iceRestartDebouncer.start();
+                    rustSelect([
+                        restartIce(rtcPeerCon, negs, this.wsConnector),
+                        this.iceRestartDebouncer.waitForDebounce(debounceId)
+                    ])
+                }
+                if (event.type === SelectEvents.IncomingMsg) {
                     const msg: SignalMsg = event.data;
-                rustSelect([
-                    // biased
-                    wakeToRemoteOffer(this.incomingOfferQueue.rx, negs, rtcPeerCon, this.iceRestartDebouncer),
-                    maybeRestartIce(rtcPeerCon, this.wsConnector),
-                    this.iceRestartDebouncer.waitForDebounce().then(async () => {
-                        rtcPeerCon.setForRestart();
-                        rtcPeerCon.updateCurrentNegotiationId();
-                        negs.currentId = rtcPeerCon.negotiationId();
-                        this.iceRestartDebouncer.reset().catch(() => {
-                            // log and record a metric
-                        });
-                        fContinue(); // restart on next iteration
-                    }).catch(async () => {
-                        // This should not happen, but add a log and metric here and retry after a timeout
-                    }),
-                    this.incomingMsgQueue.rx.next().then(async (msg: SignalMsg) => {
-                        if (msg.type !== 'ice-candidate') {
-                            negs.lastId = msg.neg_id;
-                            if (negs.lastId !== negs.currentId) {
-                                // log and record a metric. Ignore the message.
-                                return;
+                    if (msg.type === 'offer') {
+                        if (negotiating) {
+                            // log and record a metric. Ignore the offer, because we are already negotiating.
+                            return;
+                        }
+                        negotiating = true;
+                        negs.currentId = msg.neg_id;
+                        this.iceRestartDebouncer.refreshTimer();
+                        /**
+                         * Problems:
+                         * 1) Debouncer might just have timed out and was scheduled for next loop pass
+                         *  in which case it will trigger ice restart regardless of what is done here.
+                         * 2) When remote offer arrives, stable state should be achieved here.
+                         *  But if at some step the process fails it might leave side effects and 
+                         *      instead of ice restart, whole connection should be restarted, because
+                         *      rollback is not implemented in webrtc-rs.
+                         * Both cases are left to be addressed for later as they are unlikely to happen
+                         * in current operation.
+                         */
+                        let answerToSend: SignalMsg;
+                        try {
+                            answerToSend = await rtcPeerCon.restartIce(negs.currentId, msg.sdp); 
+                        } catch (e) {
+                            // log and record a metric.
+                            // fail case here is not processed yet (see notes above)
+                            // need to restart whole rtcpeer connection
+                            return;
+                        }
+                        if (connected) {
+                            this.iceRestartDebouncer.end();
+                        } else {
+                            this.iceRestartDebouncer.refreshTimer();
+                        }
+                        await this.wsConnector.send(answerToSend);
+                    }
+                    if (msg.type !== 'ice-candidate') {
+                        if (msg.neg_id !== negs.currentId) {
+                            // log and record a metric. Ignore the message.
+                            return;
+                        }
+                    }
+                    // After applying offer or answer check if stabble state is achieved
+                    // If it was, then if connection achieved, then stop debouncer
+                    if (msg.type === 'answer') {
+                        try {
+                            await rtcPeerCon.setAnswer(msg.sdp);
+                            //if rtcpeer signalling state is stable {
+                            negotiating = false;
+                            if (connected) {
+                                await this.iceRestartDebouncer.end();
+                            } else {
+                                await this.iceRestartDebouncer.refreshTimer();
                             }
+                            //}
                         }
-                        // After applying offer or answer check if stabble state is achieved
-                        // If it was, then if connection achieved, then stop debouncer
-                        if (msg.type === 'answer') {
-                            await rtcPeerCon.setAnswer(msg.sdp).catch(() => {
-                                // log and record a metric.
-                                // should be safe to ignore failed attempt too
-                            });
-                        } else if (msg.type === 'ice-candidate') {
-                            // Delivery will be cancelledd by debouncer in unstable state.
-                            // In stable state ice candidates need a timeout, because  
-                            // hanging case likely means this candidate is not important.
-                            msg.neg_id = negs.lastId; // assign last id to ice candidates, because they might be sent after answer is sent
-                            await rustSelect([
-                                sleep(5000).then(async () => {
-                                    // log and record a metric.
-                                    rBreak();
-                                }),
-                                this.wsConnector.send({...msg, type: 'ice-candidate-guest'}).catch(() => {
-                                    // log and record a metric.
-                                }),
-                            ]);
-                        } else if (msg.type === 'ice-candidate-guest') {
-                            await rtcPeerCon.addIceCandidate(msg.sdp).catch(() => {
-                                // log and record a metric.
-                            });
-                        } else if (msg.type === 'offer') {
-                            // was here just to update last id
+                        catch (e) {
+                            // log and record a metric.
+                            // should be safe to ignore failed attempt too
+                            // because if it fails, debouncer will trigger a restart
                         }
-                    }).catch(async () => {
-                        // This should not happen, but add a log and metric here and retry after a timeout
-                    }),
-                ]);
-
-
+                    } else if (msg.type === 'ice-candidate') {
+                        // Delivery will be cancelledd by debouncer in unstable state.
+                        // In stable state ice candidates need a timeout, because  
+                        // hanging case likely means this candidate is not important.
+                        msg.neg_id = negs.currentId; // assign current id to ice candidates, because they might be sent after answer is sent
+                        await rustSelect([
+                            sleep(5000).then(async () => {
+                                // log and record a metric.
+                                rBreak();
+                            }),
+                            this.wsConnector.send({...msg, type: 'ice-candidate-guest'}).catch(() => {
+                                // log and record a metric.
+                            }),
+                        ]);
+                    } else if (msg.type === 'ice-candidate-guest') {
+                        await rtcPeerCon.addIceCandidate(msg.sdp).catch(() => {
+                            // log and record a metric.
+                        });
+                    } else if (msg.type === 'offer') {
+                        // was here just to update last id
+                    }
+                }
             }
         });
     }

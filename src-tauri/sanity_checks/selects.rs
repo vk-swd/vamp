@@ -93,11 +93,14 @@ async fn test_circle_main1() {
         }
 }
 
-fn get_join_handle() -> (tokio::task::JoinHandle<()>, mpsc::Sender<u64>) {
+fn get_join_handle(callback: Option<impl Fn(u64) + Send + 'static>) -> (tokio::task::JoinHandle<mpsc::Receiver<u64>>, mpsc::Sender<u64>) {
     let (tx, mut rx) = mpsc::channel::<u64>(10);
     let handle = tokio::spawn(async move {
         let num = rx.recv().await.unwrap();
-        log(&format!("joinHandleTest received {}", num));
+        if let Some(cb) = callback {
+            cb(num);
+        }
+        return rx;
     });
     return (handle, tx);
 }
@@ -108,7 +111,7 @@ async fn infiniteCall() {
     }
 }
 async fn join_handle_test() {
-    let (_handle, _tx) = get_join_handle();
+    let (_handle, _tx) = get_join_handle(Some(|num| {}));
     tokio::spawn(async move {
         log("handle waiter spawned sleeper");
         sleep(Duration::from_secs(2)).await;
@@ -160,9 +163,105 @@ async fn test_webrtc_fresh_rollback() {
     let desc: RTCSessionDescription = serde_json::from_value(rollbackofferjson).unwrap();
     pc.set_local_description(offerclone).await.unwrap();
     log(&format!("signal state after rollvback is {}", pc.signaling_state()));
+
+    pc.on_ice_candidate(Box::new(move |candidate| {
+        Box::pin(async move {
+            log(&format!("ICE candidate: {:?}", candidate));
+        })
+    }));
+    pc.on_ice_gathering_state_change(Box::new(move |state| {
+        Box::pin(async move {
+            log(&format!("ICE gathering state changed: {:?}", state));
+        })
+    }));
+    sleep(Duration::from_secs(5)).await;
+    log("making offer for restart");
+    let restart_offer = pc.create_offer(Some(webrtc::peer_connection::offer_answer_options::RTCOfferOptions {
+        ice_restart: true,
+        ..Default::default()
+    })).await.unwrap();
+    log("made offer for restart");
+    pc.set_local_description(restart_offer).await.unwrap();
+    log("set offer for restart");
+    sleep(Duration::from_secs(5)).await;
+    log("finished test_webrtc_fresh_rollback");
+
+    pc.create_answer(None).await.unwrap();
 }
+
+struct HandleKeeper {
+    handle: tokio::task::JoinHandle<mpsc::Receiver<u64>>,
+}
+impl HandleKeeper {
+    // async fn awaithim(&mut self) -> mpsc::Receiver<u64> {
+    //     self.handle.await.unwrap()
+    // }
+}
+async fn wait_same_join_handle() {
+    let (handle, tx) = get_join_handle(Some(|num| {}));
+    let mut handle_heeper = HandleKeeper { handle };
+    for i in 0..2 {
+        tokio::select! {
+            biased;
+            _ = &mut handle_heeper.handle => {
+                log(&format!("handleWaiter finished on iteration {}", i));
+            },
+            _ = sleep(Duration::from_secs(1)) => {
+                log(&format!("slept through {} handle wait", i));
+            }
+        }
+        tx.send(1).await.unwrap();
+    }
+}
+
+async fn notifyer_experimetn() {
+    let notifyer = Arc::new(Notify::new());
+    let notifyer_clone = notifyer.clone();
+    let (handle, tx) = get_join_handle(Some(move |num| {
+        notifyer_clone.notify_one();
+    }));
+    tokio::select! {
+        biased;
+        _ = sleep(Duration::from_secs(1)) => {
+            log("handleWaiter finished");
+        },
+        _ = notifyer.notified() => {
+            log("notifyer_experimetn notified");
+        }
+    }
+    tx.send(1).await.unwrap();
+    log("notifyer_experimetn sent 1");
+    
+    tokio::select! {
+        biased;
+        _ = sleep(Duration::from_secs(1)) => {
+            log("handleWaiter finished 1");
+        },
+        _ = notifyer.notified() => {
+            log("notifyer_experimetn notified 1");
+        }
+    }
+    log("notifyer_experimetn notified 2");
+    notifyer.notify_one();
+    notifyer.notified().await;
+    
+    log("notifyer_experimetn notified 3");
+    notifyer.notify_one();
+    notifyer.notify_one();
+    notifyer.notify_one();
+    notifyer.notify_one();
+    notifyer.notified().await;
+    log("notifyer_experimetn notified 4");
+    
+    notifyer.notify_one();
+    sleep(Duration::from_secs(1)).await;
+    notifyer.notified().await;
+    log("notifyer_experimetn notified 5");
+
+}
+
 #[tokio::main]
 pub async fn main() {
     println!("Hello, world!");
-    test_webrtc_fresh_rollback().await;
+    notifyer_experimetn().await;
 }

@@ -7,23 +7,23 @@
 
 // rBreak and fContinue are placeholders for the rust control flow keywords inside 
 // "match" and "select" blocks.
-function rBreak() {}
-function fContinue() {}
-function fReturn() {}
-function rustSelect<T>(promises: Promise<any>[]): Promise<T> {
+export function rBreak() {}
+export function fContinue() {}
+export function fReturn() {}
+export function rustSelect<T>(promises: Promise<any>[]): Promise<T> {
     // Placeholder implementation used for pseudocode.
     return Promise.resolve() as Promise<T>;
 }
-function sleep(ms: number): Promise<void> {
+export function sleep(ms: number): Promise<void> {
     return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-type JoinHandle<T> = Promise<T>;
+export type JoinHandle<T> = Promise<T>;
 
-function rustSpawn<T>(f: () => Promise<T>): JoinHandle<T> {
+export function rustSpawn<T>(f: () => Promise<T>): JoinHandle<T> {
     return f();
 }
-class MpScQueueStreamProducer<T> {
+export class MpScQueueStreamProducer<T> {
     send(item: T): Promise<void> {
         return Promise.resolve();
     }
@@ -32,13 +32,21 @@ class MpScQueueStreamProducer<T> {
     }
 }
 
-class MpScQueueStreamConsumer<T> {
+export class Notifyer {
+    notify_one() {
+
+    }
+    notified(): Promise<void> {
+        return Promise.resolve();
+    }
+}
+export class MpScQueueStreamConsumer<T> {
     next(): Promise<T> {
         return Promise.resolve({} as T);
     }
 }
 
-class SpMcQueue<T> {
+export class SpMcQueue<T> {
     tx = new MpScQueueStreamProducer<T>();
     rx = new MpScQueueStreamConsumer<T>();
 }
@@ -56,12 +64,12 @@ type Ack = { type: 'ack' } & SnMsg;
 type NormalMsg = { type: 'normal' } & SnMsg & { payload: SignalMsg };
 type TransportMsg = Ack | NormalMsg;
 
-class CancelToken {
+export class CancelToken {
     cancel(): void {}
     cancelled(): Promise<void> { return Promise.resolve(); }
 }
 
-type SignalMsg = { type: 'offer' | 'answer' | 'ice-candidate' | 'ice-candidate-guest', sdp: string, neg_id: string };
+export type SignalMsg = { type: 'offer' | 'answer' | 'ice-candidate' | 'ice-candidate-guest', sdp: string, neg_id: string };
 function openWS(url: string): Promise<SpMcQueue<string>> {
     return Promise.resolve(new SpMcQueue<string>());
 }
