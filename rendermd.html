@@ -3,6 +3,10 @@
 <head>
 </head>
 <body>
+  <div id="controls">
+    <button id="btn-test-memo">Load test/memo.md</button>
+    <button id="btn-rtc-memo">Load src-tauri/rtc/memo.md</button>
+  </div>
   <div id="content"></div>
 
   <script type="module">
@@ -13,18 +17,24 @@
       startOnLoad: false
     });
 
-    const md = await fetch("src-tauri/rtc/memo.md").then(r => r.text());
+    async function loadMarkdown(path) {
+      const md = await fetch(path).then(r => r.text());
 
-    document.getElementById("content").innerHTML = marked.parse(md);
+      document.getElementById("content").innerHTML = marked.parse(md);
 
-    // Convert marked's output into Mermaid blocks
-    document.querySelectorAll("pre code.language-mermaid").forEach((block) => {
-      const pre = block.parentElement;
-      pre.className = "mermaid";
-      pre.textContent = block.textContent;
-    });
+      // Convert marked's output into Mermaid blocks
+      document.querySelectorAll("pre code.language-mermaid").forEach((block) => {
+        const pre = block.parentElement;
+        pre.className = "mermaid";
+        pre.textContent = block.textContent;
+      });
 
-    await mermaid.run();
+      await mermaid.run();
+    }
+    document.getElementById("btn-test-memo").addEventListener("click", () => loadMarkdown("test/memo.md"));
+    document.getElementById("btn-rtc-memo").addEventListener("click", () => loadMarkdown("src-tauri/rtc/memo.md"));
+
+    await loadMarkdown("src-tauri/rtc/memo.md");
   </script>
 </body>
 </html>

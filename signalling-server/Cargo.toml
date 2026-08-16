@@ -3,6 +3,10 @@ name = "signalling-server"
 version = "0.1.0"
 edition = "2021"
 
+[profile.dev]
+opt-level = 0
+debug = 0
+
 [[bin]]
 name = "signalling-server"
 path = "src/main.rs"
