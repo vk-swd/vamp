@@ -37,6 +37,7 @@
        1. Long [RT tags](#rtt_tag) and rate limiting - makes RT fishing long and unpredicteable.
        2. Can be addressed by an heuristic checking that [HS2](#hs2), [HS4](#hs4) sequence took place and the [HS2](#hs2) was denied for someone else trying same tag, but it is out of scope for now.
        3. It is easy to detect in logging. Which is to be implemented.
+       4. [No forwarding feedback](#sec_no_forward_ack) - do not send feedback to let anyone know that some tag does not belong toa ny participants.
     2. Other denial of service - no comprehensive protection is implemented, other then some [rate limiting](#sec_rate_limiting) 
        1. <a id = "sec_busy_work">Busy work</a>: When malicious actors create teir rooms and start hijacking bandwidth, imitating legitimate activity. Partially addressed by [message limits](#sec_message_limits)
        2. <a id = "sec_message_flood">Message bursts</a>: if many [busy](#sec_busy_work) connections are established, they might flood the service, so a basic rate limiting should also be in place.  
@@ -46,6 +47,7 @@
        2. <a id = "sec_message_limits">Message limits</a>: since the server handles signalling, it is expected that any participant pair should exchange a limited number of messages per session. Single connection is expected to service a single session, so to contain abuse, a message limit can be imposed on any given connection.
     1. <a id = "sec_ignore_flagged">Flagged connections</a>: when messages inconsistent [rtt tag](#message_el_rtt_tag) arrive form a single connection, drop it and if it tries to reconnect let the external rate limiter block it. Don't touch the other participant - it might be a normal one. Though it should also be able to detect impostors.
     1. <a id = "sec_lack_of_forwarding">Stale connections</a>: Stale [rtt records](#rtt_records) mean no forwarding occurs due to lack of other participant or not sending any payload. In a signalling exchange both parties should send something so if one does not send anything to be forwarded, it is removed. It should be something reasonable which would allow for a lengthy message processing by participants.
+    1. <a id = "sec_no_forward_ack">Don't give feedback</a> in whether a [forwarding pair](#rtt_pair) had another peer where the message was forwarded or not. This should give fewer information to anyone trying to probe the tags.
 13. Implementation:
     Entities:
       1. ServerTask is spawned to accept connections.

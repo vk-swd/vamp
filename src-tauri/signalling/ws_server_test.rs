@@ -251,6 +251,8 @@ async fn busy_work_sustained_traffic_capped_by_connection_limit() {
     p2.send_json("room", Some("over-the-limit"));
     tokio::time::sleep(Duration::from_millis(50)).await;
     assert!(p2.is_closed(), "connection should close once message limit is breached");
+    // TODO: use metrics to identify measures taken at the server.
+    // TODO: make a 5s capped waiter on the connection async task handle.
 }
 
 // 3. Test idle_connections prevention (use shorter timeouts in server config).

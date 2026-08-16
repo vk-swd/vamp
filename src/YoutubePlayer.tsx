@@ -56,10 +56,10 @@ function setUpPlayer(
             onStateChange(s.data);
           },
           'onError': (e: any) => {
-            log(`Player error ${e.data}`)
+            log(`Player error ${e.data} ${Object.keys(e).join(",")}`)
           },
           'onAutoplayBlocked': (e: any) => {
-            log(`Player autoplay blocked ${JSON.stringify(e)}`)
+            log(`Player autoplay blocked ${e.data} ${Object.keys(e).join(",")}`)
           }
         }
       })

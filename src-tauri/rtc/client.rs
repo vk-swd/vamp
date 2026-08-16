@@ -38,6 +38,8 @@ use webrtc::interceptor::registry::Registry;
 use webrtc::peer_connection::configuration::RTCConfiguration;
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 
+use crate::common::{MyErr, MyRes};
+
 const ICE_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const ICE_GATHER_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -101,10 +103,13 @@ fn validate_offer(sdp: &str) -> bool {
 
 // ── WebRTC helpers ────────────────────────────────────────────────────────────
 
-fn build_rtc_api() -> webrtc::error::Result<webrtc::api::API> {
+fn build_rtc_api() -> MyRes<webrtc::api::API> {
     let mut media_engine = MediaEngine::default();
     let mut registry = Registry::new();
-    registry = register_default_interceptors(registry, &mut media_engine)?;
+    registry = match register_default_interceptors(registry, &mut media_engine) {
+        Ok(r) => r,
+        Err(e) => return Err(Box::new(e)),
+    };
     Ok(APIBuilder::new()
         .with_media_engine(media_engine)
         .with_interceptor_registry(registry)
@@ -206,11 +211,11 @@ async fn ws_receive_loop(abort: &Notify, read: &mut WsStream, ingress_out: &mpsc
     true
 }
 
-async fn ws_send_loop(abort: Arc<Notify>, mut write: WsSink, mut egress_in: mpsc::Receiver<Message>) -> mpsc::Receiver<Message> {
+async fn ws_send_loop(abort: Arc<Notify>, mut write: WsSink, mut egress_q_getter: mpsc::Receiver<Message>) -> mpsc::Receiver<Message> {
     loop {
         tokio::select! {
             _ = abort.notified() => break,
-            msg = egress_in.recv() => match msg {
+            msg = egress_q_getter.recv() => match msg {
                 Some(msg) => {
                     match write.send(msg).await {
                         Err(e) => {
@@ -230,7 +235,7 @@ async fn ws_send_loop(abort: Arc<Notify>, mut write: WsSink, mut egress_in: mpsc
             }
         }
     }
-    egress_in
+    egress_q_getter
 }
 
 #[derive(Clone)]
@@ -241,7 +246,7 @@ struct WsConfig {
 
 struct WsHandle {
     ingress: mpsc::Receiver<Message>,
-    egress: mpsc::Sender<Message>,
+    egress_q_putter: mpsc::Sender<Message>,
     abort: Arc<Notify>,
     task: tokio::task::JoinHandle<()>,
 }
@@ -250,13 +255,14 @@ fn connect_to_ws(config: WsConfig) -> WsHandle {
     /* Minimal implementation of websocket reconnection logic
         The user does not have to know about the reconnection. 
         It will either send and receive or will wait untill its own timeout.
+        Bad address is not handled here - global timeout for ICE connection breaks bad attempts.
      */
     let (tx, rx) = mpsc::channel::<Message>(100);
-    let (out_tx, out_rx) = mpsc::channel::<Message>(100);
+    let (egress_q_putter, out_rx) = mpsc::channel::<Message>(100);
     let abort = Arc::new(Notify::new());
     let abort_notify = abort.clone();
     let task = tokio::spawn(async move {
-        let mut egress_in = out_rx;
+        let mut egress_q_getter = out_rx;
         let ingress_out = tx;
         let mut keep_reconnecting = true;
         while keep_reconnecting {
@@ -273,13 +279,13 @@ fn connect_to_ws(config: WsConfig) -> WsHandle {
             };
             let (write, mut read) = connection.split();
             let abort_send = Arc::new(Notify::new());
-            let handle = tokio::spawn(ws_send_loop(abort_send.clone(), write, egress_in));
+            let handle = tokio::spawn(ws_send_loop(abort_send.clone(), write, egress_q_getter));
             keep_reconnecting = ws_receive_loop(&abort_notify, &mut read, &ingress_out).await;
             abort_send.notify_waiters();
-            egress_in = handle.await.unwrap();
+            egress_q_getter = handle.await.unwrap();
         }
     });
-    WsHandle { ingress: rx, egress: out_tx, abort, task }
+    WsHandle { ingress: rx, egress_q_putter, abort, task }
 }
 
 impl WsHandle {
@@ -287,7 +293,7 @@ impl WsHandle {
         self.abort.notify_waiters();
     }
     fn send(&self, msg: Message) -> MyRes {
-        self.egress.try_send(msg).map_err(|e| e.to_string().into())
+        self.egress_q_putter.try_send(msg).map_err(|e| e.to_string().into())
     }
     async fn nextMsg(&mut self) -> MyRes<Message> {
         let ws_end = &mut (self.task);
@@ -307,8 +313,7 @@ struct IceCon {
     data_channel: Arc<RTCDataChannel>,
     pc: Arc<RTCPeerConnection>
 }
-type MyErr = Box<dyn std::error::Error + Send + Sync>;
-type MyRes<T=()> = std::result::Result<T, MyErr>;
+
 
 fn make_register_msg(session_id: String) -> WsMsg {
     WsMsg {
@@ -331,8 +336,7 @@ async fn await_offer(ws_handle: &mut WsHandle) -> MyRes<WsMsg> {
                 println!("[WSC] Received non-text message: '{ws_message:?}'");
                 continue;
             }
-        }; 
-            
+        };
         let parsed_msg = match serde_json::from_str::<WsMsg>(&text) {
             Ok(parsed) => parsed,
             Err(e) => {
@@ -340,6 +344,10 @@ async fn await_offer(ws_handle: &mut WsHandle) -> MyRes<WsMsg> {
                 continue;
             }
         };
+        if !validate_offer(&parsed_msg.payload) {
+            log::info!("invalid offer {:?}", parsed_msg.payload);
+            continue;
+        }
         return Ok(parsed_msg);
     };
 }
@@ -348,7 +356,10 @@ async fn run_client1(ws_conf: WsConfig, session_id: String) {
         let mut ws_handle = connect_to_ws(ws_conf.clone());
         match ws_handle.send(Message::Text(serde_json::to_string(&make_register_msg(session_id.clone())).unwrap())) {
             Ok(_) => (),
-            Err(e) => eprintln!("[WSC] Failed to send registration message: {e}"),
+            Err(e) => {
+                eprintln!("[WSC] Failed to send registration message: {e}");
+                continue;
+            }
         }
         // let ws_end = &mut (ws_handle.task);
         let offer = tokio::select! {
@@ -359,38 +370,64 @@ async fn run_client1(ws_conf: WsConfig, session_id: String) {
                 match msg {
                     Ok(message) => message,
                     Err(e) => {
-                        eprintln!("[WSC] Error receiving message: {e}");
+                        eprintln!("[WSC] Error receiving message: {e}. Reconnect to signalling server.");
                         continue;
                     }
                 }
             }
         };
 
+
     }
 }
 
 struct IceHandle {
     answer: String,
-    data_channel: Arc<RTCDataChannel>,
+    dc: Arc<std::sync::Mutex<Option<Arc<RTCDataChannel>>>>,
+    dc_ready: Arc<Notify>,
     pc: Arc<RTCPeerConnection>
 }
 
-fn start_ice(offer: String, send_answer: impl Fn(String) -> MyRes) -> MyRes<IceHandle> {
-    // 1. Connect to ws
-    // 2. register itself as a server
-    // 3. wait for offer
-    // 4. start gathering ICE candidates and prepare answer
-    // 5. send answer back
-    // 6. expect oopenned dc
-    let api = build_rtc_api().map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
+async fn start_ice(offer: String) -> MyRes<IceHandle> {
+    let api = build_rtc_api()?;
     let pc = Arc::new(api.new_peer_connection(defaultRTCConfig()).await?);
-    let dc = Arc::new(pc.create_data_channel("data", None).await?);
-    // Set up the rest of the ICE connection process here...
-    Ok(IceHandle {
-        answer: offer,
-        data_channel: dc,
-        pc
-    })
+
+    let dc: Arc<std::sync::Mutex<Option<Arc<RTCDataChannel>>>> = Arc::new(std::sync::Mutex::new(None));
+    let dc_ready = Arc::new(Notify::new());
+    let (dc_clone, ready_clone) = (dc.clone(), dc_ready.clone());
+    pc.on_data_channel(Box::new(move |chan: Arc<RTCDataChannel>| {
+        let (dc_clone, ready_clone) = (dc_clone.clone(), ready_clone.clone());
+        chan.on_open(Box::new(move || {
+            dc_clone.lock().unwrap().replace(chan.clone());
+            ready_clone.notify_one();
+            Box::pin(async move {})
+        }));
+        Box::pin(async move {})
+    }));
+
+    let gathering_done = Arc::new(Notify::new());
+    let gd = gathering_done.clone();
+    pc.on_ice_gathering_state_change(Box::new(move |state: RTCIceGathererState| {
+        let gd = gd.clone();
+        Box::pin(async move {
+            if state == RTCIceGathererState::Complete {
+                gd.notify_one();
+            }
+        })
+    }));
+    
+    pc.set_remote_description(RTCSessionDescription::offer(offer)?).await?;
+    let answer = pc.create_answer(None).await?;
+    pc.set_local_description(answer).await?;
+
+    gathering_done.notified().await;
+    pc.close().await?;
+    let answer_sdp = match pc.local_description().await {
+        Some(desc) => desc.sdp,
+        None => return Err("no local description after gathering".into()),
+    };
+
+    Ok(IceHandle { answer: answer_sdp, dc, dc_ready, pc })
 }
 /// Connects to the signalling server at `server_url`, registers `src_addr`,
 /// and processes incoming ICE offer messages until the connection is closed.

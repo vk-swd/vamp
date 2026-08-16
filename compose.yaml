@@ -4,7 +4,7 @@ networks:
     ipam:
       config:
         - subnet: ${EDGE_SUBNET}
-  local_v:
+  local_vps:
     driver: bridge
     ipam:
       config:
@@ -70,7 +70,7 @@ services:
       edge:
         interface_name: ${VPS_FRONT_EDGE_NIC}
         ipv4_address: ${VPS_EDGE_IP}
-      local_v:
+      local_vps:
         interface_name: ${VPS_FRONT_LOCAL_NIC}
         ipv4_address: ${VPS_FRONT_LOCAL_ADDR}
   sigturn:
@@ -104,7 +104,7 @@ services:
       - ./src-tauri/target/debug/signalling_server:/signalling_server
       - ./src-tauri/target/debug/:/targets
     networks:
-      local_v:
+      local_vps:
         ipv4_address: ${SIGTURN_IP}
     depends_on:
       - vps_front
@@ -150,8 +150,6 @@ services:
       - local_b
     depends_on:
       - nat_b
-
-
   nat_a:
     image: router
     tty: true
