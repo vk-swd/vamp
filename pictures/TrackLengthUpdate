@@ -1,0 +1,12 @@
+    
+```mermaid
+sequenceDiagram
+    participant store.duration
+    participant App.tsx
+    participant PlayerControls
+
+    App.tsx ->> store.duration : store.getDuration
+    store.duration ->> App.tsx : duration
+    App.tsx ->> PlayerControls : duration
+
+```

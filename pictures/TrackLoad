@@ -1,0 +1,27 @@
+
+
+
+```mermaid
+sequenceDiagram
+    participant SCPlayer
+    participant YoutubePlayerOwner
+    participant NowPlayingTab
+    participant store.trackToPlay
+    participant App
+
+    YoutubePlayerOwner ->> NowPlayingTab : handleEnded
+    SCPlayer ->> NowPlayingTab : handleEnded
+    NowPlayingTab ->> scKey : increment
+    scKey ->> scKey : reload players on next render
+    NowPlayingTab ->> store.trackToPlay : setTrackToPlay - load next track on next render
+    store.trackToPlay ->> App : setTrack
+    App ->> NowPlayingTab : Track
+    alt Track.sourceType
+        NowPlayingTab-->>YoutubePlayerOwner: load yt
+    else Invalid credentials
+        NowPlayingTab-->>SCPlayer: load sc
+    end
+
+
+
+```
