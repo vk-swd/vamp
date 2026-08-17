@@ -18,7 +18,7 @@ path = "other_tests.rs"
 
 [[bin]]
 name = "signalling_server"
-path = "signalling/server_test.rs"
+path = "signalling/ws_server_main.rs"
 
 [[bin]]
 name = "select_test"

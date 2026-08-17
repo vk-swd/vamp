@@ -8,4 +8,3 @@ services:
       - NET_ADMIN
     sysctls:
       - net.ipv4.ip_forward=1
-    profiles: ["base"]

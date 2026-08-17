@@ -10,12 +10,6 @@ volumes:
       type: none
       o: bind
       device: ${REPO_ROOT}/src-tauri/target/debug
-  turn_conf_template:
-    driver: local
-    driver_opts:
-      type: none
-      o: bind
-      device: ${REPO_ROOT}/test/turn/turnserver.conf.template
   browser_test_scripts:
     driver: local
     driver_opts:

@@ -138,7 +138,7 @@ impl MsgProcessor {
         };
 
         dst_con_handler.send_spsc_q_putter.try_send(message)
-        .map_err(|err| build_err(&parsed_msg.rtt_tag, self.src_connection_id, ("failed to send message to destination")))?;
+        .map_err(|err| build_err(&parsed_msg.rtt_tag, self.src_connection_id, "failed to send message to destination"))?;
         self.metrics.record_forwarded();
 		self.non_idle_marker.increment_forwarded();
         return Ok(());

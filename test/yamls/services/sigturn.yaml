@@ -18,7 +18,6 @@ services:
         envsubst < /etc/coturn/turnserver.conf.template > /etc/turnserver.conf
         turnserver --daemon
         /targets/signalling_server
-        # TODO: start the orchestrator agent (sigserverOrcServer) once implemented, listening on ${SIGTURN_ORC_IP}
         tail -f /dev/null
     environment:
       - COTURN_PORT=${COTURN_PORT}
@@ -28,9 +27,9 @@ services:
       - SIGTURN_IP=${SIGTURN_IP}
       - STUN_CREDENTIALS=${STUN_CREDENTIALS}
       - SS_PORT=${SS_PORT}
-      - SS_ADDR=0.0.0.0
+      - SS_ADDR=${SIGTURN_IP}
     volumes:
-      - turn_conf_template:/etc/coturn/turnserver.conf.template
+      - ${REPO_ROOT}/test/turn/turnserver.conf.template:/etc/coturn/turnserver.conf.template
       - rust_debug_artifacts:/targets
     networks:
       vps_net:
