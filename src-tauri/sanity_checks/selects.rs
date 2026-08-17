@@ -9,6 +9,9 @@ use webrtc::Error::new;
 use webrtc::api::APIBuilder;
 use webrtc::api::interceptor_registry::register_default_interceptors;
 use webrtc::api::media_engine::MediaEngine;
+use webrtc::ice_transport::ice_candidate::RTCIceCandidate;
+use webrtc::ice_transport::ice_candidate_type::RTCIceCandidateType;
+use webrtc::ice_transport::ice_gatherer_state::RTCIceGathererState;
 use webrtc::ice_transport::ice_server::RTCIceServer;
 use webrtc::interceptor::registry::Registry;
 use webrtc::peer_connection::configuration::RTCConfiguration;
@@ -260,8 +263,104 @@ async fn notifyer_experimetn() {
 
 }
 
+// Connects to the coturn server started by the `sigturn` service (see
+// test/yamls/services/sigturn.yaml / test_net_env) and checks that ICE gathering
+// yields both a server reflexive (srflx, from STUN) and a relay (from TURN) candidate,
+// at the addresses that the sigturn/vps_front configuration says they should arrive at:
+// - the relay candidate's address must be VPS_EDGE_IP, since that's the `external-ip`
+//   coturn is configured to advertise (see test/turn/turnserver.conf.template) and the
+//   address vps_front DNATs back to sigturn (see test/yamls/services/vps_front.yaml).
+// - the srflx candidate's address must be NAT_A_EDGE_IP, since that's the static address
+//   nat_backend masquerades backend's outbound traffic to (see
+//   test/yamls/services/nat_backend.yaml).
+async fn test_ice_candidates_collection() {
+    let coturn_ip = std::env::var("COTURN_IP").expect("COTURN_IP env var not set (see test/yamls/services/backend.yaml)");
+    let coturn_port = std::env::var("COTURN_PORT").expect("COTURN_PORT env var not set (see test_net_env)");
+    let stun_credentials = std::env::var("STUN_CREDENTIALS").expect("STUN_CREDENTIALS env var not set (see test/yamls/.env)");
+    let nat_a_edge_ip = std::env::var("NAT_A_EDGE_IP").expect("NAT_A_EDGE_IP env var not set (see test_net_env)");
+    let vps_edge_ip = std::env::var("VPS_EDGE_IP").expect("VPS_EDGE_IP env var not set (see test/yamls/services/backend.yaml)");
+    let (stun_username, stun_credential) = stun_credentials
+        .split_once(':')
+        .expect("STUN_CREDENTIALS must be of the form username:password");
+
+    let mut media_engine = MediaEngine::default();
+    let mut registry = Registry::new();
+    registry = register_default_interceptors(registry, &mut media_engine).unwrap();
+    let mut api = APIBuilder::new()
+        .with_media_engine(media_engine)
+        .with_interceptor_registry(registry)
+        .build();
+
+    let conf = RTCConfiguration {
+        ice_servers: vec![RTCIceServer {
+            urls: vec![format!("turn:{}:{}", coturn_ip, coturn_port)],
+            username: stun_username.to_owned(),
+            credential: stun_credential.to_owned(),
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+    let pc = Arc::new(api.new_peer_connection(conf).await.unwrap());
+
+    // A data channel is required so the offer has an m-line to gather candidates for.
+    let _dc = pc.create_data_channel("probe", None).await.unwrap();
+
+    let found_candidates: Arc<Mutex<Vec<(RTCIceCandidateType, String)>>> = Arc::new(Mutex::new(Vec::new()));
+    let found_candidates_cb = found_candidates.clone();
+    pc.on_ice_candidate(Box::new(move |candidate: Option<RTCIceCandidate>| {
+        let found_candidates_cb = found_candidates_cb.clone();
+        Box::pin(async move {
+            if let Some(candidate) = candidate {
+                log(&format!("ICE candidate: {}", candidate));
+                found_candidates_cb.lock().await.push((candidate.typ, candidate.address.clone()));
+            }
+        })
+    }));
+
+    let gathering_done = Arc::new(Notify::new());
+    let gathering_done_cb = gathering_done.clone();
+    pc.on_ice_gathering_state_change(Box::new(move |state: RTCIceGathererState| {
+        let gathering_done_cb = gathering_done_cb.clone();
+        Box::pin(async move {
+            if state == RTCIceGathererState::Complete {
+                gathering_done_cb.notify_one();
+            }
+        })
+    }));
+
+    let offer = pc.create_offer(None).await.unwrap();
+    pc.set_local_description(offer).await.unwrap();
+
+    tokio::select! {
+        _ = gathering_done.notified() => {},
+        _ = sleep(Duration::from_secs(10)) => {
+            log("ICE gathering timed out");
+        }
+    }
+
+    let candidates = found_candidates.lock().await;
+    log(&format!("collected candidates: {:?}", *candidates));
+
+    let srflx_candidate = candidates.iter().find(|(typ, _)| *typ == RTCIceCandidateType::Srflx);
+    assert!(srflx_candidate.is_some(), "no server reflexive candidate collected");
+    let (_, srflx_addr) = srflx_candidate.unwrap();
+    assert_eq!(
+        srflx_addr, &nat_a_edge_ip,
+        "srflx candidate address {} does not match NAT_A_EDGE_IP {} (nat_backend's masquerade address)",
+        srflx_addr, nat_a_edge_ip
+    );
+
+    let relay_candidate = candidates.iter().find(|(typ, _)| *typ == RTCIceCandidateType::Relay);
+    assert!(relay_candidate.is_some(), "no relay candidate collected");
+    let (_, relay_addr) = relay_candidate.unwrap();
+    assert_eq!(
+        relay_addr, &vps_edge_ip,
+        "relay candidate address {} does not match VPS_EDGE_IP {} (coturn's configured external-ip)",
+        relay_addr, vps_edge_ip
+    );
+}
 #[tokio::main]
 pub async fn main() {
     println!("Hello, world!");
-    notifyer_experimetn().await;
+    test_ice_candidates_collection().await;
 }

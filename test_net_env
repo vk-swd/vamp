@@ -29,6 +29,7 @@ NAT_A_NAME=nat_backend
 NAT_A_NIF=nat_a_local
 NAT_A_EDGE_NIF=nat_a_edge
 NAT_A_ADDR=192.168.110.100
+NAT_A_EDGE_IP=10.1.0.100
 
 # --- Browser NAT 1 (BrowserNAT1) ---
 NAT_B1_NAME=nat_b1
@@ -44,8 +45,8 @@ NAT_B2_ADDR=192.168.30.100
 
 # --- Rust service (RustSvc / backend) ---
 BACKEND_NAME=backend
-BACKEND_NIF=appserver_local
-BACKEND_ORC_NIF=appserver_orc
+BACKEND_NIF=backend_local
+BACKEND_ORC_NIF=backend_orc
 BACKEND_ORC_IP=172.30.0.10
 
 # --- Browser (Puppeteer) ---

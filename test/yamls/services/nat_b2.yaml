@@ -9,7 +9,7 @@ services:
     container_name: ${NAT_B2_NAME}
     entrypoint: ["/bin/sh", "/configure_nat_node.sh", "${NAT_B2_NIF}", "${NAT_B2_EDGE_NIF}"]
     volumes:
-      - configure_nat_script:/configure_nat_node.sh
+      - ${REPO_ROOT}/configure_nat_node.sh:/configure_nat_node.sh
     networks:
       browser_net_2:
         interface_name: ${NAT_B2_NIF}

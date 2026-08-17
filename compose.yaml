@@ -166,6 +166,7 @@ services:
         ipv4_address: ${NAT_A_ADDR}
       edge:
         interface_name: ${NAT_A_EDGE_NIF}
+        ipv4_address: ${NAT_A_EDGE_IP}
   
   backend:
     image: sigturn_img
