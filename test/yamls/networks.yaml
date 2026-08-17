@@ -1,0 +1,49 @@
+# Networks / subnets fragment.
+# Maps 1:1 to the subnets drawn in the network layout diagram in test/memo.md:
+#   edge      -> "Subnet Edge"    (NAT interconnect subnet, no direct leaf service, only NAT edge IFs)
+#   vps_net -> "Subnet Vps"     (Sigturn <-> VpsNAT)
+#   backend_net   -> "Subnet Rust"    (RustSvc/backend <-> RustNAT)
+#   browser_net_1  -> "Browser Subnet 1" (Browser IF1 <-> BrowserNAT1)
+#   browser_net_2  -> "Browser Subnet 2" (Browser IF2 <-> BrowserNAT2)
+#   orc       -> "Subnet Orc"     (direct orchestration overlay, bypasses all NATs on purpose)
+#
+# Combine with the other fragments, e.g.:
+#   docker compose --env-file .env \
+#     -f networks.yaml -f volumes.yaml \
+#     -f services/router.yaml -f services/browserpup.yaml -f services/sigturn_img.yaml \
+#     -f services/vps_front.yaml -f services/sigturn.yaml \
+#     -f services/nat_backend.yaml -f services/nat_b1.yaml -f services/nat_b2.yaml \
+#     -f services/backend.yaml -f services/browser.yaml -f services/orchestrator.yaml \
+#     up
+
+networks:
+  edge:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: ${EDGE_SUBNET}
+  vps_net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: ${VPS_SUBNET}
+  backend_net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: ${BACNKEND_SUBNET}
+  browser_net_1:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: ${BROWSER_SUBNET_1}
+  browser_net_2:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: ${BROWSER_SUBNET_2}
+  orc:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: ${ORC_SUBNET}

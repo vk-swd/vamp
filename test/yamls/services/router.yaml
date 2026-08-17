@@ -1,0 +1,10 @@
+# Base image for every NAT / routing node (BrowserNAT1, BrowserNAT2, RustNAT, VpsNAT).
+services:
+  router:
+    build:
+      dockerfile_inline: |
+        FROM alpine:3.22.4
+        RUN apk update
+        RUN apk add iptables iproute2 tcpdump curl wget procps net-tools iputils-ping
+    image: router
+    profiles: ["build"]

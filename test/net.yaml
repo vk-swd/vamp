@@ -1,0 +1,21 @@
+networks:
+  edge:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: ${EDGE_SUBNET}
+  vps_net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: ${VPS_SUBNET}
+  backend_net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: ${BACNKEND_SUBNET}
+  local_b:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: ${LOCAL_B_SUBNET}

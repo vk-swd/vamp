@@ -1,0 +1,42 @@
+# Browser (Puppeteer): has two network cards (Browser IF1/IF2) per the flowchart, one per NAT,
+# so a "carrier change" can be emulated by disabling one interface and enabling the other
+# instead of tearing down the whole container. Both are routed to the Edge subnet through their
+# respective NAT (nat_b1 / nat_b2); IF1 is the active default carrier at boot. Also attaches to
+# the Orc subnet directly for the orchestrator agent, matching the flowchart's dedicated "Orc IF".
+services:
+  browser:
+    image: browserpup
+    container_name: ${BROWSER_NAME}
+    tty: true
+    stdin_open: true
+    cap_add:
+      - NET_ADMIN
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        ip route add ${EDGE_SUBNET} via ${NAT_B1_ADDR} dev ${BROWSER_IF1_NIF}
+        # TODO: carrier-change command should replace the route above with:
+        #   ip route replace ${EDGE_SUBNET} via ${NAT_B2_ADDR} dev ${BROWSER_IF2_NIF}
+        # and toggle "ip link set ${BROWSER_IF1_NIF} down / ${BROWSER_IF2_NIF} up" on command.
+        # TODO: start the orchestrator agent (puppeteerOrcServer) once implemented, listening on ${BROWSER_ORC_IP}
+        exec gosu pptruser sh -c "cp /browser/test.js ~/test.js; cp /browser/package.json ~/package.json; npm run test"
+    volumes:
+      - browser_test_scripts:/browser
+    environment:
+      - COTURN_PORT=${COTURN_PORT}
+      - COTURN_IP=${VPS_EDGE_IP}
+      - WS_URL=ws://${VPS_EDGE_IP}:${SS_PORT}
+      - STUN_CREDENTIALS=${STUN_CREDENTIALS}
+      - RTC_SESSION_ID=${RTC_SESSION_ID}
+    networks:
+      browser_net_1:
+        interface_name: ${BROWSER_IF1_NIF}
+      browser_net_2:
+        interface_name: ${BROWSER_IF2_NIF}
+      orc:
+        interface_name: ${BROWSER_ORC_NIF}
+        ipv4_address: ${BROWSER_ORC_IP}
+    depends_on:
+      - nat_b1
+      - nat_b2

@@ -4,16 +4,16 @@ networks:
     ipam:
       config:
         - subnet: ${EDGE_SUBNET}
-  local_vps:
+  vps_net:
     driver: bridge
     ipam:
       config:
-        - subnet: ${LOCAL_V_SUBNET}
-  local_a:
+        - subnet: ${VPS_SUBNET}
+  backend_net:
     driver: bridge
     ipam:
       config:
-        - subnet: ${LOCAL_A_SUBNET}
+        - subnet: ${BACNKEND_SUBNET}
   local_b:
     driver: bridge
     ipam:
@@ -63,15 +63,15 @@ services:
       - -c
       - |
         echo 1 > /proc/sys/net/ipv4/ip_forward
-        iptables -t nat -A PREROUTING -i ${VPS_FRONT_EDGE_NIC} -j DNAT --to-destination ${SIGTURN_IP}
-        iptables -t nat -A POSTROUTING -o ${VPS_FRONT_EDGE_NIC} -j MASQUERADE
+        iptables -t nat -A PREROUTING -i ${VPS_FRONT_EDGE_NIF} -j DNAT --to-destination ${SIGTURN_IP}
+        iptables -t nat -A POSTROUTING -o ${VPS_FRONT_EDGE_NIF} -j MASQUERADE
         tail -f /dev/null
     networks:
       edge:
-        interface_name: ${VPS_FRONT_EDGE_NIC}
+        interface_name: ${VPS_FRONT_EDGE_NIF}
         ipv4_address: ${VPS_EDGE_IP}
-      local_vps:
-        interface_name: ${VPS_FRONT_LOCAL_NIC}
+      vps_net:
+        interface_name: ${VPS_FRONT_NIF}
         ipv4_address: ${VPS_FRONT_LOCAL_ADDR}
   sigturn:
     image: sigturn_img
@@ -104,7 +104,7 @@ services:
       - ./src-tauri/target/debug/signalling_server:/signalling_server
       - ./src-tauri/target/debug/:/targets
     networks:
-      local_vps:
+      vps_net:
         ipv4_address: ${SIGTURN_IP}
     depends_on:
       - vps_front
@@ -116,15 +116,15 @@ services:
     container_name: ${NAT_B_NAME}
     cap_add:
       - NET_ADMIN
-    entrypoint: ["/bin/sh", "/configure_nat_node.sh", "${NAT_B_LOCAL_NIC}", "${NAT_B_EDGE_NIC}"]
+    entrypoint: ["/bin/sh", "/configure_nat_node.sh", "${NAT_B_NIF}", "${NAT_B_EDGE_NIF}"]
     volumes:
       - ./configure_nat_node.sh:/configure_nat_node.sh
     networks:
       local_b:
-        interface_name: ${NAT_B_LOCAL_NIC}
+        interface_name: ${NAT_B_NIF}
         ipv4_address: ${NAT_B_ADDR}
       edge:
-        interface_name: ${NAT_B_EDGE_NIC}
+        interface_name: ${NAT_B_EDGE_NIF}
   browser:
     image: browserpup
     container_name: ${BROWSER_NAME}
@@ -150,26 +150,26 @@ services:
       - local_b
     depends_on:
       - nat_b
-  nat_a:
+  nat_backend:
     image: router
     tty: true
     stdin_open: true
     container_name: ${NAT_A_NAME}
     cap_add:
       - NET_ADMIN
-    entrypoint: ["/bin/sh", "/configure_nat_node.sh", "${NAT_A_LOCAL_NIC}", "${NAT_A_EDGE_NIC}"]
+    entrypoint: ["/bin/sh", "/configure_nat_node.sh", "${NAT_A_NIF}", "${NAT_A_EDGE_NIF}"]
     volumes:
       - ./configure_nat_node.sh:/configure_nat_node.sh
     networks:
-      local_a:
-        interface_name: ${NAT_A_LOCAL_NIC}
+      backend_net:
+        interface_name: ${NAT_A_NIF}
         ipv4_address: ${NAT_A_ADDR}
       edge:
-        interface_name: ${NAT_A_EDGE_NIC}
+        interface_name: ${NAT_A_EDGE_NIF}
   
-  appserver:
+  backend:
     image: sigturn_img
-    container_name: ${APPSERVER_NAME}
+    container_name: ${BACKEND_NAME}
     tty: true
     stdin_open: true
     cap_add:
@@ -193,6 +193,6 @@ services:
     volumes:
       - ./src-tauri/target/debug/rtc_client_test:/rtc_client_test
     networks:
-      - local_a
+      - backend_net
     depends_on:
-      - nat_a
+      - nat_backend

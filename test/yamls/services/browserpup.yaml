@@ -1,0 +1,12 @@
+# Image for the Browser service (Puppeteer / headless Chrome).
+services:
+  browserpup:
+    build:
+      dockerfile_inline: |
+        FROM ghcr.io/puppeteer/puppeteer:25.1.0
+        USER root
+        RUN apt update
+        RUN apt install -y gosu
+        RUN apt install -y iptables iproute2 tcpdump curl wget procps net-tools iputils-ping
+    image: browserpup
+    profiles: ["build"]

@@ -1,0 +1,30 @@
+# Named volumes fragment.
+# These are bind-mounts wrapped as named volumes (driver: local, type: none, o: bind) so that
+# every service fragment can reference a volume by name instead of repeating host paths.
+# REPO_ROOT must point at the absolute path of this repository (set in .env).
+
+volumes:
+  rust_debug_artifacts:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${REPO_ROOT}/src-tauri/target/debug
+  turn_conf_template:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${REPO_ROOT}/test/turn/turnserver.conf.template
+  browser_test_scripts:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${REPO_ROOT}/test/browser
+  configure_nat_script:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${REPO_ROOT}/configure_nat_node.sh

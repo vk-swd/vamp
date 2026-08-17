@@ -1,0 +1,27 @@
+# VpsNAT: public-facing edge node. Forwards inbound edge traffic straight through to the
+# Sigturn machine's local IP, the same way an OCI public IP / load balancer forwards to a
+# private backend instance (DNAT + MASQUERADE, no port restriction).
+services:
+  vps_front:
+    image: router
+    tty: true
+    stdin_open: true
+    hostname: ${VPS_FRONT_NAME}
+    container_name: ${VPS_FRONT_NAME}
+    cap_add:
+      - NET_ADMIN
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        echo 1 > /proc/sys/net/ipv4/ip_forward
+        iptables -t nat -A PREROUTING -i ${VPS_FRONT_EDGE_NIF} -j DNAT --to-destination ${SIGTURN_IP}
+        iptables -t nat -A POSTROUTING -o ${VPS_FRONT_EDGE_NIF} -j MASQUERADE
+        tail -f /dev/null
+    networks:
+      edge:
+        interface_name: ${VPS_FRONT_EDGE_NIF}
+        ipv4_address: ${VPS_EDGE_IP}
+      vps_net:
+        interface_name: ${VPS_FRONT_NIF}
+        ipv4_address: ${VPS_FRONT_LOCAL_ADDR}

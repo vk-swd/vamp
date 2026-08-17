@@ -1,0 +1,37 @@
+# RustSvc / backend: routes edge-bound traffic (to reach vps_front/Sigturn) via nat_backend, the
+# same "gateway via NAT" pattern used by vps_front to forward to sigturn. Also attaches to the
+# Orc subnet directly, matching the flowchart's dedicated "Orc IF" for the orchestrator agent.
+services:
+  backend:
+    image: sigturn_img
+    container_name: ${BACKEND_NAME}
+    tty: true
+    stdin_open: true
+    cap_add:
+      - NET_ADMIN
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        ip route add ${EDGE_SUBNET} via ${NAT_A_ADDR}
+        useradd --system --shell /usr/sbin/nologin --no-create-home appuser
+        chown -R appuser:appuser /rtc_client_test_dir
+        exec gosu appuser sh -c "/rtc_client_test_dir/rtc_client_test; tail -f /dev/null"
+    environment:
+      - COTURN_PORT=${COTURN_PORT}
+      - COTURN_IP=${VPS_EDGE_IP}
+      - SS_URL=ws://${VPS_EDGE_IP}:${SS_PORT}
+      - STUN_CREDENTIALS=${STUN_CREDENTIALS}
+      - RTC_SESSION_ID=${RTC_SESSION_ID}
+      - RUST_LOG=info
+      - RUST_BACKTRACE=1
+    volumes:
+      - rust_debug_artifacts:/rtc_client_test_dir
+    networks:
+      backend_net:
+        interface_name: ${BACKEND_NIF}
+      orc:
+        interface_name: ${BACKEND_ORC_NIF}
+        ipv4_address: ${BACKEND_ORC_IP}
+    depends_on:
+      - nat_backend

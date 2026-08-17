@@ -1,0 +1,20 @@
+# BrowserNAT1: sits between Browser Subnet 1 (Browser IF1) and the Edge subnet.
+# Same routing/forwarding behaviour as nat_backend: lets the browser reach the signalling server
+# through the edge subnet while blocking unsolicited inbound connections.
+services:
+  nat_b1:
+    image: router
+    tty: true
+    stdin_open: true
+    container_name: ${NAT_B1_NAME}
+    cap_add:
+      - NET_ADMIN
+    entrypoint: ["/bin/sh", "/configure_nat_node.sh", "${NAT_B1_NIF}", "${NAT_B1_EDGE_NIF}"]
+    volumes:
+      - configure_nat_script:/configure_nat_node.sh
+    networks:
+      browser_net_1:
+        interface_name: ${NAT_B1_NIF}
+        ipv4_address: ${NAT_B1_ADDR}
+      edge:
+        interface_name: ${NAT_B1_EDGE_NIF}

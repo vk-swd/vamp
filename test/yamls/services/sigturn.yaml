@@ -1,0 +1,41 @@
+# Sigturn: Signalling WS server + Coturn, reachable via the Vps subnet only (behind vps_front's
+# NAT/forwarding). Also attaches to the Orc subnet directly (no NAT) for the orchestrator agent
+# channel, matching the flowchart's dedicated "Orc IF".
+services:
+  sigturn:
+    image: sigturn_img
+    tty: true
+    stdin_open: true
+    hostname: ${SIGTURN_NAME}
+    container_name: ${SIGTURN_NAME}
+    cap_add:
+      - NET_ADMIN
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        ip route add ${EDGE_SUBNET} via ${VPS_FRONT_LOCAL_ADDR}
+        envsubst < /etc/coturn/turnserver.conf.template > /etc/turnserver.conf
+        turnserver --daemon
+        /targets/signalling_server
+        # TODO: start the orchestrator agent (sigserverOrcServer) once implemented, listening on ${SIGTURN_ORC_IP}
+        tail -f /dev/null
+    environment:
+      - COTURN_PORT=${COTURN_PORT}
+      - VPS_EDGE_IP=${VPS_EDGE_IP}
+      - VPS_FRONT_LOCAL_ADDR=${VPS_FRONT_LOCAL_ADDR}
+      - VPS_FRONT_NAME=${VPS_FRONT_NAME}
+      - SIGTURN_IP=${SIGTURN_IP}
+      - STUN_CREDENTIALS=${STUN_CREDENTIALS}
+      - SS_PORT=${SS_PORT}
+      - SS_ADDR=0.0.0.0
+    volumes:
+      - turn_conf_template:/etc/coturn/turnserver.conf.template
+      - rust_debug_artifacts:/targets
+    networks:
+      vps_net:
+        ipv4_address: ${SIGTURN_IP}
+      orc:
+        ipv4_address: ${SIGTURN_ORC_IP}
+    depends_on:
+      - vps_front

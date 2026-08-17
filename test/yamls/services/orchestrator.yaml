@@ -1,0 +1,27 @@
+# Orchestrator: sends commands to the other services' orchestrator agents and observes results,
+# deciding pass/fail for each test scenario (see "Orchestration service" in test/memo.md). Sits
+# only on the Orc subnet, which is a flat, non-NATed network so control-plane traffic always
+# reaches every agent regardless of the emulated carrier/NAT state of the data plane.
+services:
+  orchestrator:
+    image: router
+    container_name: ${ORCHESTRATOR_NAME}
+    tty: true
+    stdin_open: true
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        # TODO: start the orchestrator service binary/script once implemented.
+        # It should connect to sigserverOrcServer, rustSvcOrcServer and puppeteerOrcServer
+        # over the orc network and drive the test scenarios listed in test/memo.md
+        # (carrier change, connectivity loss, ICE restarts, page reloads, regular operation).
+        tail -f /dev/null
+    networks:
+      orc:
+        interface_name: ${ORCHESTRATOR_ORC_NIF}
+        ipv4_address: ${ORCHESTRATOR_ORC_IP}
+    depends_on:
+      - sigturn
+      - backend
+      - browser

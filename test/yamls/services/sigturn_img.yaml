@@ -1,0 +1,13 @@
+# Image for the Signalling and Turn Server (Sigturn).
+services:
+  sigturn_img:
+    build:
+      dockerfile_inline: |
+        FROM debian:12.0-slim
+        RUN apt update
+        RUN apt install -y gosu
+        RUN apt install -y nginx coturn
+        RUN apt install -y gettext-base
+        RUN apt install -y iptables iproute2 tcpdump curl wget procps net-tools iputils-ping
+    image: sigturn_img
+    profiles: ["build"]

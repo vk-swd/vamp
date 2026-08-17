@@ -1,0 +1,20 @@
+# BrowserNAT2: sits between Browser Subnet 2 (Browser IF2) and the Edge subnet.
+# Kept as a separate NAT node so a "carrier change" can be emulated by toggling which
+# browser interface/route is active, without tearing down the other carrier's NAT state.
+services:
+  nat_b2:
+    image: router
+    tty: true
+    stdin_open: true
+    container_name: ${NAT_B2_NAME}
+    cap_add:
+      - NET_ADMIN
+    entrypoint: ["/bin/sh", "/configure_nat_node.sh", "${NAT_B2_NIF}", "${NAT_B2_EDGE_NIF}"]
+    volumes:
+      - configure_nat_script:/configure_nat_node.sh
+    networks:
+      browser_net_2:
+        interface_name: ${NAT_B2_NIF}
+        ipv4_address: ${NAT_B2_ADDR}
+      edge:
+        interface_name: ${NAT_B2_EDGE_NIF}

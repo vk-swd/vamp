@@ -1,33 +1,59 @@
-LOCAL_V_SUBNET="172.20.0.0/24"
-EDGE_SUBNET="10.0.0.0/24"
-LOCAL_A_SUBNET="192.168.10.0/24"
-LOCAL_B_SUBNET="192.168.20.0/24"
+# --- Subnets (see test/memo.md network layout diagram) ---
+EDGE_SUBNET=10.0.0.0/24
+VPS_SUBNET=172.20.0.0/24
+BACNKEND_SUBNET=192.168.10.0/24
+BROWSER_SUBNET_1=192.168.20.0/24
+BROWSER_SUBNET_2=192.168.30.0/24
+ORC_SUBNET=172.30.0.0/24
 
-VPS_FRONT_NAME="vps_front"
-VPS_FRONT_EDGE_NIC="vps_edge"
-VPS_FRONT_LOCAL_NIC="vps_local"
-VPS_EDGE_IP="10.0.0.10"
-VPS_FRONT_LOCAL_ADDR="172.20.0.100"
+# --- VPS front (VpsNAT) ---
+VPS_FRONT_NAME=vps_front
+VPS_FRONT_EDGE_NIF=vps_edge
+VPS_FRONT_NIF=vps_local
+VPS_EDGE_IP=10.0.0.10
+VPS_FRONT_LOCAL_ADDR=172.20.0.100
 
-SIGTURN_NAME="sigturn"
-SIGTURN_IP="172.20.0.50"
+# --- Signalling + Turn (Sigturn) ---
+SIGTURN_NAME=sigturn
+SIGTURN_IP=172.20.0.50
+SIGTURN_ORC_IP=172.30.0.50
 COTURN_PORT=9010
 SS_PORT=10010
-STUN_CREDENTIALS=user:changeme123
 
-NAT_B_NAME="nat_b"
-NAT_B_LOCAL_NIC="nat_b_local"
-NAT_B_EDGE_NIC="nat_b_edge"
+# --- Rust NAT (RustNAT) ---
+NAT_A_NAME=nat_backend
+NAT_A_NIF=nat_a_local
+NAT_A_EDGE_NIF=nat_a_edge
+NAT_A_ADDR=192.168.10.100
 
-BROWSER_NAME="browser"
+# --- Browser NAT 1 (BrowserNAT1) ---
+NAT_B1_NAME=nat_b1
+NAT_B1_NIF=nat_b1_local
+NAT_B1_EDGE_NIF=nat_b1_edge
+NAT_B1_ADDR=192.168.20.100
 
-NAT_A_NAME="nat_a"
-NAT_A_LOCAL_NIC="nat_a_local"
-NAT_A_EDGE_NIC="nat_a_edge"
+# --- Browser NAT 2 (BrowserNAT2) ---
+NAT_B2_NAME=nat_b2
+NAT_B2_NIF=nat_b2_local
+NAT_B2_EDGE_NIF=nat_b2_edge
+NAT_B2_ADDR=192.168.30.100
 
-APPSERVER_NAME="appserver"
+# --- Rust service (RustSvc / backend) ---
+BACKEND_NAME=backend
+BACKEND_NIF=appserver_local
+BACKEND_ORC_NIF=appserver_orc
+BACKEND_ORC_IP=172.30.0.10
 
-NAT_A_ADDR="192.168.10.100"
-NAT_B_ADDR="192.168.20.100"
+# --- Browser (Puppeteer) ---
+BROWSER_NAME=browser
+BROWSER_IF1_NIF=browser_if1
+BROWSER_IF2_NIF=browser_if2
+BROWSER_ORC_NIF=browser_orc
+BROWSER_ORC_IP=172.30.0.20
 
-RTC_SESSION_ID="123456DOBROPOJALOVAT"
+# --- Orchestrator ---
+ORCHESTRATOR_NAME=orchestrator
+ORCHESTRATOR_ORC_NIF=orchestrator_orc
+ORCHESTRATOR_ORC_IP=172.30.0.2
+
+RTC_SESSION_ID=123456DOBROPOJALOVAT

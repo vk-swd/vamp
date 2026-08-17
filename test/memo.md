@@ -44,26 +44,32 @@ flowchart TD
         puppeteerOrcServer["Orchestrator agent"]
     end
     puppeteerOrcServer ~~~ puppeteerBrowser
-    ifBrowserBrowser["Browser IF"]
-    puppeteerBrowser --- ifBrowserBrowser
+    ifBrowserBrowser1["Browser IF1"]
+    ifBrowserBrowser2["Browser IF2"]
+    puppeteerBrowser --- ifBrowserBrowser1
+    puppeteerBrowser --- ifBrowserBrowser2
     ifOrcBrowser --- puppeteerOrcServer 
   end
 
-  subgraph BrowserNAT["Browser NAT"]
-    ifBrowserBrowserNat["Browser IF"]
-    ifEdgeBrowserNat["Edge IF"]
+  subgraph BrowserNAT1["Browser NAT"1]
+    ifBrowserBrowserNat1["Browser IF"]
+    ifEdgeBrowserNat1["Edge IF"]
   end
 
-  subgraph RustSvc["Rust Service"]
+  subgraph BrowserNAT2["Browser NAT"2]
+    ifBrowserBrowserNat2["Browser IF"]
+    ifEdgeBrowserNat2["Edge IF"]
+  end
+  subgraph RustSvc["Backend"]
     ifOrcRust["Orc IF"]
-    subgraph rustSvcImpl["Service"]
-        rustSvcOrcServer["Orchestrator agent"]
-        rustSvcServer["Service"]
+    subgraph backendImpl["App"]
+        backendOrcServer["Orchestrator agent"]
+        backendServer["Service"]
     end
-    rustSvcOrcServer ~~~ rustSvcServer
-    ifOrcRust --- rustSvcOrcServer
+    backendOrcServer ~~~ backendServer
+    ifOrcRust --- backendOrcServer
     ifRustRust["Rust IF"]
-    rustSvcServer --- ifRustRust
+    backendServer --- ifRustRust
   end
 
   subgraph RustNAT["Rust NAT"]
@@ -87,7 +93,7 @@ flowchart TD
 
     ifOrcSigturn["Orc IF"]
     ifVpsSigturn["Vps IF"]
-    coturn --- ifVpsSigturn
+    coturn --- |listening-ip|ifVpsSigturn
     sigserverServer --- ifVpsSigturn
     ifOrcSigturn --- sigserverOrcServer
   end
@@ -96,7 +102,8 @@ flowchart TD
     ifOrcOrchestrator["Orc IF"]
   end
 
-  sbntBrowserGateway["Subnet Browser"]
+  sbntBrowserGateway1["Browser Subnet 1"]
+  sbntBrowserGateway2["Browser Subnet 2"]
   sbntRustGateway["Subnet Rust"]
   sbntEdgeGateway["Subnet Edge"]
   sbntVpsGateway["Subnet Vps"]
@@ -109,21 +116,30 @@ flowchart TD
   sbntOrcGateway --- ifOrcSigturn 
 
   %% Browser subnet
-  ifBrowserBrowser --- sbntBrowserGateway
-  sbntBrowserGateway --- ifBrowserBrowserNat
+  ifBrowserBrowser1 --- sbntBrowserGateway1
+  sbntBrowserGateway1 --- ifBrowserBrowserNat1
+
+  ifBrowserBrowser2 --- sbntBrowserGateway2
+  sbntBrowserGateway2 --- ifBrowserBrowserNat2
 
   %% Rust subnet
   ifRustRust --- sbntRustGateway
   sbntRustGateway --- ifRustRustnat 
 
   %% NAT interconnect subnet
-  ifEdgeBrowserNat --- sbntEdgeGateway
+  ifEdgeBrowserNat1 --- sbntEdgeGateway
+  ifEdgeBrowserNat2 --- sbntEdgeGateway
   ifEdgeRustnat --- sbntEdgeGateway
   ifEdgeVpsnat --- sbntEdgeGateway
 
   %% VPS subnet
+  coturn --- |external-ip|ifEdgeVpsnat
   sbntVpsGateway --- ifVpsVpsnat
   ifVpsSigturn --- sbntVpsGateway
 ```
+
+Img. 1. <a id = "img_network_layout">Network layout</a>
+
 #### Carrier change
 Emulated as swapping network interfaces: disable old interface and enable new one.
+On the [network layout](#img_network_layout) the Browser service has 2 network cards and they will be swapped on command.
