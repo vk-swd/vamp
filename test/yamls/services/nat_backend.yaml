@@ -4,12 +4,10 @@
 # can reach the Sigturn machine (via vps_front) but nothing can reach backend unsolicited.
 services:
   nat_backend:
-    image: router
-    tty: true
-    stdin_open: true
+    extends:
+      file: ./router_base.yaml
+      service: router_base
     container_name: ${NAT_A_NAME}
-    cap_add:
-      - NET_ADMIN
     entrypoint: ["/bin/sh", "/configure_nat_node.sh", "${NAT_A_NIF}", "${NAT_A_EDGE_NIF}"]
     volumes:
       - configure_nat_script:/configure_nat_node.sh

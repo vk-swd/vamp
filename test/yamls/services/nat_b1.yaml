@@ -3,12 +3,10 @@
 # through the edge subnet while blocking unsolicited inbound connections.
 services:
   nat_b1:
-    image: router
-    tty: true
-    stdin_open: true
+    extends:
+      file: ./router_base.yaml
+      service: router_base
     container_name: ${NAT_B1_NAME}
-    cap_add:
-      - NET_ADMIN
     entrypoint: ["/bin/sh", "/configure_nat_node.sh", "${NAT_B1_NIF}", "${NAT_B1_EDGE_NIF}"]
     volumes:
       - configure_nat_script:/configure_nat_node.sh
