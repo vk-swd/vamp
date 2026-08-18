@@ -9,41 +9,45 @@ function logIce(hh, ...message) {
 
 
 
-async function sendOfferGetAnswer(sdp, src, dst, ac, WS_URL) {
-    // Old artefact from page delivery tests
-    // 1. Show cached version immediately (no blank flash)
-    // const cached = localStorage.getItem(storageLocation);
-    // if (cached != null && cached != undefined
-    // //  && cached != "undefined"
-    // ) {
-    //     return cached
-    // }
+async function sendOfferGetAnswer(sdp, tag, ac, WS_URL) {
+    const MAX_CONNECT_ATTEMPTS = 5;
+    const CONNECT_RETRY_DELAY_MS = 500;
     return new Promise((resolve, reject) => {
-        const requewstId = `${Date.now()}-${Math.random()}`;
-        // 2. Connect and get fresh content
-        const ws = new WebSocket(WS_URL);
-        const offerMsg = JSON.stringify({ src, dst, payload: sdp });
+        const offerMsg = JSON.stringify({ tag, payload: sdp });
         let repeat_offer_send_to = null;
+        let retry_connect_to = null;
+        let ws = null;
+        let connectAttempt = 0;
+        let opened = false;
         const killSend = () => {
             if (repeat_offer_send_to) {
                 clearTimeout(repeat_offer_send_to);
                 repeat_offer_send_to = null;
             }
         }
+        const killRetry = () => {
+            if (retry_connect_to) {
+                clearTimeout(retry_connect_to);
+                retry_connect_to = null;
+            }
+        }
         ac.signal.addEventListener('abort', () => {
             killSend();
+            killRetry();
             reject('WebSocket connection aborted');
-            ws.close();
+            if (ws) ws.close();
         });
         const res = (data) => {
             killSend();
+            killRetry();
             resolve(data)
             ws.close();
         }
         const rej = (err) => {
             killSend();
+            killRetry();
             reject(err);
-            ws.close();
+            if (ws) ws.close();
         }
         const sendOffer = () => {
             logIce('log', `sending message: ${offerMsg}`)
@@ -52,32 +56,47 @@ async function sendOfferGetAnswer(sdp, src, dst, ac, WS_URL) {
                 sendOffer();
             }, 1000);
         }
-        ws.onopen = () => {
-            logIce('log', `opened ws`)
-            sendOffer();
-        };
-        ws.onmessage = (e) => {
-            try {
-                const msg = JSON.parse(e.data)
-                logIce('log', `received message: ${e.data}`)
-                if (msg.src == dst) {
-                    res(msg.payload);
+        const connect = () => {
+            connectAttempt++;
+            ws = new WebSocket(WS_URL);
+            ws.onopen = () => {
+                opened = true;
+                logIce('log', `opened ws`)
+                sendOffer();
+            };
+            ws.onmessage = (e) => {
+                try {
+                    const msg = JSON.parse(e.data)
+                    logIce('log', `received message: ${e.data}`)
+                    if (msg.tag === tag && msg.payload) {
+                        res(msg.payload);
+                        return;
+                    }
+                } catch (err) {
+                    rej(`Failed to parse message: ${err}`);
+                }
+            };
+            ws.onerror = (err) => {
+                // The error event is fired when a connection with a WebSocket has been closed due to an error
+                logIce('log', `WebSocket error on attempt ${connectAttempt}: ${err}`);
+            }
+            ws.onclose = () => {
+                if (opened) {
+                    rej(new Error('WebSocket closed'));
                     return;
                 }
-                rej(new Error(e.data));
-            } catch (err) {
-                rej(`Failed to parse message: ${err}`);
-            }
-        };
-        ws.onerror = (err) => {
-            // The error event is fired when a connection with a WebSocket has been closed due to an error
-            rej(`WebSocket error: ${err}`);
+                if (connectAttempt >= MAX_CONNECT_ATTEMPTS) {
+                    rej(new Error(`Failed to connect to signalling server after ${MAX_CONNECT_ATTEMPTS} attempts`));
+                    return;
+                }
+                logIce('log', `retrying signalling server connection (attempt ${connectAttempt + 1}/${MAX_CONNECT_ATTEMPTS})`);
+                retry_connect_to = setTimeout(connect, CONNECT_RETRY_DELAY_MS);
+            };
         }
-        ws.onclose = () => {
-            rej(new Error('WebSocket closed'));
-        };
+        connect();
     });
 }
+
 
 
 function getDataChannel(iceConnection, dcName, ac) {
@@ -86,8 +105,15 @@ function getDataChannel(iceConnection, dcName, ac) {
             reject('DataChannel creation aborted');
         });
         const dc = iceConnection.createDataChannel(dcName);
+        const dcClosed = waitForDataChannelClose(dc, ac);
+        dc.onmessage = (event) => {
+            logIce('log', `dc message received: ${event.data}`);
+            if (event.data === 'hello') {
+                dc.send('what is your name');
+            }
+        };
         dc.onopen = () => {
-            resolve(dc);
+            resolve({ dc, dcClosed });
         };
         dc.onerror = (err) => {
             reject(`DataChannel error: ${err}`);
@@ -95,7 +121,7 @@ function getDataChannel(iceConnection, dcName, ac) {
     });
 }
 function setUpIceConnection(env, ac) {
-    const { COTURN_IP, COTURN_PORT, STUN_CREDENTIALS, WS_URL } = env;
+    const { COTURN_IP, COTURN_PORT, STUN_CREDENTIALS, WS_URL, TAG } = env;
     return new Promise((resolve, reject) => {
         console.log('Starting WebRTC test', COTURN_IP, COTURN_PORT, STUN_CREDENTIALS);
          const iceConfig = {
@@ -125,8 +151,7 @@ function setUpIceConnection(env, ac) {
                 logIce('iceLog1', 'ICE gathering complete');
                 sendOfferGetAnswer(
                     pc1.localDescription.sdp, 
-                    'pc1', 
-                    'pc2',
+                    TAG,
                     ac,
                     WS_URL
                 ).then(answerSdp => {
@@ -157,12 +182,27 @@ function setUpIceConnection(env, ac) {
         const dc1 = getDataChannel(pc1, "probe", ac);
         pc1.createOffer()
             .then(offer => pc1.setLocalDescription(offer))
-        return dc1.then(dc => {
-            resolve({ pc1, dc });
+        return dc1.then(({ dc, dcClosed }) => {
+            resolve({ pc1, dc, dcClosed });
         }).catch(err => {
             reject(`Failed to create DataChannel: ${err}`);
         });
     })
+}
+function waitForDataChannelClose(dc, ac) {
+    return new Promise((resolve, reject) => {
+        if (dc.readyState === 'closed') {
+            resolve();
+            return;
+        }
+        ac.signal.addEventListener('abort', () => {
+            reject('DataChannel close wait aborted');
+        });
+        dc.addEventListener('close', () => {
+            logIce('log', 'DataChannel closed');
+            resolve();
+        });
+    });
 }
 function testfunc(env) {
     const { COTURN_IP, COTURN_PORT, STUN_CREDENTIALS } = env;

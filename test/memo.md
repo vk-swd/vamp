@@ -130,10 +130,11 @@ flowchart TD
   ifEdgeBrowserNat1 --- sbntEdgeGateway
   ifEdgeBrowserNat2 --- sbntEdgeGateway
   ifEdgeRustnat --- sbntEdgeGateway
-  ifEdgeVpsnat --- sbntEdgeGateway
+  ifEdgeVpsnat --- |masquerade|sbntEdgeGateway
 
   %% VPS subnet
   coturn --- |external-ip|ifEdgeVpsnat
+  ifVpsSigturn --- |"  /\ <br>DNAT"|ifEdgeVpsnat
   sbntVpsGateway --- ifVpsVpsnat
   ifVpsSigturn --- sbntVpsGateway
 ```
