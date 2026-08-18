@@ -49,6 +49,79 @@
     1. <a id = "sec_lack_of_forwarding">Stale connections</a>: Stale [rtt records](#rtt_records) mean no forwarding occurs due to lack of other participant or not sending any payload. In a signalling exchange both parties should send something so if one does not send anything to be forwarded, it is removed. It should be something reasonable which would allow for a lengthy message processing by participants.
     1. <a id = "sec_no_forward_ack">Don't give feedback</a> in whether a [forwarding pair](#rtt_pair) had another peer where the message was forwarded or not. This should give fewer information to anyone trying to probe the tags.
 13. Implementation:
+
+
+   ```mermaid
+   flowchart
+      subgraph Server
+         accept_connections
+         TcpListener
+         spawn
+         serverState
+      end
+      spawn1["spawn async task"]
+      spawn2["spawn async task"]
+      spawn3["spawn async task"]
+
+      TcpListener -.-> accept_connections
+      accept_connections --> spawn
+      spawn --> |loop|accept_connections
+      spawn --> set_up_ws_connection
+      spawn-->set_up_ws_connection1[set_up_ws_connection]
+      spawn-->set_up_ws_connection2[...]
+
+      set_up_ws_connection -.->|add connection on connection start <br> remove connection and rtt records on its end|serverState
+
+      set_up_ws_connection -->|listen_task|spawn1
+      spawn1 --> wait_for_incoming
+      ws_con -.-> wait_for_incoming 
+      wait_for_incoming --> rate_limit_by_time_window_and_total_cnt_and_inconsistent_tag
+      dst_sender_q["Send queue"]
+      NonIdleMarker
+      subgraph MsgProcessor
+         record_rtr_and_get_forwarding_queue["record_rtr_and_get_forwarding_queue<br>schedule_send" ]
+         rate_limit_by_time_window_and_total_cnt_and_inconsistent_tag["Rate limit by:<br>1. Time window<br>2. Total count<br>3. Tag"]
+
+
+         rate_limit_by_time_window_and_total_cnt_and_inconsistent_tag -.-> msgRateLimiter
+         msgRateLimiter -.-> rate_limit_by_time_window_and_total_cnt_and_inconsistent_tag
+
+         rate_limit_by_time_window_and_total_cnt_and_inconsistent_tag --> mark_incoming
+         mark_incoming --> record_rtr_and_get_forwarding_queue
+         serverState -.-> |find connection to forward to|record_rtr_and_get_forwarding_queue
+         record_rtr_and_get_forwarding_queue -.->|add rtt record<br>remove rtt record with absent connection| serverState
+         record_rtr_and_get_forwarding_queue --> mark_forwarded
+      end
+
+      mark_forwarded --> |loop|wait_for_incoming
+      mark_incoming -.-> NonIdleMarker
+      mark_forwarded -.-> NonIdleMarker
+      record_rtr_and_get_forwarding_queue -.-> dst_sender_q
+
+
+
+      set_up_ws_connection -->|egress_task|spawn2
+      spawn2-->|egress_task|wait_new_to_send
+      dst_sender_q -.-> wait_new_to_send 
+      wait_new_to_send --> send
+      send --> |loop|wait_new_to_send
+      send -.-> ws_con
+
+     
+      set_up_ws_connection -->|start_idle_checker|spawn3
+      spawn3-->|start_idle_checker NonIdleMarker|check_idle_value
+      check_idle_value --> sleep
+      sleep --> |loop|check_idle_value
+      NonIdleMarker -.-> check_idle_value
+      check_idle_value ==> |cancel all async tasks<br>stop the conenction| set_up_ws_connection
+      set_up_ws_connection -.-> ws_con
+      ws_con -.- serverState
+      dst_sender_q -.- serverState
+   ```
+
+
+
+
     Entities:
       1. ServerTask is spawned to accept connections.
       1. Connection - a class that keeps handles to spawns a tasksets up a ws connection.

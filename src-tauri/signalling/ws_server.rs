@@ -120,12 +120,12 @@ impl MsgProcessor {
         }
 
         let parsed_msg = parse_incoming(&message)?;
-        self.non_idle_marker.increment_incoming();
         if let Err(error) = self.msg_rate_limiter.try_brand_rtt_tag(&parsed_msg.rtt_tag) {
             self.close_notifier.cancel();
 			self.metrics.record_bad_routing_tag();
             return Err(error).into();
         }
+        self.non_idle_marker.increment_incoming();
 
         let rtt_tag = parsed_msg.rtt_tag.clone();
         let has_payload = parsed_msg.has_payload;
