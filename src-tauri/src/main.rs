@@ -12,6 +12,19 @@ use crate::db::repository::ArcRepo;
 fn log_from_ui(message: String) {
     println!("[UI] {}", message);
 }
+
+
+#[tauri::command]
+async fn test_sleep() {
+    static SLEEPIDX: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let idx = SLEEPIDX.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    let now_formatted_time: String = chrono::Local::now().format("%H:%M:%S").to_string();
+    println!("[UI] entered sleep function {} at {}", idx, now_formatted_time);
+    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+    let now_formatted_time = chrono::Local::now().format("%H:%M:%S").to_string();
+    println!("[UI] Slept for 2 seconds {} at {}", idx, now_formatted_time);
+}
+
 struct UserConfig {
     db_path: std::path::PathBuf,
     db_filename: String,
@@ -136,7 +149,8 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             log_from_ui,
-            commands::dispatch::dispatch
+            commands::dispatch::dispatch,
+            test_sleep
         ])
         .plugin(tauri_plugin_opener::init())
         .run(tauri::generate_context!())

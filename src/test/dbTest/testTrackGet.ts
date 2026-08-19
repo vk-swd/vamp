@@ -1,6 +1,6 @@
 import { FilterSearchParam } from "../../db/generatedTypes";
 import { addTag, addTrack, addTracks, assignTag, assignTags, CriteriaName, getAllTags, getTracks, getTracksFiltered, SearchCriteriaFiltered, SearchParam, TagAssignment } from "../../db/tauriDb";
-import { log } from "../../logger";
+import { log, test_bcknd_sleep } from "../../logger";
 import { expect } from "vitest";
 
 let globalCounter = 0;
@@ -220,4 +220,9 @@ export async function Test1() {
     }
     runTest(1, 5, tagsIn([1,2]));
     runTest(1, 5, tagsAny([1,3,9]));    
+}
+
+export async function Test2() {
+    Array.from({ length: 10 }, () => test_bcknd_sleep())
+    await new Promise(resolve => setTimeout(resolve, 30000));
 }

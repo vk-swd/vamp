@@ -1,4 +1,4 @@
-import { initDb, Test1 } from './testTrackGet';
+import { initDb, Test1, Test2 } from './testTrackGet';
 
-Test1();
+Test2();
 // initDb();

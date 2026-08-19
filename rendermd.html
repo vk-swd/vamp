@@ -7,6 +7,7 @@
     <button id="btn-test-memo">Load test/memo.md</button>
     <button id="btn-rtc-memo">Load src-tauri/rtc/memo.md</button>
     <button id="btn-signalling-memo">Load src-tauri/signalling/memo.md</button>
+    <button id="btn-main-memo">Load src-tauri/memo.md</button>
   </div>
   <div id="content"></div>
 
@@ -35,7 +36,7 @@
     document.getElementById("btn-test-memo").addEventListener("click", () => loadMarkdown("test/memo.md"));
     document.getElementById("btn-rtc-memo").addEventListener("click", () => loadMarkdown("src-tauri/rtc/memo.md"));
     document.getElementById("btn-signalling-memo").addEventListener("click", () => loadMarkdown("src-tauri/signalling/memo.md"));
-
+    document.getElementById("btn-main-memo").addEventListener("click", () => loadMarkdown("src-tauri/memo.md"));
     await loadMarkdown("src-tauri/rtc/memo.md");
   </script>
 </body>

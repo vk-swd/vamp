@@ -115,7 +115,6 @@
       NonIdleMarker -.-> check_idle_value
       check_idle_value ==> |cancel all async tasks<br>stop the conenction| set_up_ws_connection
       set_up_ws_connection -.-> ws_con
-      ws_con -.- serverState
       dst_sender_q -.- serverState
    ```
 

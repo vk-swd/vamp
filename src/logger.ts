@@ -2,6 +2,11 @@
 
 import { callInvoke } from "./db/tauriInvoke";
 
+
+function test_bcknd_sleep() {
+    log(`test_bcknd_sleep() called`);
+    return callInvoke("test_sleep");
+}
 function log(message: string) {
     if (window.__TRANSPORT__ === 'ws') {
         if (message) {
@@ -22,4 +27,4 @@ window.onunhandledrejection = (e) => {
     log(`${ JSON.stringify({ type: 'unhandledrejection', msg: e.reason?.message ?? e.reason, stack: e.reason?.stack }) }`);
 };
 
-export { log };
+export { log, test_bcknd_sleep };

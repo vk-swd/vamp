@@ -4,9 +4,13 @@ version = "0.1.0"
 description = "VampAgent YouTube Viewer"
 authors = []
 edition = "2021"
+default-run = "vampagent"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+[[bin]]
+name = "vampagent"
+path = "src/main.rs"
 
 [[bin]]
 name = "test_rtc_client"
