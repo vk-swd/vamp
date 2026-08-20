@@ -3,6 +3,8 @@
 mod commands;
 mod db;
 mod transport;
+use std::sync::Arc;
+use async_trait::async_trait;
 use tauri::Manager;
 
 use crate::db::repository::ArcRepo;
@@ -81,6 +83,33 @@ struct RequestHandler {
 
 }
 
+struct AppWsHandler {
+    repo: ArcRepo,
+    guard: ArcListenGuard,
+}
+
+impl AppWsHandler {
+    fn new(repo: ArcRepo, guard: ArcListenGuard) -> Self {
+        Self { repo, guard }
+    }
+}
+
+#[async_trait]
+impl transport::ws_server::WsMessageHandler for AppWsHandler {
+    async fn handle(
+        &self,
+        req: transport::ws_server::WsRequest<serde_json::Value>,
+    ) -> Result<serde_json::Value, String> {
+        let payload = req.payload.unwrap_or(serde_json::Value::Null);
+        let cmd: crate::commands::dispatch::Command = serde_json::from_value(
+            serde_json::json!({ "kind": req.kind, "payload": payload }),
+        )
+        .map_err(|e| e.to_string())?;
+
+        crate::commands::dispatch::execute(&self.repo, &self.guard, cmd).await
+    }
+}
+
 #[derive(Clone)]
 struct AppCore {
     repo: ArcRepo,
@@ -106,7 +135,8 @@ impl AppCore {
     }
 
     async fn start_ws(&self, addr: std::net::SocketAddr) -> Result<(), String> {
-        transport::ws_server::start(self.repo.clone(), self.guard.clone(), addr).await
+        let handler = AppWsHandler::new(self.repo.clone(), self.guard.clone());
+        transport::ws_server::start(addr, Arc::new(handler)).await
     }
 }
 

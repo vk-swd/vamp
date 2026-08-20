@@ -1,37 +1,73 @@
-//! Plain WebSocket server (WS) — mirrors the Tauri IPC `dispatch` command.
+//! Generic WebSocket request/response server.
 //!
-//! Listens on `0.0.0.0:8090`.  Every incoming text frame must be a JSON object
-//! matching the same `{ "kind": "…", "payload": … }` schema used by the IPC dispatch.
-//! Each command is executed against the shared repository and the result (or error)
-//! is sent back as a JSON text frame: `{ "ok": <value> }` or `{ "error": "…" }`.
+//! Listens on the provided address and routes each incoming JSON request through
+//! a caller-provided async handler object.
 
 use std::net::SocketAddr;
+use std::sync::Arc;
 
+use async_trait::async_trait;
 use futures_util::{SinkExt, StreamExt};
+use serde::{Deserialize, Serialize};
 use tokio::net::TcpListener;
 use tokio_tungstenite::{accept_async, tungstenite::Message};
 
-use crate::commands::dispatch::{execute, Command};
-use crate::commands::listen_guard::ArcListenGuard;
-use crate::db::repository::ArcRepo;
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct WsRequest<T = serde_json::Value> {
+    pub id: u64,
+    pub kind: String,
+    pub payload: Option<T>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct WsResponse<T = serde_json::Value> {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ok: Option<T>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+impl<T> WsResponse<T> {
+    pub fn ok(id: u64, value: T) -> Self {
+        Self {
+            id: Some(id),
+            ok: Some(value),
+            error: None,
+        }
+    }
+
+    pub fn error(id: Option<u64>, message: impl Into<String>) -> Self {
+        Self {
+            id,
+            ok: None,
+            error: Some(message.into()),
+        }
+    }
+}
+
+#[async_trait]
+pub trait WsMessageHandler: Send + Sync + 'static {
+    async fn handle(&self, request: WsRequest<serde_json::Value>) -> Result<serde_json::Value, String>;
+}
 
 /// Bind to `addr`, then spawn a background task that accepts WebSocket
-/// connections and dispatches commands to `repo`.  Returns as soon as the listener is bound.
-pub async fn start(repo: ArcRepo, guard: ArcListenGuard, addr: SocketAddr) -> Result<(), String> {
+/// connections and forwards parsed requests to `handler`.
+pub async fn start(addr: SocketAddr, handler: Arc<dyn WsMessageHandler>) -> Result<(), String> {
     let listener = TcpListener::bind(addr).await.map_err(|e| e.to_string())?;
     println!("[WS] listening on {addr}");
-    tokio::spawn(accept_loop(listener, repo, guard));
+    tokio::spawn(accept_loop(listener, handler));
     Ok(())
 }
 
-async fn accept_loop(listener: TcpListener, repo: ArcRepo, guard: ArcListenGuard) {
+async fn accept_loop(listener: TcpListener, handler: Arc<dyn WsMessageHandler>) {
     loop {
         match listener.accept().await {
             Ok((stream, peer)) => {
-                let repo = repo.clone();
-                let guard = guard.clone();
+                let handler = handler.clone();
                 tokio::spawn(async move {
-                    if let Err(e) = handle_connection(stream, repo, guard).await {
+                    if let Err(e) = handle_connection(stream, handler).await {
                         eprintln!("[WS] {peer}: {e}");
                     }
                 });
@@ -41,11 +77,7 @@ async fn accept_loop(listener: TcpListener, repo: ArcRepo, guard: ArcListenGuard
     }
 }
 
-async fn handle_connection(
-    stream: tokio::net::TcpStream,
-    repo: ArcRepo,
-    guard: ArcListenGuard,
-) -> Result<(), String> {
+async fn handle_connection(stream: tokio::net::TcpStream, handler: Arc<dyn WsMessageHandler>) -> Result<(), String> {
     let ws = accept_async(stream).await.map_err(|e| e.to_string())?;
     let (mut write, mut read) = ws.split();
 
@@ -56,39 +88,23 @@ async fn handle_connection(
             _ => continue,
         };
 
-        let response = route(&text, &repo, &guard).await;
-        if write.send(Message::Text(response)).await.is_err() {
+        let response = route(&text, &*handler).await;
+        let response_text = serde_json::to_string(&response).map_err(|e| e.to_string())?;
+        if write.send(Message::Text(response_text.into())).await.is_err() {
             break;
         }
     }
     Ok(())
 }
 
-/// Parse `{ "id": N, "kind": "…", "payload": … }`, execute the command, return a JSON reply.
-/// The `id` field is echoed back so the client can match the response to its request.
-async fn route(text: &str, repo: &ArcRepo, guard: &ArcListenGuard) -> String {
-    let v: serde_json::Value = match serde_json::from_str(text) {
-        Ok(v) => v,
-        Err(e) => return err_json(None, e.to_string()),
+async fn route(text: &str, handler: &dyn WsMessageHandler) -> WsResponse<serde_json::Value> {
+    let request: WsRequest<serde_json::Value> = match serde_json::from_str(text) {
+        Ok(request) => request,
+        Err(e) => return WsResponse::error(None, e.to_string()),
     };
-    let id = v.get("id").cloned();
-    let cmd: Command = match serde_json::from_value(v) {
-        Ok(c) => c,
-        Err(e) => return err_json(id.as_ref(), e.to_string()),
-    };
-    match execute(repo, guard, cmd).await {
-        Ok(val) => {
-            let mut res = serde_json::json!({ "ok": val });
-            if let Some(id) = &id { res["id"] = id.clone(); }
-            // println!("[WS] sending: {res}");
-            res.to_string()
-        }
-        Err(e) => err_json(id.as_ref(), e),
+    let id = request.id;
+    match handler.handle(request).await {
+        Ok(value) => WsResponse::ok(id, value),
+        Err(error) => WsResponse::error(Some(id), error),
     }
-}
-
-fn err_json(id: Option<&serde_json::Value>, msg: String) -> String {
-    let mut res = serde_json::json!({ "error": msg });
-    if let Some(id) = id { res["id"] = id.clone(); }
-    res.to_string()
 }
