@@ -9,14 +9,18 @@ use tokio::runtime::Builder;
 use tokio::sync::{mpsc, Mutex};
 use tokio::time::sleep;
 
-
+// DEPRECATED TEST
 
 
 mod signalling {
-    pub mod server;
+    pub mod ws_server;
 }
 
-
+mod src {
+    pub mod commands {
+        pub mod common;
+    }
+}
 use futures_util::{SinkExt, StreamExt};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
@@ -30,8 +34,30 @@ struct NotifySuite {
     test_done: Arc<Notify>,
 }
 use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
-
-use crate::signalling::server::{SimpleResult, msg_to_txt};
+pub enum SimpleResult<T> {
+    Ok(T),
+    Err(String),
+}
+pub fn msg_to_txt(msg: &Message) -> Option<String> {
+    match msg {
+        Message::Text(t) => Some(t.clone()),
+        Message::Binary(b) => match String::from_utf8(b.clone()) {
+            Ok(s) => Some(s),
+            Err(_) => None,
+        },
+        _ => None,
+    }
+}
+pub async fn next_msg<T>(source: &mut T) -> SimpleResult<Message>
+where
+    T: futures_util::stream::Stream<Item = tokio_tungstenite::tungstenite::Result<Message>> + Unpin,
+{
+    match source.next().await {
+        Some(Ok(m)) => SimpleResult::Ok(m),
+        Some(Err(e)) => SimpleResult::Err(e.to_string()),
+        None => SimpleResult::Err("Connection closed".to_string()),
+    }
+}
 
 async fn run_server(addr: SocketAddr, notifier: Arc<NotifySuite>) {
     let listener = TcpListener::bind(addr).await.expect("failed to bind TCP listener");
@@ -83,7 +109,7 @@ where
         server_sender_closed.notify_one();
     });
     notifier.serer_async_sender_up.notified().await;
-    let rn = signalling::server::next_msg(&mut read).await;
+    let rn = next_msg(&mut read).await;
     let msg = match rn {
         SimpleResult::Ok(msg) => match msg_to_txt(&msg) {
             Some(t) => t,
@@ -145,7 +171,7 @@ async fn test_main() {
             }
         }
         log::info!("[SS] Sent message to server, waiting for response...");
-        match signalling::server::next_msg(&mut read).await {
+        match next_msg(&mut read).await {
             SimpleResult::Ok(msg) => match msg_to_txt(&msg) {
                 Some(t) => log::info!("[SS] Received from server: {t}"),
                 None => log::error!("[SS] msg_to_txt fail"),

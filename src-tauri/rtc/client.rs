@@ -38,7 +38,7 @@ use webrtc::interceptor::registry::Registry;
 use webrtc::peer_connection::configuration::RTCConfiguration;
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 
-use crate::common::{MyErr, MyRes};
+// use crate::src::commands::common::{MyErr, MyRes};
 
 const ICE_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const ICE_GATHER_TIMEOUT: Duration = Duration::from_secs(5);
@@ -137,7 +137,7 @@ fn defaultRTCConfig() -> RTCConfiguration {
             urls: vec!["turns:username1:passVeryh@hamsterworks.org:9011".to_owned()],
             username: "username1".to_owned(),
             credential: "passVeryh".to_owned(),
-            credential_type: webrtc::ice_transport::ice_credential_type::RTCIceCredentialType::Password,
+            // credential_type: webrtc::ice_transport::ice_credential_type::RTCIceCredentialType::Password,
             ..Default::default()
         }],
         ..Default::default()
@@ -388,7 +388,7 @@ struct IceHandle {
     pc: Arc<RTCPeerConnection>
 }
 
-async fn start_ice(offer: String) -> MyRes<IceHandle> {
+async fn start_ice(offer: String) -> crate::src::commands::common::MyRes<IceHandle> {
     let api = build_rtc_api()?;
     let pc = Arc::new(api.new_peer_connection(defaultRTCConfig()).await?);
 
@@ -397,7 +397,7 @@ async fn start_ice(offer: String) -> MyRes<IceHandle> {
     let (dc_clone, ready_clone) = (dc.clone(), dc_ready.clone());
     pc.on_data_channel(Box::new(move |chan: Arc<RTCDataChannel>| {
         let (dc_clone, ready_clone) = (dc_clone.clone(), ready_clone.clone());
-        chan.on_open(Box::new(move || {
+        chan.clone().on_open(Box::new(move || {
             dc_clone.lock().unwrap().replace(chan.clone());
             ready_clone.notify_one();
             Box::pin(async move {})
@@ -435,7 +435,11 @@ use std::time::Instant;
 pub async fn run_client(server_url: &str, src_addr: String) {
     //        let selectedPair = pc.sctp.transport.iceTransport.getSelectedCandidatePair()
     log::info!("[WSC] Starting client with source address '{src_addr}'");
-    let mut connection = match connectToSS(server_url).await {
+    let config = WsConfig {
+        url: server_url.to_string(),
+        is_tls: server_url.starts_with("wss://"),
+    };
+    let mut connection = match connectToSS(&config).await {
         Ok(s) => s,
         Err(e) => {
             eprintln!("[WSC] Failed to connect to signalling server: {e}");

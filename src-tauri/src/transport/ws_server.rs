@@ -67,7 +67,6 @@ async fn handle_connection(
 /// Parse `{ "id": N, "kind": "…", "payload": … }`, execute the command, return a JSON reply.
 /// The `id` field is echoed back so the client can match the response to its request.
 async fn route(text: &str, repo: &ArcRepo, guard: &ArcListenGuard) -> String {
-    println!("[WS] received: {text}");
     let v: serde_json::Value = match serde_json::from_str(text) {
         Ok(v) => v,
         Err(e) => return err_json(None, e.to_string()),
@@ -81,7 +80,7 @@ async fn route(text: &str, repo: &ArcRepo, guard: &ArcListenGuard) -> String {
         Ok(val) => {
             let mut res = serde_json::json!({ "ok": val });
             if let Some(id) = &id { res["id"] = id.clone(); }
-            println!("[WS] sending: {res}");
+            // println!("[WS] sending: {res}");
             res.to_string()
         }
         Err(e) => err_json(id.as_ref(), e),

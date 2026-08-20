@@ -1,12 +1,14 @@
-mod transport {
-    pub mod wsclient;
+mod rtc {
+    pub mod client;
     pub mod dc;
 }
 mod signalling {
-    pub mod server;
+    pub mod ws_server;
 }
-use transport::wsclient;
+use rtc::client; 
 
+#[path="./commands/common.rs"]
+mod common;
 // mod wsserver;
 
 fn hello() {
@@ -81,7 +83,7 @@ async fn main() {
     while 1 == 1 {
         // select_test().await;
         //     wsserver::run_server().await;
-        wsclient::run_client("wss://hamsterworks.org:44050", String::from("hello")).await;
+        client::run_client("wss://hamsterworks.org:44050", String::from("hello")).await;
         // sleep(Duration::from_secs(1)).await;
     }
 }
