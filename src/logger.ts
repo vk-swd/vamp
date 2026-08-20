@@ -1,6 +1,7 @@
 
 
 import { callInvoke } from "./db/tauriInvoke";
+import { dispatch } from "./db/dispatchClient";
 
 
 function test_bcknd_sleep() {
@@ -8,14 +9,11 @@ function test_bcknd_sleep() {
     return callInvoke("test_sleep");
 }
 function log(message: string) {
+    const msg = `${new Date().toISOString()}: ${message}`
     if (window.__TRANSPORT__ === 'ws') {
-        if (message) {
-        console.log(`WS log: ${message}`);
-        } else {
-        console.log(`WS log: (empty message)`);
-        }
+        console.log(`WS log: ${msg}`);
     } else {
-        callInvoke("log_from_ui", { message: `${new Date().toISOString()}: ${message}` });
+        dispatch("LogFromUi", { message: msg });
     }
 }
 

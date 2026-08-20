@@ -6,6 +6,7 @@ mod transport;
 use tauri::Manager;
 
 use crate::db::repository::ArcRepo;
+use crate::commands::listen_guard::ArcListenGuard;
 
 #[tauri::command]
 fn log_from_ui(message: String) {
@@ -76,6 +77,123 @@ fn create_user_config() -> UserConfig {
     }
 }
 
+struct RequestHandler {
+
+}
+
+#[derive(Clone)]
+struct AppCore {
+    repo: ArcRepo,
+    guard: ArcListenGuard,
+}
+
+impl AppCore {
+    fn new(repo: ArcRepo, guard: ArcListenGuard) -> Self {
+        Self { repo, guard }
+    }
+
+    async fn dispatch_message(
+        &self,
+        kind: String,
+        payload: Option<serde_json::Value>,
+    ) -> Result<serde_json::Value, String> {
+        let payload = payload.unwrap_or(serde_json::Value::Null);
+        let cmd: crate::commands::dispatch::Command = serde_json::from_value(
+            serde_json::json!({ "kind": kind, "payload": payload }),
+        )
+        .map_err(|e| e.to_string())?;
+        crate::commands::dispatch::execute(&self.repo, &self.guard, cmd).await
+    }
+
+    async fn start_ws(&self, addr: std::net::SocketAddr) -> Result<(), String> {
+        transport::ws_server::start(self.repo.clone(), self.guard.clone(), addr).await
+    }
+}
+
+#[tauri::command]
+async fn app_dispatch(
+    app: tauri::State<'_, AppCore>,
+    kind: String,
+    payload: Option<serde_json::Value>,
+) -> Result<serde_json::Value, String> {
+    app.dispatch_message(kind, payload).await
+}
+
+struct WsHandle {
+
+}
+
+struct TauriHandle<B> {
+    builder: B,
+}
+impl TauriHandle<tauri::Builder<tauri::Wry>> {
+    fn new(port: u16, user_config: UserConfig, app_core: AppCore) -> Self {
+        Self { builder: tauri::Builder::default()
+            // .plugin(tauri_plugin_localhost::Builder::new(port.clone()).build())
+            .setup(move |app| {
+                app.handle().manage(app_core.clone());
+                let mut url: String = format!("http://localhost:{}", port);
+                if matches!(user_config.window_idx, 1) {
+                    url += &format!("/src/test/dbTest/mockPage.html");
+                }
+                let mut win_config = app.config().app.windows[user_config.window_idx].clone();
+                win_config.url = tauri::WebviewUrl::External(url.parse().unwrap());
+                
+                let window = tauri::WebviewWindowBuilder::from_config(app.handle(), &win_config)?
+                    .build()?;
+                // Apply webkit settings for ALL builds (debug + release)
+
+                #[cfg(target_os = "linux")]
+                window
+                    .with_webview(|webview| {
+                        use webkit2gtk::{SettingsExt, WebViewExt};
+
+                        let w = webview.inner();
+                        let settings = WebViewExt::settings(&w).unwrap();
+
+                        // Spoof modern Chrome so YouTube serves the correct player JS
+                        settings.set_user_agent(Some(
+                            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 \
+                                (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+                        ));
+
+                        // Media Source Extensions – required for DASH/HLS adaptive streaming
+                        settings.set_enable_mediasource(true);
+
+                        // Allow autoplay without a prior user gesture (needed for the IFrame API)
+                        settings.set_media_playback_requires_user_gesture(false);
+
+                        // Encrypted Media Extensions – required for HD/DRM streams on YouTube
+                        settings.set_enable_encrypted_media(true);
+
+                        // GPU-accelerated video decoding
+                        settings.set_hardware_acceleration_policy(
+                            webkit2gtk::HardwareAccelerationPolicy::Always,
+                        );
+
+                        // WebGL – YouTube's player uses it for rendering overlays
+                        settings.set_enable_webgl(true);
+
+                        // MediaStream – suppresses the enumerate-devices console errors
+                        settings.set_enable_media_stream(true);
+                    })
+                    .unwrap();
+                // Open DevTools only in debug builds
+                // #[cfg(debug_assertions)]
+                // window.open_devtools();
+                Ok(())
+            })
+            .invoke_handler(tauri::generate_handler![
+                app_dispatch
+            ])
+            .plugin(tauri_plugin_opener::init())
+         }
+    }
+    fn run(self, context: tauri::Context<tauri::Wry>) {
+        self.builder.run(context).expect("error while running tauri application");
+    }
+}
+
 #[tokio::main]
 async fn main() {
     let port: u16 = 1420;
@@ -90,87 +208,16 @@ async fn main() {
         .expect("failed to initialize database");
 
     let guard = crate::commands::listen_guard::ListenGuard::new();
+    let app_core = AppCore::new(repo.clone(), guard.clone());
 
 
     // if !matches!(user_config.window_idx, 1) {
-        let repo1 = repo.clone();
-        let guard1 = guard.clone();
-
-        match transport::ws_server::start(
-            repo1,
-            guard1,
-            "0.0.0.0:8090".parse().unwrap(),
-        ).await {
+        match app_core.start_ws("0.0.0.0:8090".parse().unwrap()).await {
             Ok(_) => println!("[WS] started"),
             Err(e) => eprintln!("[WS] failed to start: {e}"),
         }
     // } 
+    TauriHandle::new(port, user_config, app_core.clone())
+        .run(tauri::generate_context!());
     
-    tauri::Builder::default()
-        // .plugin(tauri_plugin_localhost::Builder::new(port.clone()).build())
-        .setup(move |app| {
-            app.handle().manage(repo.clone());
-            app.handle().manage(guard.clone());
-
-            
-
-            let mut url: String = format!("http://localhost:{}", port);
-            if matches!(user_config.window_idx, 1) {
-                url += &format!("/src/test/dbTest/mockPage.html");
-            }
-            let mut win_config = app.config().app.windows[user_config.window_idx].clone();
-            win_config.url = tauri::WebviewUrl::External(url.parse().unwrap());
-            
-            let window = tauri::WebviewWindowBuilder::from_config(app.handle(), &win_config)?
-                .build()?;
-            // Apply webkit settings for ALL builds (debug + release)
-
-            #[cfg(target_os = "linux")]
-            window
-                .with_webview(|webview| {
-                    use webkit2gtk::{SettingsExt, WebViewExt};
-
-                    let w = webview.inner();
-                    let settings = WebViewExt::settings(&w).unwrap();
-
-                    // Spoof modern Chrome so YouTube serves the correct player JS
-                    settings.set_user_agent(Some(
-                        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 \
-                            (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-                    ));
-
-                    // Media Source Extensions – required for DASH/HLS adaptive streaming
-                    settings.set_enable_mediasource(true);
-
-                    // Allow autoplay without a prior user gesture (needed for the IFrame API)
-                    settings.set_media_playback_requires_user_gesture(false);
-
-                    // Encrypted Media Extensions – required for HD/DRM streams on YouTube
-                    settings.set_enable_encrypted_media(true);
-
-                    // GPU-accelerated video decoding
-                    settings.set_hardware_acceleration_policy(
-                        webkit2gtk::HardwareAccelerationPolicy::Always,
-                    );
-
-                    // WebGL – YouTube's player uses it for rendering overlays
-                    settings.set_enable_webgl(true);
-
-                    // MediaStream – suppresses the enumerate-devices console errors
-                    settings.set_enable_media_stream(true);
-                })
-                .unwrap();
-            // Open DevTools only in debug builds
-            // #[cfg(debug_assertions)]
-            // window.open_devtools();
-            Ok(())
-        })
-        .invoke_handler(tauri::generate_handler![
-            log_from_ui,
-            commands::dispatch::dispatch,
-            test_sleep
-        ])
-        .plugin(tauri_plugin_opener::init())
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
 }

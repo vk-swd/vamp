@@ -214,12 +214,19 @@ export async function Test1() {
             PAGE_SIZE);
             const realExp = expected.slice(expectedPageStart, expectedPageEnd);
             // log(`Expected ${realExp.join(',')} tracks, \n got ${tracks.map(t => t.id).join(',')}`);
-            expect(tracks.map(t => t.id)).toEqual(realExp);
+            try {
+                expect(tracks.map(t => t.id)).toEqual(realExp);
+            } catch (e) {
+                log(`Test failed for artistLike=${artistLike}, trackLike=${trackLike}, tags=${tagIds.tag_ids.join(',')}
+                i is ${i} out of ${expected.length} PAGE_STEP ${PAGE_STEP}`);
+                throw e;
+            } 
             cursor = expected[Math.min(i + PAGE_STEP, expected.length - 1)];
+            log(`test passed for i ${i} out of ${expected.length} PAGE_STEP ${PAGE_STEP}`);
         }
     }
-    runTest(1, 5, tagsIn([1,2]));
-    runTest(1, 5, tagsAny([1,3,9]));    
+    await runTest(1, 5, tagsIn([1,2]));
+    await runTest(1, 5, tagsAny([1,3,9]));    
 }
 
 export async function Test2() {

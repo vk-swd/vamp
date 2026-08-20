@@ -134,6 +134,11 @@ pub struct EditTrackSourceArgs {
     pub new_url: String,
 }
 
+#[derive(Deserialize)]
+pub struct LogFromUiArgs {
+    pub message: String,
+}
+
 // ─── Command enum ─────────────────────────────────────────────────────────────
 
 /// Discriminated union of every DB operation.
@@ -175,6 +180,7 @@ pub enum Command {
     EditTrackSource(EditTrackSourceArgs),
     GetSourcesForTrack(TrackIdArg),
     GetHtmlBundle(()),
+    LogFromUi(LogFromUiArgs),
 }
 
 // ─── Shared execution logic ───────────────────────────────────────────────────
@@ -300,6 +306,10 @@ pub async fn execute(repo: &ArcRepo, guard: &ArcListenGuard, cmd: Command) -> Re
         Command::GetHtmlBundle(()) => {
             // In dev, this serves the unbundled JS/CSS from the webpack dev server
             serde_json::to_value(get_script_data()).map_err(|e| e.to_string())?
+        }
+        Command::LogFromUi(LogFromUiArgs { message }) => {
+            println!("[UI] {}", message);
+            serde_json::Value::Null
         }
     };
 

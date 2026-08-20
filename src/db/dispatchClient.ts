@@ -122,5 +122,5 @@ export function dispatch<T>(kind: string, payload: unknown = null): Promise<T> {
   if (window.__TRANSPORT__ === 'ws') {
     return wsClient.send<T>(kind, payload);
   }
-  return callInvoke<T>('dispatch', { kind, payload });
+  return callInvoke<T>('app_dispatch', { kind, payload });
 }
