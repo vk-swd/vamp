@@ -34,8 +34,6 @@
 pub mod dispatch;
 pub mod listen_guard;
 
-use tauri::Manager;
-
 use crate::db::{
     repository::ArcRepo,
     schema::{ListenInfo, NewTrack, SearchCriteria, Tag, TagAssignment, TrackMeta, TrackRow, TrackSource, TrackUpdate, TrackWithSources},
@@ -43,31 +41,11 @@ use crate::db::{
 
 /// Convenience alias: the Tauri State wrapper around the repository handle.
 type Repo<'a> = tauri::State<'a, ArcRepo>;
-
-// ======================================================================
-// Database initialisation helper (not a Tauri command)
-// ======================================================================
-
-/// Resolve the platform app-data directory, open (or create) `vampagent.db`,
-/// run pending migrations, and register the repository as Tauri managed state.
-///
-/// Call this once from inside the `.setup()` closure in `main.rs`.
-
-pub fn default_dir(handle: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
-    return handle
-        .path()
-        .app_data_dir()
-        .map_err(|e| e.to_string())
-}
-pub async fn setup_database(handle: tauri::AppHandle, db_full_path: std::path::PathBuf) -> Result<(), String> {
-    let repo = crate::db::sqlite::SqliteRepository::new(db_full_path)
+pub async fn create_repo(db_full_path: std::path::PathBuf, is_test: bool) -> Result<ArcRepo, String> {
+    let repo = crate::db::sqlite::SqliteRepository::new(db_full_path, is_test)
         .await
         .map_err(|e| e.to_string())?;
-    // Managing a single database connection because SQLite is used.
-    let repo: ArcRepo = std::sync::Arc::new(repo);
-    handle.manage(repo);
-    handle.manage(crate::commands::listen_guard::ListenGuard::new());
-    Ok(())
+    Ok(std::sync::Arc::new(repo))
 }
 
 // ======================================================================

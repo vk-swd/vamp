@@ -44,12 +44,15 @@ impl SqliteRepository {
     ///
     /// Foreign-key enforcement is activated on every connection via the
     /// `foreign_keys` pragma baked into the connection options.
-    pub async fn new(path: impl AsRef<Path>) -> Result<Self, sqlx::Error> {
-        let options = SqliteConnectOptions::new()
+    pub async fn new(path: impl AsRef<Path>, is_test: bool) -> Result<Self, sqlx::Error> {
+        let mut options = SqliteConnectOptions::new()
             .filename(path)
             .pragma("foreign_keys", "ON")
             .create_if_missing(true);
-
+        if is_test {
+            options = options.journal_mode(sqlx::sqlite::SqliteJournalMode::Wal)
+                .synchronous(sqlx::sqlite::SqliteSynchronous::Normal);
+        }
         let pool = SqlitePoolOptions::new().connect_with(options).await?;
 
         // sqlx::migrate!() reads files from `./migrations` relative to

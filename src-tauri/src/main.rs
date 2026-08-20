@@ -5,7 +5,6 @@ mod db;
 mod transport;
 use tauri::Manager;
 
-use crate::commands::default_dir;
 use crate::db::repository::ArcRepo;
 
 #[tauri::command]
@@ -29,6 +28,8 @@ struct UserConfig {
     db_path: std::path::PathBuf,
     db_filename: String,
     window_idx: usize,
+    is_test: bool,
+    crypto_dir: Option<std::path::PathBuf>,
 }
 
 enum LaunchMode {
@@ -37,72 +38,89 @@ enum LaunchMode {
     DefaultDb,
 }
 
-fn main() {
+fn create_user_config() -> UserConfig {
+    let test_dir_env = std::env::var("TEST_DIR");
+    let app_dir_env = std::env::var("VAMP_DIR");
+    let crypto_dir_env = std::env::var("CRYPTO_DIR");
+    
+    let mut launch_mode = LaunchMode::DefaultDb;
+    if app_dir_env.is_ok() {
+        launch_mode = LaunchMode::DbFolderDefined;
+    }
+    if test_dir_env.is_ok() {
+        launch_mode = LaunchMode::Test;
+    }
+    match launch_mode {
+        LaunchMode::Test => UserConfig {
+            db_path: std::path::PathBuf::from(test_dir_env.unwrap()),
+            db_filename: chrono::Local::now().format("%Y%m%d_%H%M%S").to_string()
+                + "_test.db",
+            window_idx: 1, //windows are defined in tauri config
+            is_test: true,
+            crypto_dir: crypto_dir_env.ok().map(std::path::PathBuf::from),
+        },
+        LaunchMode::DbFolderDefined => UserConfig {
+            db_path: std::path::PathBuf::from(app_dir_env.unwrap()),
+            db_filename: "vampa.db".to_string(),
+            window_idx: 0,
+            is_test: false,
+            crypto_dir: crypto_dir_env.ok().map(std::path::PathBuf::from),
+        },
+        LaunchMode::DefaultDb => UserConfig {
+            db_path: dirs::data_dir().unwrap(),
+            db_filename: "vampagent3.db".to_string(),
+            window_idx: 0,
+            is_test: false,
+            crypto_dir: crypto_dir_env.ok().map(std::path::PathBuf::from),
+        },
+    }
+}
+
+#[tokio::main]
+async fn main() {
     let port: u16 = 1420;
+    tauri::async_runtime::set(tokio::runtime::Handle::current());
+    let user_config = create_user_config();
+
+    std::fs::create_dir_all(&user_config.db_path).expect("failed to create db directory");
+    let db_full_path = user_config.db_path.join(&user_config.db_filename);
+
+    let repo: ArcRepo = commands::create_repo(db_full_path, user_config.is_test)
+        .await
+        .expect("failed to initialize database");
+
+    let guard = crate::commands::listen_guard::ListenGuard::new();
+
+
+    // if !matches!(user_config.window_idx, 1) {
+        let repo1 = repo.clone();
+        let guard1 = guard.clone();
+
+        match transport::ws_server::start(
+            repo1,
+            guard1,
+            "0.0.0.0:8090".parse().unwrap(),
+        ).await {
+            Ok(_) => println!("[WS] started"),
+            Err(e) => eprintln!("[WS] failed to start: {e}"),
+        }
+    // } 
+    
     tauri::Builder::default()
-        .plugin(tauri_plugin_localhost::Builder::new(port.clone()).build())
+        // .plugin(tauri_plugin_localhost::Builder::new(port.clone()).build())
         .setup(move |app| {
-            let test_dir_env = std::env::var("TEST_DIR");
-            let app_dir_env = std::env::var("VAMP_DIR");
-            let mut launch_mode = LaunchMode::DefaultDb;
-            if app_dir_env.is_ok() {
-                launch_mode = LaunchMode::DbFolderDefined;
-            }
-            if test_dir_env.is_ok() {
-                launch_mode = LaunchMode::Test;
-            }
+            app.handle().manage(repo.clone());
+            app.handle().manage(guard.clone());
 
-            let user_config = match launch_mode {
-                LaunchMode::Test => UserConfig {
-                    db_path: std::path::PathBuf::from(test_dir_env.unwrap()),
-                    db_filename: chrono::Local::now().format("%Y%m%d_%H%M%S").to_string()
-                        + "_test.db",
-                    window_idx: 1,
-                },
-                LaunchMode::DbFolderDefined => UserConfig {
-                    db_path: std::path::PathBuf::from(app_dir_env.unwrap()),
-                    db_filename: "vampa.db".to_string(),
-                    window_idx: 0,
-                },
-                LaunchMode::DefaultDb => UserConfig {
-                    db_path: default_dir(app.handle())?,
-                    db_filename: "vampagent3.db".to_string(),
-                    window_idx: 0,
-                },
-            };
-            std::fs::create_dir_all(&user_config.db_path).map_err(|e| e.to_string())?;
-            let db_full_path = user_config.db_path.join(&user_config.db_filename);
-            tauri::async_runtime::block_on(commands::setup_database(
-                app.handle().clone(),
-                db_full_path,
-            ))
-            .map_err(|e| e.to_string())?;
-
-            if !matches!(launch_mode, LaunchMode::Test) {
-                let repo = app.handle().state::<ArcRepo>().inner().clone();
-                let guard = app.handle().state::<crate::commands::listen_guard::ArcListenGuard>().inner().clone();
-                let cert_path = user_config.db_path.join("cert.pem");
-                let key_path = user_config.db_path.join("key.pem");
-                tauri::async_runtime::block_on(
-                    // transport::ws_server::start(repo, guard, "127.0.0.1:8090".parse().unwrap(), &cert_path, &key_path)
-                    transport::ws_server::start(
-                        repo,
-                        guard,
-                        "0.0.0.0:8090".parse().unwrap(),
-                        &cert_path,
-                        &key_path,
-                    ),
-                )
-                .map_err(|e| e.to_string())?;
-            } 
             
 
             let mut url: String = format!("http://localhost:{}", port);
-            if matches!(launch_mode, LaunchMode::Test) {
+            if matches!(user_config.window_idx, 1) {
                 url += &format!("/src/test/dbTest/mockPage.html");
             }
             let mut win_config = app.config().app.windows[user_config.window_idx].clone();
             win_config.url = tauri::WebviewUrl::External(url.parse().unwrap());
+            
             let window = tauri::WebviewWindowBuilder::from_config(app.handle(), &win_config)?
                 .build()?;
             // Apply webkit settings for ALL builds (debug + release)

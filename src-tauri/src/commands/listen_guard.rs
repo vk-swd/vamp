@@ -2,7 +2,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 pub struct ListenGuard {
-    last: Mutex<Option<(i64, Instant)>>,
+    last: Mutex<Option<Instant>>,
 }
 
 pub type ArcListenGuard = Arc<ListenGuard>;
@@ -14,12 +14,19 @@ impl ListenGuard {
 
     /// Returns true if this listen record should be committed.
     /// Rejects records for the same track arriving within the specified interval (in seconds) of the previous one.
-    pub fn should_record(&self, track_id: i64, interval: i64) -> bool {
+    pub fn should_record(&self, interval: i64) -> bool {
+        let now = Instant::now();
         let mut guard = self.last.lock().unwrap();
         match *guard {
-            Some((id, t)) if id == track_id && t.elapsed() < Duration::from_secs_f64(interval as f64 * 0.9) => false,
+            Some(t) => {
+                let should_drop = (now - t) < Duration::from_secs_f64(interval as f64 * 0.9);
+                if !should_drop {
+                    *guard = Some(now);
+                }
+                !should_drop
+            }
             _ => {
-                *guard = Some((track_id, Instant::now()));
+                *guard = Some(now);
                 true
             }
         }

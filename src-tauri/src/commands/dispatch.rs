@@ -220,7 +220,7 @@ pub async fn execute(repo: &ArcRepo, guard: &ArcListenGuard, cmd: Command) -> Re
             to_val(repo.get_listens_for_track(track_id).await)?,
 
         Command::AddListenedSeconds(AddListenedSecondsArgs { track_id, seconds }) => {
-            if guard.should_record(track_id, seconds) {
+            if guard.should_record(seconds) {
                 repo.add_listened_seconds(track_id, seconds).await.map_err(|e| e.to_string())?;
             }
             serde_json::Value::Null

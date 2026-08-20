@@ -1,78 +1,42 @@
-//! Secure WebSocket server (WSS) — mirrors the Tauri IPC `dispatch` command over TLS.
+//! Plain WebSocket server (WS) — mirrors the Tauri IPC `dispatch` command.
 //!
 //! Listens on `0.0.0.0:8090`.  Every incoming text frame must be a JSON object
 //! matching the same `{ "kind": "…", "payload": … }` schema used by the IPC dispatch.
 //! Each command is executed against the shared repository and the result (or error)
 //! is sent back as a JSON text frame: `{ "ok": <value> }` or `{ "error": "…" }`.
-//!
-//! TLS certificate (`cert.pem`) and private key (`key.pem`) are loaded from the paths
-//! passed to `start()`.
 
 use std::net::SocketAddr;
-use std::path::Path;
-use std::sync::Arc;
 
 use futures_util::{SinkExt, StreamExt};
-use rustls_pemfile::{certs, pkcs8_private_keys};
 use tokio::net::TcpListener;
-use tokio_rustls::rustls::ServerConfig;
-use tokio_rustls::TlsAcceptor;
 use tokio_tungstenite::{accept_async, tungstenite::Message};
 
 use crate::commands::dispatch::{execute, Command};
 use crate::commands::listen_guard::ArcListenGuard;
 use crate::db::repository::ArcRepo;
 
-fn load_tls_config(cert_path: &Path, key_path: &Path) -> Result<ServerConfig, String> {
-    let cert_file = std::fs::File::open(cert_path)
-        .map_err(|e| format!("Cannot open cert {}: {e}", cert_path.display()))?;
-    let key_file = std::fs::File::open(key_path)
-        .map_err(|e| format!("Cannot open key {}: {e}", key_path.display()))?;
-
-    let cert_chain = certs(&mut std::io::BufReader::new(cert_file))
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| format!("Bad cert: {e}"))?;
-
-    let mut keys = pkcs8_private_keys(&mut std::io::BufReader::new(key_file))
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| format!("Bad key: {e}"))?;
-
-    if keys.is_empty() {
-        return Err("No PKCS8 private keys found in key file".to_string());
-    }
-
-    ServerConfig::builder()
-        .with_no_client_auth()
-        .with_single_cert(cert_chain, keys.remove(0).into())
-        .map_err(|e| e.to_string())
-}
-
-/// Bind to `addr` with TLS, then spawn a background task that accepts secure WebSocket
+/// Bind to `addr`, then spawn a background task that accepts WebSocket
 /// connections and dispatches commands to `repo`.  Returns as soon as the listener is bound.
-pub async fn start(repo: ArcRepo, guard: ArcListenGuard, addr: SocketAddr, cert_path: &Path, key_path: &Path) -> Result<(), String> {
-    let tls_config = load_tls_config(cert_path, key_path)?;
-    let acceptor = TlsAcceptor::from(Arc::new(tls_config));
-
+pub async fn start(repo: ArcRepo, guard: ArcListenGuard, addr: SocketAddr) -> Result<(), String> {
     let listener = TcpListener::bind(addr).await.map_err(|e| e.to_string())?;
-    println!("[WSS] listening on {addr}");
-    tokio::spawn(accept_loop(listener, repo, guard, acceptor));
+    println!("[WS] listening on {addr}");
+    tokio::spawn(accept_loop(listener, repo, guard));
     Ok(())
 }
 
-async fn accept_loop(listener: TcpListener, repo: ArcRepo, guard: ArcListenGuard, acceptor: TlsAcceptor) {
+async fn accept_loop(listener: TcpListener, repo: ArcRepo, guard: ArcListenGuard) {
     loop {
         match listener.accept().await {
             Ok((stream, peer)) => {
                 let repo = repo.clone();
                 let guard = guard.clone();
-                let acceptor = acceptor.clone();
                 tokio::spawn(async move {
-                    if let Err(e) = handle_connection(stream, repo, guard, acceptor).await {
-                        eprintln!("[WSS] {peer}: {e}");
+                    if let Err(e) = handle_connection(stream, repo, guard).await {
+                        eprintln!("[WS] {peer}: {e}");
                     }
                 });
             }
-            Err(e) => eprintln!("[WSS] accept error: {e}"),
+            Err(e) => eprintln!("[WS] accept error: {e}"),
         }
     }
 }
@@ -81,10 +45,8 @@ async fn handle_connection(
     stream: tokio::net::TcpStream,
     repo: ArcRepo,
     guard: ArcListenGuard,
-    acceptor: TlsAcceptor,
 ) -> Result<(), String> {
-    let tls_stream = acceptor.accept(stream).await.map_err(|e| e.to_string())?;
-    let ws = accept_async(tls_stream).await.map_err(|e| e.to_string())?;
+    let ws = accept_async(stream).await.map_err(|e| e.to_string())?;
     let (mut write, mut read) = ws.split();
 
     while let Some(msg) = read.next().await {
