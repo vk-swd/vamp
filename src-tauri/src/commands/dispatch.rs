@@ -8,13 +8,14 @@
 //! The tagged-union payload is reconstructed server-side from the flat
 //! `{ kind, payload }` arguments that Tauri passes through.
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::commands::listen_guard::ArcListenGuard;
 use crate::db::{
     repository::ArcRepo,
     schema::{NewTrack, SearchCriteria, TagAssignment, TrackUpdate},
     filtered_schema::SearchCriteriaFiltered,
+    bigint_id::BigintId,
 };
 use std::fs;
 use base64::{Engine, engine::general_purpose::STANDARD};
@@ -37,104 +38,104 @@ fn get_script_data() -> &'static str {
 // One struct per command variant that carries more than one field.
 // Single-field variants reuse existing schema types directly.
 
-#[derive(Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, specta::Type)]
 pub struct UpdateTrackArgs {
-    pub id: i64,
+    pub id: BigintId,
     pub update: TrackUpdate,
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, specta::Type)]
 pub struct GetTracksArgs {
-    pub cursor: Option<i64>,
+    pub cursor: Option<BigintId>,
     pub criteria: Option<Vec<SearchCriteria>>,
-    pub limit: i64,
+    pub limit: i32,
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, specta::Type)]
 pub struct GetTracksFilteredArgs {
-    pub cursor: Option<i64>,
+    pub cursor: Option<BigintId>,
     pub criteria: Option<Vec<SearchCriteriaFiltered>>,
-    pub limit: i64,
+    pub limit: i32,
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, specta::Type)]
 pub struct IdArg {
-    pub id: i64,
+    pub id: BigintId,
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, specta::Type)]
 pub struct TrackIdArg {
-    pub track_id: i64,
+    pub track_id: BigintId,
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, specta::Type)]
 pub struct AddListenArgs {
-    pub track_id: i64,
-    pub from: i64,
-    pub to: i64,
+    pub track_id: BigintId,
+    pub from: String,
+    pub to: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, specta::Type)]
 pub struct AddListenedSecondsArgs {
-    pub track_id: i64,
-    pub seconds: i64,
+    pub track_id: BigintId,
+    pub seconds: i32,
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, specta::Type)]
 pub struct NameArg {
     pub name: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, specta::Type)]
 pub struct EditTagArgs {
-    pub id: i64,
+    pub id: BigintId,
     pub name: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, specta::Type)]
 pub struct PatternArg {
     pub pattern: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, specta::Type)]
 pub struct AssignTagArgs {
-    pub track_id: i64,
-    pub tag_id: i64,
+    pub track_id: BigintId,
+    pub tag_id: BigintId,
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, specta::Type)]
 pub struct AddMetaArgs {
-    pub track_id: i64,
+    pub track_id: BigintId,
     pub key: String,
     pub value: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, specta::Type)]
 pub struct UpdateMetaArgs {
-    pub id: i64,
+    pub id: BigintId,
     pub value: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, specta::Type)]
 pub struct AddTrackSourceArgs {
-    pub track_id: i64,
+    pub track_id: BigintId,
     pub url: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, specta::Type)]
 pub struct RemoveTrackSourceArgs {
-    pub track_id: i64,
+    pub track_id: BigintId,
     pub url: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, specta::Type)]
 pub struct EditTrackSourceArgs {
-    pub track_id: i64,
+    pub track_id: BigintId,
     pub old_url: String,
     pub new_url: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, specta::Type)]
 pub struct LogFromUiArgs {
     pub message: String,
 }
@@ -143,7 +144,7 @@ pub struct LogFromUiArgs {
 
 /// Discriminated union of every DB operation.
 /// JS serialises as `{ "kind": "<VariantName>", "payload": <args> }`.
-#[derive(Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, specta::Type)]
 #[serde(tag = "kind", content = "payload", rename_all = "PascalCase")]
 pub enum Command {
     // Tracks
@@ -197,37 +198,37 @@ pub async fn execute(repo: &ArcRepo, guard: &ArcListenGuard, cmd: Command) -> Re
             to_val(repo.add_tracks(tracks).await)?,
 
         Command::UpdateTrack(UpdateTrackArgs { id, update }) => {
-            repo.update_track(id, update).await.map_err(|e| e.to_string())?;
+            repo.update_track(id.to_i64(), update).await.map_err(|e| e.to_string())?;
             serde_json::Value::Null
         }
 
         Command::GetTracks(GetTracksArgs { cursor, criteria, limit }) =>
-            to_val(repo.get_tracks(cursor, criteria, limit).await)?,
+            to_val(repo.get_tracks(cursor.map(|c| c.to_i64()), criteria, limit).await)?,
 
         Command::GetTracksWithSources(GetTracksArgs { cursor, criteria, limit }) =>
-            to_val(repo.get_tracks_with_sources(cursor, criteria, limit).await)?,
+            to_val(repo.get_tracks_with_sources(cursor.map(|c| c.to_i64()), criteria, limit).await)?,
 
         Command::GetTracksFiltered(GetTracksFilteredArgs { cursor, criteria, limit }) =>
-            to_val(repo.get_tracks_filtered(cursor, criteria, limit).await)?,
+            to_val(repo.get_tracks_filtered(cursor.map(|c| c.to_i64()), criteria, limit).await)?,
 
         Command::GetTrack(IdArg { id }) =>
-            to_val(repo.get_track(id).await)?,
+            to_val(repo.get_track(id.to_i64()).await)?,
 
         Command::DeleteTrack(IdArg { id }) => {
-            repo.delete_track(id).await.map_err(|e| e.to_string())?;
+            repo.delete_track(id.to_i64()).await.map_err(|e| e.to_string())?;
             serde_json::Value::Null
         }
 
         // ── Listen history ──────────────────────────────────────────────────
         Command::AddListen(AddListenArgs { track_id, from, to }) =>
-            to_val(repo.add_listen(track_id, from, to).await)?,
+            to_val(repo.add_listen(track_id.to_i64(), from, to).await)?,
 
         Command::GetListensForTrack(TrackIdArg { track_id }) =>
-            to_val(repo.get_listens_for_track(track_id).await)?,
+            to_val(repo.get_listens_for_track(track_id.to_i64()).await)?,
 
         Command::AddListenedSeconds(AddListenedSecondsArgs { track_id, seconds }) => {
             if guard.should_record(seconds) {
-                repo.add_listened_seconds(track_id, seconds).await.map_err(|e| e.to_string())?;
+                repo.add_listened_seconds(track_id.to_i64(), seconds).await.map_err(|e| e.to_string())?;
             }
             serde_json::Value::Null
         }
@@ -237,12 +238,12 @@ pub async fn execute(repo: &ArcRepo, guard: &ArcListenGuard, cmd: Command) -> Re
             to_val(repo.add_tag(name).await)?,
 
         Command::EditTag(EditTagArgs { id, name }) => {
-            repo.edit_tag(id, name).await.map_err(|e| e.to_string())?;
+            repo.edit_tag(id.to_i64(), name).await.map_err(|e| e.to_string())?;
             serde_json::Value::Null
         }
 
         Command::DeleteTag(IdArg { id }) => {
-            repo.delete_tag(id).await.map_err(|e| e.to_string())?;
+            repo.delete_tag(id.to_i64()).await.map_err(|e| e.to_string())?;
             serde_json::Value::Null
         }
 
@@ -253,7 +254,7 @@ pub async fn execute(repo: &ArcRepo, guard: &ArcListenGuard, cmd: Command) -> Re
             to_val(repo.get_tags(pattern).await)?,
 
         Command::AssignTag(AssignTagArgs { track_id, tag_id }) => {
-            repo.assign_tag(track_id, tag_id).await.map_err(|e| e.to_string())?;
+            repo.assign_tag(track_id.to_i64(), tag_id.to_i64()).await.map_err(|e| e.to_string())?;
             serde_json::Value::Null
         }
 
@@ -263,46 +264,46 @@ pub async fn execute(repo: &ArcRepo, guard: &ArcListenGuard, cmd: Command) -> Re
         }
 
         Command::RemoveTag(AssignTagArgs { track_id, tag_id }) => {
-            repo.remove_tag(track_id, tag_id).await.map_err(|e| e.to_string())?;
+            repo.remove_tag(track_id.to_i64(), tag_id.to_i64()).await.map_err(|e| e.to_string())?;
             serde_json::Value::Null
         }
 
         Command::GetTagsForTrack(TrackIdArg { track_id }) =>
-            to_val(repo.get_tags_for_track(track_id).await)?,
+            to_val(repo.get_tags_for_track(track_id.to_i64()).await)?,
 
         // ── Track metadata ──────────────────────────────────────────────────
         Command::AddMeta(AddMetaArgs { track_id, key, value }) =>
-            to_val(repo.add_meta(track_id, key, value).await)?,
+            to_val(repo.add_meta(track_id.to_i64(), key, value).await)?,
 
         Command::UpdateMeta(UpdateMetaArgs { id, value }) => {
-            repo.update_meta(id, value).await.map_err(|e| e.to_string())?;
+            repo.update_meta(id.to_i64(), value).await.map_err(|e| e.to_string())?;
             serde_json::Value::Null
         }
 
         Command::DeleteMeta(IdArg { id }) => {
-            repo.delete_meta(id).await.map_err(|e| e.to_string())?;
+            repo.delete_meta(id.to_i64()).await.map_err(|e| e.to_string())?;
             serde_json::Value::Null
         }
 
         Command::GetMetaForTrack(TrackIdArg { track_id }) =>
-            to_val(repo.get_meta_for_track(track_id).await)?,
+            to_val(repo.get_meta_for_track(track_id.to_i64()).await)?,
 
         // ── Track sources ───────────────────────────────────────────────────
         Command::AddTrackSource(AddTrackSourceArgs { track_id, url }) =>
-            to_val(repo.add_track_source(track_id, url).await)?,
+            to_val(repo.add_track_source(track_id.to_i64(), url).await)?,
 
         Command::RemoveTrackSource(RemoveTrackSourceArgs { track_id, url }) => {
-            repo.remove_track_source(track_id, url).await.map_err(|e| e.to_string())?;
+            repo.remove_track_source(track_id.to_i64(), url).await.map_err(|e| e.to_string())?;
             serde_json::Value::Null
         }
 
         Command::EditTrackSource(EditTrackSourceArgs { track_id, old_url, new_url }) => {
-            repo.edit_track_source(track_id, old_url, new_url).await.map_err(|e| e.to_string())?;
+            repo.edit_track_source(track_id.to_i64(), old_url, new_url).await.map_err(|e| e.to_string())?;
             serde_json::Value::Null
         }
 
         Command::GetSourcesForTrack(TrackIdArg { track_id }) =>
-            to_val(repo.get_sources_for_track(track_id).await)?,
+            to_val(repo.get_sources_for_track(track_id.to_i64()).await)?,
         Command::GetHtmlBundle(()) => {
             // In dev, this serves the unbundled JS/CSS from the webpack dev server
             serde_json::to_value(get_script_data()).map_err(|e| e.to_string())?

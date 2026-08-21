@@ -1,5 +1,5 @@
 import { callInvoke } from './tauriInvoke';
-
+import { WsResponse } from './generatedTypes';
 // ─── Mode ─────────────────────────────────────────────────────────────────────
 // Set window.__TRANSPORT__ = 'ws' (e.g. in index.html) to route via WebSocket.
 // Undefined or any other value falls back to Tauri IPC invoke.
@@ -20,7 +20,6 @@ type PendingRequest = {
   reject: (reason: unknown) => void;
 };
 
-type WsResponse = { id: number; ok: unknown } | { id: number; error: string };
 
 class WsDispatchClient {
   private ws: WebSocket | null = null;
@@ -28,7 +27,7 @@ class WsDispatchClient {
   /** Shared promise while a connection attempt is in progress. */
   private connectingPromise: Promise<void> | null = null;
   private nextId = 1;
-  private pending = new Map<number, PendingRequest>();
+  private pending = new Map<string, PendingRequest>();
 
   private rejectAllPending(reason: string): void {
     for (const p of this.pending.values()) {
@@ -54,14 +53,18 @@ class WsDispatchClient {
       };
 
       ws.onmessage = (event: MessageEvent) => {
-        const msg = JSON.parse(event.data as string) as WsResponse;
+        const msg = JSON.parse(event.data as string) as WsResponse<any>;
         const pending = this.pending.get(msg.id);
-        if (!pending) return;
+        if (!pending) {
+          dispatch("LogFromUi", { message: `Received response for unknown request ID ${JSON.stringify(msg)}` });
+          return;
+        }
+
         this.pending.delete(msg.id);
-        if ('error' in msg) {
-          pending.reject(new Error(msg.error));
+        if (msg.result.type === 'error') {
+          pending.reject(new Error(msg.result.message));
         } else {
-          pending.resolve(msg.ok);
+          pending.resolve(msg.result.value);
         }
       };
 
@@ -99,10 +102,10 @@ class WsDispatchClient {
       this.state = 'disconnected';
       throw new Error('WebSocket is not open');
     }
-    const id = this.nextId++;
+    const id = String(this.nextId++);
     return new Promise<T>((resolve, reject) => {
       this.pending.set(id, { resolve: resolve as (v: unknown) => void, reject });
-      this.ws!.send(JSON.stringify({ id, kind, payload: payload ?? null }));
+      this.ws!.send(JSON.stringify({ id, cmd: { kind, payload: payload ?? null } }));
     });
   }
 
@@ -122,5 +125,5 @@ export function dispatch<T>(kind: string, payload: unknown = null): Promise<T> {
   if (window.__TRANSPORT__ === 'ws') {
     return wsClient.send<T>(kind, payload);
   }
-  return callInvoke<T>('app_dispatch', { kind, payload });
+  return callInvoke<T>('app_dispatch', { cmd: { kind, payload } });
 }

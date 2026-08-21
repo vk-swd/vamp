@@ -1,9 +1,11 @@
 use serde::{Deserialize, Serialize};
+use crate::db::bigint_id::BigintId;
 
 /// Full row returned from the `track_info` table.
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct TrackRow {
-    pub id: i64,
+    #[sqlx(try_from = "i64")]
+    pub id: BigintId,
     pub artist: String,
     pub track_name: String,
     pub length_seconds: Option<i32>,
@@ -23,7 +25,8 @@ pub struct ErrorRow {
 /// Full row returned from the `track_add_conflicts` table.
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct TrackAddConflict {
-    pub id: i64,
+    #[sqlx(try_from = "i64")]
+    pub id: BigintId,
     pub artist: String,
     pub track_name: String,
     pub length_seconds: Option<i32>,
@@ -31,22 +34,27 @@ pub struct TrackAddConflict {
     pub tempo_bpm: Option<f32>,
     pub addition_time: String,
     pub conflict_reason: String,
-    pub same_track_id: i64,
+    #[sqlx(try_from = "i64")]
+    pub same_track_id: BigintId,
 }
 
 /// Full row returned from the `track_sources` table.
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct TrackSource {
-    pub id: i64,
-    pub track_id: i64,
+    #[sqlx(try_from = "i64")]
+    pub id: BigintId,
+    #[sqlx(try_from = "i64")]
+    pub track_id: BigintId,
     pub url: String,
 }
 
 /// Full row returned from the `listen_info` table.
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct ListenInfo {
-    pub id: i64,
-    pub track_id: i64,
+    #[sqlx(try_from = "i64")]
+    pub id: BigintId,
+    #[sqlx(try_from = "i64")]
+    pub track_id: BigintId,
     pub listened_from: i64,
     pub listened_to: i64,
 }
@@ -54,21 +62,24 @@ pub struct ListenInfo {
 /// Full row returned from the `tags` table.
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct Tag {
-    pub id: i64,
+    #[sqlx(try_from = "i64")]
+    pub id: BigintId,
     pub tag_name: String,
 }
 
 /// Full row returned from the `track_meta` table.
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct TrackMeta {
-    pub id: i64,
-    pub track_id: i64,
+    #[sqlx(try_from = "i64")]
+    pub id: BigintId,
+    #[sqlx(try_from = "i64")]
+    pub track_id: BigintId,
     pub key: String,
     pub value: String,
 }
 
 /// Input for inserting a new track.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 pub struct NewTrack {
     pub artist: String,
     pub track_name: String,
@@ -90,7 +101,7 @@ pub struct TrackWithSources {
 
 /// Partial update — only `Some` fields are written to the database.
 /// Pass `None` for any field that should remain unchanged.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 pub struct TrackUpdate {
     pub artist: Option<String>,
     pub track_name: Option<String>,
@@ -111,7 +122,7 @@ pub struct NewError {
 // Search / filter types (mirror of the TypeScript SearchParam / SearchCriteria)
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 pub enum NumericOperator {
     #[serde(rename = "<")]  Lt,
     #[serde(rename = ">")]  Gt,
@@ -134,7 +145,7 @@ impl NumericOperator {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(tag = "mode", rename_all = "snake_case")]
 pub enum SearchParam {
     NumericComparison { operator: NumericOperator, value: f64 },
@@ -144,22 +155,22 @@ pub enum SearchParam {
     NullCheck         { is_null: bool },
     /// Filter tracks by tag IDs. Use with `column_name = "tags"`.
     /// Returns tracks that have at least one of the provided tag IDs assigned.
-    TagsIn            { tag_ids: Vec<i64> },
+    TagsIn            { tag_ids: Vec<BigintId> },
     /// Like TagsIn, but only returns tracks that have ALL of the provided tag IDs assigned.
-    TagsAll           { tag_ids: Vec<i64> },
+    TagsAll           { tag_ids: Vec<BigintId> },
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 pub struct SearchCriteria {
     pub column_name: String,
     pub criteria: Vec<SearchParam>,
 }
 
 /// Input for `assign_tags`: one track paired with the tag IDs to assign to it.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 pub struct TagAssignment {
-    pub track_id: i64,
-    pub tag_ids: Vec<i64>,
+    pub track_id: BigintId,
+    pub tag_ids: Vec<BigintId>,
 }
 
 /// Input for inserting a new track-add conflict record.
@@ -172,5 +183,5 @@ pub struct NewTrackConflict {
     pub tempo_bpm: Option<f32>,
     pub addition_time: String,
     pub conflict_reason: String,
-    pub same_track_id: i64,
+    pub same_track_id: BigintId,
 }

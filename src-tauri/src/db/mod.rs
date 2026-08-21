@@ -10,6 +10,7 @@
 // sqlx::query_as), never the compile-time macros (query! / query_as!).
 // ============================================================
 
+pub mod bigint_id;
 pub mod filtered_schema;
 pub mod repository;
 pub mod schema;

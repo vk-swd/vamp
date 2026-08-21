@@ -2,10 +2,11 @@
 mod perf {
     use std::time::Instant;
 
-    use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
+use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
     use sqlx::SqlitePool;
 
-    use crate::db::repository::AppRepository;
+    use crate::db::bigint_id::BigintId;
+use crate::db::repository::AppRepository;
     use crate::db::schema::{SearchCriteria, SearchParam};
     use crate::db::sqlite::SqliteRepository;
 
@@ -116,14 +117,14 @@ mod perf {
 
     // ── query helpers ────────────────────────────────────────────────────────
 
-    fn tag_criteria(tag_ids: Vec<i64>) -> Vec<SearchCriteria> {
+    fn tag_criteria(tag_ids: Vec<BigintId>) -> Vec<SearchCriteria> {
         vec![SearchCriteria {
             column_name: "tags".to_string(),
             criteria: vec![SearchParam::TagsIn { tag_ids }],
         }]
     }
 
-    async fn first_page(repo: &SqliteRepository, tag_ids: Vec<i64>) -> (usize, std::time::Duration) {
+    async fn first_page(repo: &SqliteRepository, tag_ids: Vec<BigintId>) -> (usize, std::time::Duration) {
         let t = Instant::now();
         let rows = repo
             .get_tracks(None, Some(tag_criteria(tag_ids)), 100)
@@ -132,18 +133,18 @@ mod perf {
         (rows.len(), t.elapsed())
     }
 
-    async fn full_scan(repo: &SqliteRepository, tag_id: i64) -> (usize, std::time::Duration) {
+    async fn full_scan(repo: &SqliteRepository, tag_id: BigintId) -> (usize, std::time::Duration) {
         let mut cursor = None;
         let mut total = 0usize;
         let t = Instant::now();
         loop {
             let page = repo
-                .get_tracks(cursor, Some(tag_criteria(vec![tag_id])), 100)
+                .get_tracks(cursor, Some(tag_criteria(vec![tag_id.clone()])), 100)
                 .await
                 .unwrap();
             let done = page.len() < 100;
             total += page.len();
-            cursor = page.last().map(|r| r.id);
+            cursor = page.last().map(|r| r.id.to_i64());
             if done {
                 break;
             }
@@ -158,7 +159,7 @@ mod perf {
         let _ = std::fs::remove_file(DB_PATH);
 
         // Repo creation runs sqlx migrations.
-        let repo: SqliteRepository = SqliteRepository::new(DB_PATH).await.unwrap();
+        let repo: SqliteRepository = SqliteRepository::new(DB_PATH, true).await.unwrap();
 
         // Seed via a separate raw pool, then drop it before any queries so
         // there's no concurrent writer risk.
@@ -173,15 +174,16 @@ mod perf {
         println!("=== single-tag, first page (limit 100) ===");
         // Spread across the tag range so we hit different parts of the index.
         for tag_id in [1i64, 25, 50, 75, 100, 125, 150, 175, 200] {
-            let (n, elapsed) = first_page(&repo, vec![tag_id]).await;
+            let (n, elapsed) = first_page(&repo, vec![BigintId::from_i64(tag_id)]).await;
             println!("  tag {:3}  {:3} rows  {:?}", tag_id, n, elapsed);
         }
 
         // ── single-tag, full paginated scan ──────────────────────────────
         println!("\n=== single-tag, full paginated scan (limit 100) ===");
         for tag_id in [1i64, 100, 200] {
-            let (total, elapsed) = full_scan(&repo, tag_id).await;
-            println!("  tag {:3}  {:5} total  {:?}", tag_id, total, elapsed);
+            let tag_id = BigintId::from_i64(tag_id);
+            let (total, elapsed) = full_scan(&repo, tag_id.clone()).await;
+            println!("  tag {:3}  {:5} total  {:?}", tag_id.to_i64(), total, elapsed);
         }
 
         // ── multi-tag, first page ─────────────────────────────────────────
@@ -192,7 +194,7 @@ mod perf {
             &[50, 51, 52, 53, 54],
         ];
         for &tag_ids in multi_cases {
-            let (n, elapsed) = first_page(&repo, tag_ids.to_vec()).await;
+            let (n, elapsed) = first_page(&repo, tag_ids.iter().map(|&id| BigintId::from_i64(id)).collect   ()).await;
             println!("  tags {:?}  {:3} rows  {:?}", tag_ids, n, elapsed);
         }
 
@@ -204,12 +206,12 @@ mod perf {
             let t = Instant::now();
             loop {
                 let page = repo
-                    .get_tracks(cursor, Some(tag_criteria(tag_ids.to_vec())), 100)
+                    .get_tracks(cursor, Some(tag_criteria(tag_ids.iter().map(|&id| BigintId::from_i64(id)).collect())), 100)
                     .await
                     .unwrap();
                 let done = page.len() < 100;
                 total += page.len();
-                cursor = page.last().map(|r| r.id);
+                cursor = page.last().map(|r| r.id.to_i64());
                 if done {
                     break;
                 }

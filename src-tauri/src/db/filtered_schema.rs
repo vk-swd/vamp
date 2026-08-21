@@ -4,8 +4,9 @@
 //! so they can be exported to TypeScript.
 
 use serde::{Deserialize, Serialize};
+use crate::db::bigint_id::BigintId;
 
-#[derive(Debug, Clone, Deserialize, specta::Type)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 pub enum FilterNumericOperator {
     #[serde(rename = "<")]  Lt,
     #[serde(rename = ">")]  Gt,
@@ -15,7 +16,7 @@ pub enum FilterNumericOperator {
     #[serde(rename = "!=")] Ne,
 }
 
-#[derive(Debug, Clone, Deserialize, specta::Type)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(tag = "mode", rename_all = "snake_case")]
 
 pub enum FilterSearchParam {
@@ -24,8 +25,8 @@ pub enum FilterSearchParam {
     TextLike          { pattern: String, case_sensitive: bool },
     TextIn            { values: Vec<String> },
     NullCheck         { is_null: bool },
-    TagsAny            { tag_ids: Vec<i32> },
-    TagsAll           { tag_ids: Vec<i32> },
+    TagsAny            { tag_ids: Vec<BigintId> },
+    TagsAll           { tag_ids: Vec<BigintId> },
 }
 
 /// Strongly-typed filter names accepted by `get_tracks_filtered`.
@@ -44,7 +45,7 @@ pub enum CriteriaName {
 }
 
 /// Like `SearchCriteria` but with a typed `CriteriaName` and specta-exported params.
-#[derive(Debug, Clone, Deserialize, specta::Type)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 pub struct SearchCriteriaFiltered {
     pub filter_name: CriteriaName,
     pub criteria: Vec<FilterSearchParam>,

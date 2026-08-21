@@ -14,7 +14,7 @@ impl ListenGuard {
 
     /// Returns true if this listen record should be committed.
     /// Rejects records for the same track arriving within the specified interval (in seconds) of the previous one.
-    pub fn should_record(&self, interval: i64) -> bool {
+    pub fn should_record(&self, interval: i32) -> bool {
         let now = Instant::now();
         let mut guard = self.last.lock().unwrap();
         match *guard {

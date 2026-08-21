@@ -12,7 +12,7 @@
     "build:bundle": "vite build --config vite.bundle.config.ts",
     "build:thin": "vite build --config vite.thin.config.ts",
     "serve:poc": "npm run build:server && node dist-server/transport/experiments/pocWsServer.js",
-    "gen:types": "SPECTA_OUT=$(pwd)/src/db/generatedTypes.ts cargo test --manifest-path src-tauri/Cargo.toml export_bindings -- --nocapture"
+    "gen:types": "SPECTA_OUT=$(pwd)/src/db/generatedTypes.ts cargo test --manifest-path src-tauri/Cargo.toml --bin vampagent export_bindings -- --nocapture"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",

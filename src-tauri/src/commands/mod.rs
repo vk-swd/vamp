@@ -31,6 +31,7 @@
 //! ])
 //! ```
 
+pub mod common;
 pub mod dispatch;
 pub mod listen_guard;
 
@@ -76,7 +77,7 @@ pub async fn get_tracks(
     repo: Repo<'_>,
     cursor: Option<i64>,
     criteria: Option<Vec<SearchCriteria>>,
-    limit: i64,
+    limit: i32,
 ) -> Result<Vec<TrackRow>, String> {
     repo.get_tracks(cursor, criteria, limit)
         .await
@@ -88,7 +89,7 @@ pub async fn get_tracks_with_sources(
     repo: Repo<'_>,
     cursor: Option<i64>,
     criteria: Option<Vec<SearchCriteria>>,
-    limit: i64,
+    limit: i32,
 ) -> Result<Vec<TrackWithSources>, String> {
     repo.get_tracks_with_sources(cursor, criteria, limit)
         .await
@@ -113,8 +114,8 @@ pub async fn delete_track(repo: Repo<'_>, id: i64) -> Result<(), String> {
 pub async fn add_listen(
     repo: Repo<'_>,
     track_id: i64,
-    from: i64,
-    to: i64,
+    from: String,
+    to: String,
 ) -> Result<i64, String> {
     repo.add_listen(track_id, from, to)
         .await
@@ -135,7 +136,7 @@ pub async fn get_listens_for_track(
 pub async fn add_listened_seconds(
     repo: Repo<'_>,
     track_id: i64,
-    seconds: i64,
+    seconds: i32,
 ) -> Result<(), String> {
     repo.add_listened_seconds(track_id, seconds)
         .await

@@ -35,7 +35,7 @@ pub trait AppRepository: Send + Sync {
         &self,
         cursor: Option<i64>,
         criteria: Option<Vec<SearchCriteria>>,
-        limit: i64,
+        limit: i32,
     ) -> Result<Vec<TrackRow>, sqlx::Error>;
 
     /// Rework of [`get_tracks`] + specta test
@@ -43,7 +43,7 @@ pub trait AppRepository: Send + Sync {
         &self,
         cursor: Option<i64>,
         criteria: Option<Vec<SearchCriteriaFiltered>>,
-        limit: i64,
+        limit: i32,
     ) -> Result<Vec<TrackRow>, sqlx::Error>;
 
     async fn get_track(&self, id: i64) -> Result<TrackRow, sqlx::Error>;
@@ -55,7 +55,7 @@ pub trait AppRepository: Send + Sync {
     // ------------------------------------------------------------------
 
     /// Record a listening session and return its generated `id`.
-    async fn add_listen(&self, track_id: i64, from: i64, to: i64) -> Result<i64, sqlx::Error>;
+    async fn add_listen(&self, track_id: i64, from: String, to: String) -> Result<i64, sqlx::Error>;
 
     async fn get_listens_for_track(
         &self,
@@ -131,7 +131,7 @@ pub trait AppRepository: Send + Sync {
         &self,
         cursor: Option<i64>,
         criteria: Option<Vec<SearchCriteria>>,
-        limit: i64,
+        limit: i32,
     ) -> Result<Vec<crate::db::schema::TrackWithSources>, sqlx::Error>;
 
     // ------------------------------------------------------------------
@@ -153,5 +153,5 @@ pub trait AppRepository: Send + Sync {
     // ------------------------------------------------------------------
 
     /// Add `seconds` to the `listened_seconds` counter for a track.
-    async fn add_listened_seconds(&self, track_id: i64, seconds: i64) -> Result<(), sqlx::Error>;
+    async fn add_listened_seconds(&self, track_id: i64, seconds: i32) -> Result<(), sqlx::Error>;
 }

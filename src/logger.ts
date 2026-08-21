@@ -12,9 +12,8 @@ function log(message: string) {
     const msg = `${new Date().toISOString()}: ${message}`
     if (window.__TRANSPORT__ === 'ws') {
         console.log(`WS log: ${msg}`);
-    } else {
-        dispatch("LogFromUi", { message: msg });
     }
+    dispatch("LogFromUi", { message: msg });
 }
 
 window.onerror = (msg, src, line, col, err) => {

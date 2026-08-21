@@ -10,6 +10,7 @@ use crate::db::schema::{
     TagAssignment, TrackMeta, TrackRow, TrackSource, TrackUpdate,
 };
 use crate::db::filtered_schema::{CriteriaName, FilterSearchParam, SearchCriteriaFiltered};
+use crate::db::bigint_id::BigintId;
 
 /// Schema version tracked at deletion time so the JSON archive records which DB layout
 /// was active when the track was removed.  Bump this whenever a new migration is added.
@@ -160,7 +161,7 @@ async fn delete_track_unlogged(app_rep: &SqliteRepository, track_id: i64) -> Res
 
     let json = serde_json::json!([
         SCHEMA_VERSION,
-        track.id,
+        track.id.to_i64(),
         track.artist,
         track.track_name,
         track.length_seconds,
@@ -195,7 +196,10 @@ async fn assign_tags_unlogged(app_rep: &SqliteRepository, assignments: Vec<TagAs
     let mut tx = app_rep.pool.begin().await?;
 
     let all_pairs: Vec<(i64, i64)> = assignments.iter()
-        .flat_map(|a| a.tag_ids.iter().map(move |&tag_id| (a.track_id, tag_id)))
+        .flat_map(|a| {
+            let tid = a.track_id.to_i64();
+            a.tag_ids.iter().map(move |tag_id| (tid, tag_id.to_i64()))
+        })
         .collect();
 
     for chunk in all_pairs.chunks(BATCH_SIZE) {
@@ -337,7 +341,7 @@ impl AppRepository for SqliteRepository {
         &self,
         cursor: Option<i64>,
         criteria: Option<Vec<SearchCriteria>>,
-        limit: i64,
+        limit: i32,
     ) -> Result<Vec<TrackRow>, sqlx::Error> {
         const ALLOWED_COLUMNS: &[&str] = &[
             "id", "artist", "track_name", "length_seconds",
@@ -363,14 +367,16 @@ impl AppRepository for SqliteRepository {
                                 if tag_ids.is_empty() {
                                     conditions.push("1 = 0".to_string());
                                 } else {
-                                    tag_filter = Some(TagFilter::Any(tag_ids.clone()));
+                                    let ids: Vec<i64> = tag_ids.iter().map(|id| id.to_i64()).collect();
+                                    tag_filter = Some(TagFilter::Any(ids));
                                 }
                             }
                             SearchParam::TagsAll { tag_ids } => {
                                 if tag_ids.is_empty() {
                                     conditions.push("1 = 0".to_string());
                                 } else {
-                                    tag_filter = Some(TagFilter::All(tag_ids.clone()));
+                                    let ids: Vec<i64> = tag_ids.iter().map(|id| id.to_i64()).collect();
+                                    tag_filter = Some(TagFilter::All(ids));
                                 }
                             }
                             _ => {
@@ -475,9 +481,9 @@ impl AppRepository for SqliteRepository {
                     select * from oPrior union all  select * from oAfter order by id asc",
                 sql);                   
         bind_vals.push(BindVal::Int(after));
-        bind_vals.push(BindVal::Int(limit));
+        bind_vals.push(BindVal::Int(i64::from(limit)));
         bind_vals.push(BindVal::Int(after));
-        bind_vals.push(BindVal::Int(limit));
+        bind_vals.push(BindVal::Int(i64::from(limit)));
         let mut q = sqlx::query_as::<_, TrackRow>(&sql1);
         match tag_filter {
             Some(TagFilter::Any(tag_ids)) => {
@@ -511,9 +517,9 @@ impl AppRepository for SqliteRepository {
         &self,
         cursor: Option<i64>,
         criteria: Option<Vec<SearchCriteriaFiltered>>,
-        limit: i64,
+        limit: i32,
     ) -> Result<Vec<TrackRow>, sqlx::Error> {
-        use sea_query::{Condition, Expr, Iden, Query, SqliteQueryBuilder};
+        use sea_query::{Asterisk, Condition, Expr, Iden, Query, SqliteQueryBuilder};
         use sea_query_binder::SqlxBinder;
 
         #[derive(Iden)]
@@ -546,7 +552,7 @@ impl AppRepository for SqliteRepository {
         }
 
         let mut select = Query::select();
-        select.expr(Expr::asterisk()).from(TrackInfo::Table);
+        select.expr(Expr::col(Asterisk)).from(TrackInfo::Table);
 
         if let Some(params) = criteria_map.get(&CriteriaName::TrackName) {
             let mut group = Condition::any();
@@ -582,19 +588,21 @@ impl AppRepository for SqliteRepository {
             for p in params {
                 match p {
                     FilterSearchParam::TagsAny { tag_ids } if !tag_ids.is_empty() => {
+                        let ids: Vec<i64> = tag_ids.iter().map(|id| id.to_i64()).collect();
                         let mut sub = Query::select();
                         sub.distinct()
                             .column(TagAssignments::TrackId)
                             .from(TagAssignments::Table)
-                            .and_where(Expr::col(TagAssignments::TagId).is_in(tag_ids.clone()));
+                            .and_where(Expr::col(TagAssignments::TagId).is_in(ids));
                         select.and_where(Expr::col(TrackInfo::Id).in_subquery(sub));
                     }
                     FilterSearchParam::TagsAll { tag_ids } if !tag_ids.is_empty() => {
-                        let n = tag_ids.len() as i64;
+                        let ids: Vec<i64> = tag_ids.iter().map(|id| id.to_i64()).collect();
+                        let n = ids.len() as i64;
                         let mut sub = Query::select();
                         sub.column(TagAssignments::TrackId)
                             .from(TagAssignments::Table)
-                            .and_where(Expr::col(TagAssignments::TagId).is_in(tag_ids.clone()))
+                            .and_where(Expr::col(TagAssignments::TagId).is_in(ids))
                             .group_by_col(TagAssignments::TrackId)
                             .and_having(Expr::cust(format!("COUNT(DISTINCT tag_id) = {}", n)));
                         select.and_where(Expr::col(TrackInfo::Id).in_subquery(sub));
@@ -611,9 +619,9 @@ impl AppRepository for SqliteRepository {
         // Extend bindings with the four cursor/limit params for the pagination CTEs.
         // SqlxValues and sea_query::Values both expose their inner Vec as pub fields.
         values.0.0.push(sea_query::Value::BigInt(Some(after)));
-        values.0.0.push(sea_query::Value::BigInt(Some(limit)));
+        values.0.0.push(sea_query::Value::BigInt(Some(i64::from(limit))));
         values.0.0.push(sea_query::Value::BigInt(Some(after)));
-        values.0.0.push(sea_query::Value::BigInt(Some(limit)));
+        values.0.0.push(sea_query::Value::BigInt(Some(i64::from(limit))));
 
         // Wrap the filtered base query in pagination CTEs.
         // oPrior backfills from before the cursor when oAfter has fewer than limit rows.
@@ -653,7 +661,14 @@ impl AppRepository for SqliteRepository {
     // Listen history
     // ------------------------------------------------------------------
 
-    async fn add_listen(&self, track_id: i64, from: i64, to: i64) -> Result<i64, sqlx::Error> {
+    async fn add_listen(&self, track_id: i64, from: String, to: String) -> Result<i64, sqlx::Error> {
+        let from = from
+            .parse::<i64>()
+            .map_err(|e| sqlx::Error::Protocol(format!("invalid listened_from: {}", e).into()))?;
+        let to = to
+            .parse::<i64>()
+            .map_err(|e| sqlx::Error::Protocol(format!("invalid listened_to: {}", e).into()))?;
+
         self.try_log(
             "add_listen",
             sqlx::query(
@@ -927,14 +942,14 @@ impl AppRepository for SqliteRepository {
         &self,
         cursor: Option<i64>,
         criteria: Option<Vec<SearchCriteria>>,
-        limit: i64,
+        limit: i32,
     ) -> Result<Vec<crate::db::schema::TrackWithSources>, sqlx::Error> {
         let tracks = self.get_tracks(cursor, criteria, limit).await?;
         if tracks.is_empty() {
             return Ok(vec![]);
         }
 
-        let ids: Vec<i64> = tracks.iter().map(|t| t.id).collect();
+        let ids: Vec<i64> = tracks.iter().map(|t| t.id.to_i64()).collect();
         let placeholders = vec!["?"; ids.len()].join(", ");
         let sql = format!(
             "SELECT * FROM track_sources WHERE track_id IN ({}) ORDER BY id ASC",
@@ -952,13 +967,13 @@ impl AppRepository for SqliteRepository {
         let mut sources_map: std::collections::HashMap<i64, Vec<TrackSource>> =
             std::collections::HashMap::new();
         for src in all_sources {
-            sources_map.entry(src.track_id).or_default().push(src);
+            sources_map.entry(src.track_id.to_i64()).or_default().push(src);
         }
 
         Ok(tracks
             .into_iter()
             .map(|track| {
-                let sources = sources_map.remove(&track.id).unwrap_or_default();
+                let sources = sources_map.remove(&track.id.to_i64()).unwrap_or_default();
                 crate::db::schema::TrackWithSources { track, sources }
             })
             .collect())
@@ -1003,7 +1018,7 @@ impl AppRepository for SqliteRepository {
             .bind(c.tempo_bpm)
             .bind(c.addition_time)
             .bind(c.conflict_reason)
-            .bind(c.same_track_id)
+            .bind(c.same_track_id.to_i64())
             .execute(&self.pool)
             .await,
         )
@@ -1011,7 +1026,7 @@ impl AppRepository for SqliteRepository {
         .map(|r| r.last_insert_rowid())
     }
 
-    async fn add_listened_seconds(&self, track_id: i64, seconds: i64) -> Result<(), sqlx::Error> {
+    async fn add_listened_seconds(&self, track_id: i64, seconds: i32) -> Result<(), sqlx::Error> {
         let date = chrono::Local::now().format("%d-%m-%Y").to_string();
 
         let mut tx = self
