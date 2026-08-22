@@ -50,6 +50,9 @@ export type TrackWithSources = TrackRow & { sources: TrackSource[] };
 export const addTrack = (track: NewTrack): Promise<BigintId> =>
   dispatch('AddTrack', track);
 
+export const resetDatabase = (): Promise<void> =>
+  dispatch('ResetDatabase');
+
 export const addTracks = (tracks: NewTrack[]): Promise<BigintId[]> =>
   dispatch('AddTracks', tracks);
 

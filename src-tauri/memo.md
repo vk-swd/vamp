@@ -18,11 +18,17 @@ flowchart
     queue --> database
 ```
 
-Currently Tauri app and the webrtc app are planned to run in parallel.
-Conflicts should be resolved by:
-1. Updating track info by checking old data against new one
-2. Simple rate limiting of listen tracking - can loose some progress if both frontends overlap listening - but this case is not planned to be covered. In other words, if I use Web version it makes no sense to use Desktop version at the same time. Making extra checks or architecture decisions to accomodate for that seems unnecessary right now.
+#### Authorisation
+No user separation is implemented. One service runs one database used by one person.
+
+One database can have access from:
+1. Tauri Webview
+2. Browser through a websocket server exposed to the internet
+3. Browser through a p2p connection.
+
+Simultaneous use is possible and it may cause problems such as:
+1. Double accounting for listened tracks (if several devices are listening for the same thing) - questionable as a problem though
+2. Make conflict database writes: adding/removing/modifying same tracks - just make database verify ooperations. DB access is serialised by SQlite and make RMW updates.
+3. Contention - not at this scale.
 
 
-
-Maybe on any track update i should send current data and update to new one only if the data i see is the data the database has - that is to brevent corruption from parallel use.

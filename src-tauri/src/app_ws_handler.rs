@@ -46,7 +46,7 @@ impl crate::transport::ws_server::WsMessageHandler for WsMsgHandler {
         };
         let id = request.id;
         let cmd = request.cmd;
-        let response = match crate::commands::dispatch::execute(&self.app_core.repo, &self.app_core.guard, cmd).await {
+        let response = match crate::commands::dispatch::dispatch_with_core(&self.app_core, cmd).await {
             Ok(value) => crate::defines::WsResponse::ok(id, value),
             Err(error) => crate::defines::WsResponse::error(id, error),
         };

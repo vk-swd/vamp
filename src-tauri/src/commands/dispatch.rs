@@ -182,6 +182,8 @@ pub enum Command {
     GetSourcesForTrack(TrackIdArg),
     GetHtmlBundle(()),
     LogFromUi(LogFromUiArgs),
+    // Database maintenance
+    ResetDatabase(()),
 }
 
 // ─── Shared execution logic ───────────────────────────────────────────────────
@@ -312,9 +314,33 @@ pub async fn execute(repo: &ArcRepo, guard: &ArcListenGuard, cmd: Command) -> Re
             println!("[UI] {}", message);
             serde_json::Value::Null
         }
+        Command::ResetDatabase(()) => {
+            // Needs write access to AppCore's repo lock; handled by dispatch_with_core
+            // before execute() is ever called, so this arm should be unreachable.
+            return Err("ResetDatabase must be dispatched via dispatch_with_core".to_string());
+        }
     };
 
     Ok(value)
+}
+
+// ─── Entry point with database-reset support ─────────────────────────────────
+
+/// Like [`execute`], but also handles `ResetDatabase`, which needs write access
+/// to the repo lock held on `AppCore`. All other commands take a read lock on
+/// the repo before delegating to [`execute`], leaving its signature untouched.
+pub async fn dispatch_with_core(
+    app_core: &std::sync::Arc<crate::app_core::AppCore>,
+    cmd: Command,
+) -> Result<serde_json::Value, String> {
+    if matches!(cmd, Command::ResetDatabase(())) {
+        app_core.reset_database().await?;
+        return Ok(serde_json::Value::Null);
+    }
+
+    let repo_guard = app_core.repo.read().await;
+    let repo = repo_guard.as_ref().ok_or_else(|| "database is resetting, try again shortly".to_string())?;
+    execute(repo, &app_core.guard, cmd).await
 }
 
 // ─── Tauri IPC command ────────────────────────────────────────────────────────

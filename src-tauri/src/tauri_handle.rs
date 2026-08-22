@@ -10,7 +10,7 @@ pub async fn app_dispatch(
     app: tauri::State<'_, Arc<AppCore>>,
     cmd: crate::commands::dispatch::Command,
 ) -> Result<serde_json::Value, String> {
-    crate::commands::dispatch::execute(&app.repo, &app.guard, cmd).await
+    crate::commands::dispatch::dispatch_with_core(&app, cmd).await
 }
 
 impl TauriHandle<tauri::Builder<tauri::Wry>> {
