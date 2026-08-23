@@ -1,17 +1,52 @@
+# RtcConnector
+
+Handles ICE channel establishment and maintenance: restarts, (re)negotiation, trickle, signalling server communications.
+
+It's goal is to open RTCPeerConnection to the other peer, keep it alive to allow exchange data.
+
+To ensure reliable connection the following need to be covered:
+1. Connectivity to STUN/TURN servers - single server, retry connection till it is available or app is closed.
+2. Connectivity to signalling server - single server, retry connection till it is available or app is closed.
+3. Connectivity to the other peer - monitor state signalled by webrtc-rs library and trigger ICErestart when negotiation or disconnected state went on long enough.
+
+Ideally STUN/TURN and ignalling servers need to be discovered, but here they are considered static, defined by a configuration.
+
+### Components
+
+```mermaid
+flowchart
+    app["Application"]
+    subgraph rc["RtcConnector"]
+        subgraph wc["WsConnector"]
+        end
+        subgraph neg["Negotiator"]
+        end
+        dc["Data<br>Channel"]
+    end
+    op["Other<br>Peer"]
+    ss["Signalling<br>Server"]
 
 
+    wc -->|Restart connection| ss
+    wc -->|Deliver<br>Retry| ss
+    neg <-->|Exchange signalling message| wc
+    neg -->|"(Re)Create"| dc
+    dc -->|Signal problems| neg
+    dc <-->|Schedule message exchange<br>with the other peer| app
 
-This is a rust implementation of a routine establishing ICE datachannel using a websocket signalling server.
+    dc --- |p2p data exchange<br>over ICE|op
 
-It's goal is to open RTCPeerConnection to other peer and a datachannel over it and maintain both.
+    ss <--> |Signalling exchange|op
 
-To do that, a connection to signalling server and to a turn server need to be maintained as well.
+    linkStyle 6,5 stroke:#ff0000,stroke-width:2px
+    linkStyle 1,2,7 stroke:#0000ff,stroke-width:2px
+    
 
+```
 ### Control Flow
 
 There are several parallel contorl flows:
 1. #### Connection to signalling server:
-
     Keep reestablishing connection while it is required. Otherwise close it.
 2. #### Connection to another participant:
 
