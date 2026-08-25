@@ -57,20 +57,119 @@ flowchart LR
 ### WsNode
 
 ### WsNodeHandler
-* Read rx queue and decode transport messages
-* Schedule acks on incoming data
-* Retry sending a message at intervals (one send at a time)
-* Track incoming acks and notify sending task
+* Provide callback to [WsNode](#wsnode) to receive incoming messages
+* Send messages with [WsNode](#wsnode) and retry until required ack arrives
 * Keep track of outgoing seq numbers
+* Decode incoming messges
+* Schedule acks on received regular messages
+* Record incoming acks to notify anyone sending
 * <a id="ws_transport_filter">Filter</a> old incoming seq numbers 
 >[!NOTE]
 >Side note: if we received but failed to process a message and the other peer retries, session might get stuck. Or the other peer migh want to replay the response - those cases are not supported for simplicity and keeping things pragmatic, because it fixes itself by restarting session, at the expense of some delay. Failed processing causes - bad/flaky ICE servers, bad message format, queue overflow.
 
-one task is scraping rx queue
+A handler passed to [ws node](#wsnode) parses and processes incoming opaque Message:
 1. Bad message: bad [rt tag](../signalling/memo.md#message_el_rtt_tag), non-text, failed parsing, [filtered](#ws_transport_filter)
 2. Data message: schedule an ack message without confirmation and pass the data to a provided processing handler, which must not return a future because wsNode must not be blocked.
 3. Ack message: add it to the record of ack messages
 
+## Negotiator
+Responsible for maintaining ICE connection session and for respoinding to or triggering (re)negotiations.
+It provides a datachannel connector that could be used to exchange data with the other peer.
+
+ok i need working memory again...picture is falling apart:
+
+connector: ice negotiation
+rtc_connector: (send_q, send_task[instream, outstream[ice_state_flag_shared]]) -> (ice negotiator[client i/o channels, debouncer, WsNodeHandler,ice_state_flag_shared])
+connector_handler[rtc_connector]
+outstream() -> error -> close send and receive streams -> connector() - returns same object after the connection is reestablished. (!!!)
+
+## RtcNode
+RtcNodeHandler is required to add Ack messages, order and retries. Despite datachannel working on top of SCTP protocol, which is reliable and provides configurations for maxRetransmits and ordered, the following problems remain:
+1. RTCDataChannel: send() method does not provide means to wait for a message to be delivered: promised result or a callback.
+2. There is no clean and reliable way in RTCDataChannel to confirm that the message even left the outgoing buffer. Polling buffersize would add complexity which would make the code less readeable and wouldnt guarantee that the message was actually delivered. bufferedAmount parameter only inditates quued messages that have not yet been passed to the system and docs don't explicitly guarantee that delivery results are communicated back in any way.
+3. In webrtc-rs implementation you could poll Association's stats on number of bytes sent, but it is not a documented way to determine that message was delivered either.
+
+RtcConnector - wait on the connection state
+
+
+```mermaid
+flowchart
+    subgraph rnh["RtcNodeHandler"]
+        rn["RtcNode"]
+    end
+    subgraph rc["RtcConnector"]
+        rtcp["RtcPeerConnection"]
+        rdc["RtcDataChannel"]
+        io["MessageBuffersTxRx"]
+        subgraph wnh["WsNodeHandler"]
+            wn["WsNode"]
+        end
+        rtcp --- |Exchange SDPs|wnh
+        rtcp --> |Create|rdc
+        io --> |Subscribe| rdc
+    end
+    app["Application"]
+    ss["Signalling Server"]
+    op["Other Peer"]
+    app <---> |Exchange data|rnh
+    rn --- |"Connect<br>(Wait ICE connected and get io streams)"| io
+    rn --- |Exchange data| op
+    wn --- |Exchange SDPs| ss 
+    op --- |Exchange SDPs| ss 
+```
+
+### Signalling connection handling pipeline
+If I get an ack for an element in the out queue, then I get another one when I resend it, and I cannot get one before I send it.
+
+```mermaid
+flowchart RL
+    subgraph Block1["Negotiator"]
+        subgraph IQ["Incoming Queues"]
+            A1["Answers and Candidates"]
+            A12["Offers"]
+        end
+        A2["Processing Task"]
+        subgraph Db["Ice Restart Debouncer"]
+            A11["Runner task"]
+            A22["Event Queue"]
+        end
+        A3["Session Id Filter"]
+        A4["RtcPeerConnection"]
+
+        A12 -->|Politely restart negotiation| A2
+        A4 -->|Candidates| A1
+        A1 -->A3
+        A3 -->|Handle<br>negotiation<br>messages| A2
+        A4 -->|"ICE (dis)connected <br> Signaling (un)stable"| A22
+
+        A2 -->|"Reset debounce timeout"| A22
+
+        A11 --> |"[1]"| A22
+        A2--> |"[2]"| A11
+        A2 -->|Start/end<br>negotiation| A3
+    end
+
+   
+
+    subgraph wsc["WsConnector"]
+        subgraph queues["Async Queues"]
+            C1["Send<br>Queue"]
+            C2["Ack Queue"]
+        end
+        C4["Sender Task"]
+        C5["Receiver Task"]
+        C6["Filter Old and Duplicate msgs"]
+        C1-->|Schedule delivery|C4
+        C5-->C6
+        C6-->A1
+        C6 --> A12
+        C5-->|Ack for our sent msg|C2
+        C5-->|Ack to received msg|C1
+    end
+
+    A2 --> |Reliable send| queues
+    
+```
 
 ### Negotiation Flow
 There are several parallel control flows:
@@ -201,58 +300,6 @@ There are several parallel control flows:
     <a id="negotiation_session_id">Negotiation session id</a> is introduced to make sure that session receives messages relevant to current sdp pair.
 
 
-### Signalling connection handling pipeline
-If I get an ack for an element in the out queue, then I get another one when I resend it, and I cannot get one before I send it.
-
-```mermaid
-flowchart RL
-    subgraph Block1["Negotiator"]
-        subgraph IQ["Incoming Queues"]
-            A1["Answers and Candidates"]
-            A12["Offers"]
-        end
-        A2["Processing Task"]
-        subgraph Db["Ice Restart Debouncer"]
-            A11["Runner task"]
-            A22["Event Queue"]
-        end
-        A3["Session Id Filter"]
-        A4["RtcPeerConnection"]
-
-        A12 -->|Politely restart negotiation| A2
-        A4 -->|Candidates| A1
-        A1 -->A3
-        A3 -->|Handle<br>negotiation<br>messages| A2
-        A4 -->|"ICE (dis)connected <br> Signaling (un)stable"| A22
-
-        A2 -->|"Reset debounce timeout"| A22
-
-        A11 --> |"[1]"| A22
-        A2--> |"[2]"| A11
-        A2 -->|Start/end<br>negotiation| A3
-    end
-
-   
-
-    subgraph wsc["WsConnector"]
-        subgraph queues["Async Queues"]
-            C1["Send<br>Queue"]
-            C2["Ack Queue"]
-        end
-        C4["Sender Task"]
-        C5["Receiver Task"]
-        C6["Filter Old and Duplicate msgs"]
-        C1-->|Schedule delivery|C4
-        C5-->C6
-        C6-->A1
-        C6 --> A12
-        C5-->|Ack for our sent msg|C2
-        C5-->|Ack to received msg|C1
-    end
-
-    A2 --> |Reliable send| queues
-    
-```
 #### Footnotes
 * [1]: Get events - update state - switch between timed (debouncing) or passive queue polling
 * [2]: Spawn a task - poll completion - trigger an ICE restart
