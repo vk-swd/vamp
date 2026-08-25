@@ -2,15 +2,18 @@
 //!
 //! `WsNode` knows nothing about acks, sequence numbers, or `SignalMsg` -
 //! it just keeps a websocket connection to a url alive, exposes `send_tx`
-//! for outgoing frames and `receive_rx` for incoming frames. Reliability
-//! (acks, retries, ordering) is layered on top by the caller. See
-//! `memo.md` ("Signalling connection handling pipeline").
+//! for outgoing frames and delivers incoming frames to the `MessageHandler`
+//! given at construction time. Reliability (acks, retries, ordering) is
+//! layered on top by the caller. See `memo.md` ("Signalling connection
+//! handling pipeline").
 //!
 //! `sender_task`/`receive_task` are generic over the `WsSender`/`WsReceiver`
 //! traits, so they work the same whether backed by a real websocket
 //! (`RealSender`/`RealReceiver`) or, in tests, a pair of mpsc channels
 //! (`ChannelSender`/`ChannelReceiver`).
 
+use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -27,6 +30,11 @@ use tokio_util::sync::CancellationToken;
 
 pub type MyErr = Box<dyn std::error::Error + Send + Sync>;
 pub type MyRes<T = ()> = std::result::Result<T, MyErr>;
+
+
+/// Callback invoked for each incoming message, for the whole lifetime of
+/// the `WsNode`.
+pub type MessageHandler = Box<dyn Fn(Message) + Send + Sync>;
 
 /// Produces a fresh `(sender, receiver)` pair for one connection attempt.
 /// In production this opens a real websocket; in tests it can hand out
@@ -133,7 +141,11 @@ async fn sender_task(
     send_rx
 }
 
-async fn receive_task(mut ws_receiver: Box<dyn WsReceiver>, stopper: CancellationToken, receive_tx: mpsc::Sender<Message>) {
+async fn receive_task(
+    mut ws_receiver: Box<dyn WsReceiver>,
+    stopper: CancellationToken,
+    handler: MessageHandler,
+) -> MessageHandler {
     loop {
         let msg = tokio::select! {
             _ = stopper.cancelled() => break,
@@ -150,19 +162,19 @@ async fn receive_task(mut ws_receiver: Box<dyn WsReceiver>, stopper: Cancellatio
                 }
             }
         };
-        if receive_tx.send(msg).await.is_err() {
-            // nobody is listening anymore, nothing more to do here
-            break;
-        }
+        handler(msg);
     }
+    handler
 }
 
 async fn run_loop(
     connector: Connector,
     stopper: CancellationToken,
     mut send_rx: mpsc::Receiver<Message>,
-    receive_tx: mpsc::Sender<Message>,
+    mut handler: MessageHandler,
+    connected_state: Arc<AtomicBool>
 ) {
+    connected_state.store(false, std::sync::atomic::Ordering::SeqCst);
     while !stopper.is_cancelled() {
         let (ws_sender, ws_receiver) = tokio::select! {
             _ = stopper.cancelled() => break,
@@ -177,24 +189,25 @@ async fn run_loop(
                 }
             }
         };
-
+        connected_state.store(true, std::sync::atomic::Ordering::SeqCst);
         let local_stopper = stopper.child_token();
         let mut receive_handle =
-            tokio::spawn(receive_task(ws_receiver, local_stopper.clone(), receive_tx.clone()));
+            tokio::spawn(receive_task(ws_receiver, local_stopper.clone(), handler));
         let mut sender_handle = tokio::spawn(sender_task(ws_sender, send_rx, local_stopper.clone()));
 
         send_rx = tokio::select! {
             _ = stopper.cancelled() => {
                 // local_stopper is a child of stopper, so it's already cancelled here.
-                let _ = (&mut receive_handle).await;
-                match (&mut sender_handle).await {
-                    Ok(rx) => rx,
-                    Err(_) => break,
-                }
+                (&mut receive_handle).await;
+                (&mut sender_handle).await;
+                break;
             }
             r = &mut receive_handle => {
                 // likely some error occurred needing reconnection
-                let _ = r;
+                handler = match r {
+                    Ok(handler) => handler,
+                    Err(_) => break,
+                };
                 local_stopper.cancel();
                 match (&mut sender_handle).await {
                     Ok(rx) => rx,
@@ -204,7 +217,10 @@ async fn run_loop(
             r = &mut sender_handle => {
                 // likely some error occurred needing reconnection
                 local_stopper.cancel();
-                let _ = (&mut receive_handle).await;
+                handler = match (&mut receive_handle).await {
+                    Ok(handler) => handler,
+                    Err(_) => break,
+                };
                 match r {
                     Ok(rx) => rx,
                     Err(_) => break,
@@ -213,43 +229,52 @@ async fn run_loop(
         };
         // TODO: add a metric for connection restarts
     }
+    connected_state.store(false, std::sync::atomic::Ordering::SeqCst);
 }
 
 /// Keeps a websocket connection to `url` alive, reconnecting as needed.
-/// Outgoing frames go through `send_tx`; incoming frames arrive on
-/// `receive_rx`.
+/// Outgoing frames go through `send_tx`; incoming frames are delivered to
+/// the `MessageHandler` given at construction time, for the whole
+/// lifetime of the `WsNode`.
 pub struct WsNode {
     pub send_tx: mpsc::Sender<Message>,
-    pub receive_rx: mpsc::Receiver<Message>,
     stopper: CancellationToken,
+    is_connected: Arc<AtomicBool>,
     task: tokio::task::JoinHandle<()>,
 }
 
 impl WsNode {
-    pub fn new(url: String) -> Self {
+    pub fn new<F>(url: String, handler: F) -> Self
+    where
+        F: Fn(Message) + Send + Sync + 'static,
+    {
         let connector = real_connector(url.clone());
-        Self::new_with_connector(connector)
+        Self::new_with_connector(connector, handler)
     }
 
     /// Like `new`, but lets the caller supply the `Connector` used to open
     /// each connection attempt - tests use this to hand out channel-backed
     /// sender/receiver pairs instead of real websockets.
-    pub fn new_with_connector(connector: Connector) -> Self {
+    pub fn new_with_connector<F>(connector: Connector, handler: F) -> Self
+    where
+        F: Fn(Message) + Send + Sync + 'static,
+    {
         let (send_tx, send_rx) = mpsc::channel::<Message>(64);
-        let (receive_tx, receive_rx) = mpsc::channel::<Message>(64);
+        let handler = Box::new(handler);
         let stopper = CancellationToken::new();
 
-        let task = tokio::spawn(run_loop(connector, stopper.clone(), send_rx, receive_tx));
+        let is_connected = Arc::new(AtomicBool::new(false));
+        let task = tokio::spawn(run_loop(connector, stopper.clone(), send_rx, handler, is_connected.clone()));
 
-        Self { send_tx, receive_rx, stopper, task }
+        Self { send_tx, stopper, is_connected, task }
     }
 
     pub async fn send(&self, msg: Message) -> MyRes<()> {
-        self.send_tx.send(msg).await.map_err(|_| "send queue closed".into())
-    }
-
-    pub async fn recv(&mut self) -> Option<Message> {
-        self.receive_rx.recv().await
+        if self.is_connected.load(std::sync::atomic::Ordering::SeqCst) {
+            self.send_tx.send(msg).await.map_err(|_| "send queue closed".into())
+        } else {
+            Err("not connected".into())
+        }
     }
 
     pub async fn stop(self) {
@@ -260,54 +285,13 @@ impl WsNode {
 
 #[cfg(test)]
 mod tests {
-
     // ---------------------------------------------------------------------------
-    // Test implementation: emulates the wire with a pair of mpsc channels.
+    // Tests for the reconnecting websocket transport.
     // ---------------------------------------------------------------------------
-
-    /// `WsSender` that forwards to an mpsc channel instead of a real socket -
-    /// tests read from the paired `Receiver<Message>` to assert what `WsNode`
-    /// sent "over the wire".
-    pub struct ChannelSender(pub mpsc::Sender<Message>);
-    pub struct ChannelReceiver(pub mpsc::Receiver<Message>);
-
-    #[async_trait]
-    impl WsSender for ChannelSender {
-        async fn send(&mut self, msg: Message) -> MyRes<()> {
-            self.0.send(msg).await.map_err(|_| "test channel closed".into())
-        }
-    }
-
-    #[async_trait]
-    impl WsReceiver for ChannelReceiver {
-        async fn recv(&mut self) -> MyRes<Option<Message>> {
-            Ok(self.0.recv().await)
-        }
-    }
     use super::*;
-    use std::collections::VecDeque;
-    use std::sync::{Arc, Mutex};
-
-    /// Builds a connected pair: a `ChannelSender`/`ChannelReceiver` for use
-    /// by `sender_task`/`receive_task`, plus the test-side channel ends
-    /// used to inject/observe traffic.
-    struct TestPair {
-        ws_sender: ChannelSender,
-        ws_receiver: ChannelReceiver,
-        ws_sender_rx: Option<mpsc::Receiver<Message>>,
-        ws_receiver_tx: Option<mpsc::Sender<Message>>,
-    }
-
-    fn make_test_pair() -> TestPair {
-        let (sender_tx, sender_rx) = mpsc::channel::<Message>(16); // WsNode -> test
-        let (receiver_tx, receiver_rx) = mpsc::channel::<Message>(16); // test -> WsNode
-        TestPair {
-            ws_sender: ChannelSender(sender_tx),
-            ws_receiver: ChannelReceiver(receiver_rx),
-            ws_sender_rx: Some(sender_rx),
-            ws_receiver_tx: Some(receiver_tx),
-        }
-    }
+    use std::sync::Mutex;
+    use crate::test_helpers::make_test_pair;
+    use crate::test_helpers::TestPair;
 
     /// `WsNode` should reconnect through `number_of_failed_attempts` dead
     /// pairs and keep delivering once it reaches the last, live pair.
@@ -318,7 +302,12 @@ mod tests {
         let mut last_ws_sender_rx = ws_sender_rx.expect("last ws_sender_rx should be Some");
         let last_ws_receiver_tx = ws_receiver_tx.expect("last ws_receiver_tx should be Some");
         
-        test_pairs.push(TestPair { ws_sender, ws_receiver, ws_sender_rx: None, ws_receiver_tx: None });
+        test_pairs.push(TestPair {
+            ws_sender,
+            ws_receiver,
+            ws_sender_rx: None,
+            ws_receiver_tx: None,
+        });
         let pairs = Mutex::new(test_pairs);
         let connector: Connector =
             Box::new(move || {
@@ -332,10 +321,13 @@ mod tests {
             })
         ;
 
-        let mut node = WsNode::new_with_connector(connector);
+        let (recv_tx, mut recv_rx) = mpsc::unbounded_channel::<Message>();
+        let node = WsNode::new_with_connector(connector, move |msg| {
+            let _ = recv_tx.send(msg);
+        });
 
         last_ws_receiver_tx.send(Message::text("world")).await.unwrap();
-        assert_eq!(node.recv().await, Some(Message::text("world")));
+        assert_eq!(recv_rx.recv().await, Some(Message::text("world")));
 
         node.send(Message::text("hello")).await.unwrap();
         assert_eq!(last_ws_sender_rx.recv().await, Some(Message::text("hello")));
@@ -351,3 +343,4 @@ mod tests {
     }
 
 }
+

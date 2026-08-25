@@ -2,14 +2,14 @@
 
 Handles ICE channel establishment and maintenance: restarts, (re)negotiation, trickle, signalling server communications.
 
-It's goal is to open RTCPeerConnection to the other peer, keep it alive to allow exchange data.
+Its goal is to open an RTCPeerConnection to the other peer and keep it alive to allow data exchange.
 
 To ensure reliable connection the following need to be covered:
 1. Connectivity to STUN/TURN servers - single server, retry connection till it is available or app is closed.
 2. Connectivity to signalling server - single server, retry connection till it is available or app is closed.
 3. Connectivity to the other peer - monitor state signalled by webrtc-rs library and trigger ICErestart when negotiation or disconnected state went on long enough.
 
-Ideally STUN/TURN and ignalling servers need to be discovered, but here they are considered static, defined by a configuration.
+Ideally, STUN/TURN and signalling servers need to be discovered, but here they are considered static and defined by a configuration.
 
 ### Components
 
@@ -43,9 +43,37 @@ flowchart
     
 
 ```
-### Control Flow
 
-There are several parallel contorl flows:
+## WsConnector:
+```mermaid
+flowchart LR
+    subgraph wscon["WsConnector"]
+        ch["WsNodeHandler"]
+        wsn["WsNode"]
+    end
+    wsn <---> |Reconnect<br>Exchange messages|wss["Ws Server"]
+    ch <---> |Retry<br>Enforce order<br>Send/Await Acks|wsn
+```
+### WsNode
+
+### WsNodeHandler
+* Read rx queue and decode transport messages
+* Schedule acks on incoming data
+* Retry sending a message at intervals (one send at a time)
+* Track incoming acks and notify sending task
+* Keep track of outgoing seq numbers
+* <a id="ws_transport_filter">Filter</a> old incoming seq numbers 
+>[!NOTE]
+>Side note: if we received but failed to process a message and the other peer retries, session might get stuck. Or the other peer migh want to replay the response - those cases are not supported for simplicity and keeping things pragmatic, because it fixes itself by restarting session, at the expense of some delay. Failed processing causes - bad/flaky ICE servers, bad message format, queue overflow.
+
+one task is scraping rx queue
+1. Bad message: bad [rt tag](../signalling/memo.md#message_el_rtt_tag), non-text, failed parsing, [filtered](#ws_transport_filter)
+2. Data message: schedule an ack message without confirmation and pass the data to a provided processing handler, which must not return a future because wsNode must not be blocked.
+3. Ack message: add it to the record of ack messages
+
+
+### Negotiation Flow
+There are several parallel control flows:
 1. #### Connection to signalling server:
     Keep reestablishing connection while it is required. Otherwise close it.
 2. #### Connection to another participant:
@@ -70,12 +98,12 @@ There are several parallel contorl flows:
     #### Ack messages
      Ack messages were introduced for faster failure detection.
     
-     Acks are are sent back to sender, so that this sender can identify networking issue and retry the delivery. 
+    Acks are sent back to the sender, so that the sender can identify a networking issue and retry the delivery. 
      
      Delivery retries were decided to move away from the [negotiation layer](#negotiation-handling) for simplicity. Negotiator will only track stale state timeout to restart negotiation itself, not to resend concrete messages (out buffer overflow = failure to send, timeout = clear buffer and renegotiate).
 
      #### Unordered messages
-     But even with delivery confirmation there is a problem of unordered message delivery, which would prompt some message buffering and preprocessing on a receiver's side:
+    But even with delivery confirmation, there is a problem of unordered message delivery, which would prompt some message buffering and preprocessing on the receiver's side:
 
       ```mermaid
     sequenceDiagram
@@ -83,7 +111,7 @@ There are several parallel contorl flows:
         participant ss
         participant p2
         rect rgb(220, 200, 200)
-        note over p1, p2: unordered offer1 caused missing candidate 1
+        note over p1, p2: unordered offer1 caused a missing candidate 1
         p1 ->> ss: offer1
         ss --x p2: conenction drop
         p1 ->> ss: candidate 1
@@ -174,7 +202,7 @@ There are several parallel contorl flows:
 
 
 ### Signalling connection handling pipeline
-if i get ack to element in the out q , then i get another one when i resend it and i cant get one before i send it.
+If I get an ack for an element in the out queue, then I get another one when I resend it, and I cannot get one before I send it.
 
 ```mermaid
 flowchart RL
@@ -226,8 +254,8 @@ flowchart RL
     
 ```
 #### Footnotes
-* [1]: get events - update state - switch between timed (debouncing) or passive queue polling
-* [2]: Spawn task - poll completion - trigger ice restart
+* [1]: Get events - update state - switch between timed (debouncing) or passive queue polling
+* [2]: Spawn a task - poll completion - trigger an ICE restart
 
 ```mermaid
     sequenceDiagram
@@ -288,7 +316,7 @@ And it will reset RTCPeerConnection if it fails to get out of "have-remote-offer
 If the rust tries to restart ice connection and hangs for some reason, it will remain like that
 until it finishes his negotiation session and will ignore any unrelated signalling from the other peer.
 
-The following cases are not handled exclusively as it is unckear what can cause them in current operation:
+The following cases are not handled exclusively because it is unclear what can cause them during current operation:
 
 ```mermaid
 sequenceDiagram

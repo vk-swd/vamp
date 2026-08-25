@@ -7,8 +7,10 @@ use tokio;
 #[path="../src/commands/common.rs"]
 mod common;
 use std::env;
-mod ws_connector;
+// mod ws_connector;
 mod ws_node;
+mod ws_node_handler;
+pub(crate) mod test_helpers;
 
 #[tokio::main]
 async fn main() {
