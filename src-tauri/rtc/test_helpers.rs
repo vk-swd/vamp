@@ -5,7 +5,7 @@ use tokio::sync::mpsc;
 use tokio_tungstenite::tungstenite::Message;
 
 use super::common::{MyRes};
-use crate::ws_node::{WsSender, WsReceiver};
+use crate::ws_node::{Sender, Receiver};
 
 /// `WsSender` that forwards to an mpsc channel instead of a real socket.
 pub(crate) struct ChannelSender(pub(crate) mpsc::Sender<Message>);
@@ -14,14 +14,16 @@ pub(crate) struct ChannelSender(pub(crate) mpsc::Sender<Message>);
 pub(crate) struct ChannelReceiver(pub(crate) mpsc::Receiver<Message>);
 
 #[async_trait]
-impl WsSender for ChannelSender {
+impl Sender for ChannelSender {
+    type Item = Message;
     async fn send(&mut self, msg: Message) -> MyRes<()> {
         self.0.send(msg).await.map_err(|_| "test channel closed".into())
     }
 }
 
 #[async_trait]
-impl WsReceiver for ChannelReceiver {
+impl Receiver for ChannelReceiver {
+    type Item = Message;
     async fn recv(&mut self) -> MyRes<Option<Message>> {
         Ok(self.0.recv().await)
     }

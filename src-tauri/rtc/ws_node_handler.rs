@@ -10,7 +10,6 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use std::time::Duration;
 
-use futures_util::{Sink, SinkExt};
 use tokio::sync::mpsc;
 use tokio::time::sleep;
 use tokio_tungstenite::tungstenite::Message;
@@ -68,12 +67,12 @@ impl SnFilter {
 /// (see memo.md "Sequence numbers").
 #[derive(Deserialize, Serialize, Clone, Debug)]
 #[serde(tag = "type", rename_all = "snake_case")]
-enum TransportMsg {
+pub enum TransportMsg<T> {
     Ack { sn: u64, node_id: String },
-    Normal { sn: u64, node_id: String, payload: SignalMsg },
+    Normal { sn: u64, node_id: String, payload: T },
 }
 
-impl TransportMsg {
+impl<T> TransportMsg<T> {
     fn sn(&self) -> u64 {
         match self {
             TransportMsg::Ack { sn, .. } | TransportMsg::Normal { sn, .. } => *sn,
@@ -83,18 +82,19 @@ impl TransportMsg {
 
 
 #[derive(Deserialize, Serialize, Clone, Debug)]
-struct WireMsg {
+struct WireMsg<T> {
     tag: String,
-    message: Option<TransportMsg>,
+    message: Option<TransportMsg<T>>,
 }
 
-fn to_wire_msg(rtt_tag: &String, msg: &TransportMsg) -> MyRes<String> {
-    serde_json::to_string(&WireMsg { tag: rtt_tag.to_string(), message: Some(msg.clone()) })
+fn to_wire_msg<T: Serialize + Clone>(rtt: String, msg: &TransportMsg<T>) -> MyRes<Message> {
+    serde_json::to_string(&WireMsg { tag: rtt, message: Some(msg.clone()) })
+        .map(|s| Message::Text(s))
         .map_err(|e| Box::new(e) as MyErr)
 }
 
-fn from_wire_msg(raw: &String) -> Option<TransportMsg> {
-    serde_json::from_str::<WireMsg>(raw).ok().and_then(|w| w.message)
+fn from_wire_msg(raw: &String) -> Option<TransportMsg<SignalMsg>> {
+    serde_json::from_str::<WireMsg<SignalMsg>>(raw).ok().and_then(|w| w.message)
 }
 
 use super::ws_node::WsNode;
@@ -102,36 +102,38 @@ use super::ws_node::WsNode;
 pub type MessageHandler<T> = fn(T) -> ();
 
 /// Handles transport messages exchanged by a [`WsNode`].
-pub struct WsNodeHandler {
-    ws_node: WsNode,
+pub struct WsNodeHandler<CarrierType: Send + Sync + 'static, TransportedType: Send + Sync + 'static> {
+    ws_node: WsNode<CarrierType>,
     stopper: CancellationToken,
     seq_num_out: AtomicU64,
     ack_send_handle: tokio::task::JoinHandle<()>,
-    incoming_ack_rx: mpsc::Receiver<TransportMsg>,
-    rtt_tag: String,
+    incoming_ack_rx: mpsc::Receiver<TransportMsg<TransportedType>>,
     node_id_out: String,
+    decoder: fn(CarrierType) -> TransportMsg<TransportedType>,
+    encoder: fn(TransportMsg<TransportedType>) -> MyRes<CarrierType>,
 }
 
-impl WsNodeHandler {
+impl<CarrierType: Clone + Send + Sync + 'static, TransportedType: Send + Sync + 'static> WsNodeHandler<CarrierType, TransportedType> {
     pub fn new<F>(
-        connector: Connector,
-        rtt_tag: String,
+        connector: Box<dyn Connector<CarrierType>>,
         message_handler: F,
+        decoder: fn(CarrierType) -> TransportMsg<TransportedType>,
+        encoder: fn(TransportMsg<TransportedType>) -> MyRes<CarrierType>,
     ) -> Self
     where
-        F: Fn(SignalMsg) + Send + Sync + 'static,
+        F: Fn(TransportedType) + Send + Sync + 'static,
     {
-        let (ack_q_tx, mut ack_q_rx) = mpsc::channel::<TransportMsg>(16);
-        let (incoming_ack_tx, incoming_ack_rx) = mpsc::channel::<TransportMsg>(16);
+        let (ack_q_tx, mut ack_q_rx) = mpsc::channel::<TransportMsg<TransportedType>>(16);
+        let (incoming_ack_tx, incoming_ack_rx) = mpsc::channel::<TransportMsg<TransportedType>>(16);
         
         let stopper = CancellationToken::new();
         let stopper_child = stopper.child_token();
         
         let sequence_filter_handle = Arc::new(Mutex::new(SnFilter::new()));
         let ws_node_handle = move |msg| {
-            let Message::Text(raw) = msg else { return };
-            let Some(transport_message) = from_wire_msg(&raw) else { return };
-
+            // let Message::Text(raw) = msg else { return };
+            // let Some(transport_message) = from_wire_msg(&raw) else { return };
+            let transport_message = decoder(msg);
             match transport_message {
                 TransportMsg::Normal { sn, node_id, payload } => {
                     let _ = ack_q_tx.try_send(TransportMsg::Ack {
@@ -140,17 +142,16 @@ impl WsNodeHandler {
                     });
 
                     if sequence_filter_handle.lock().unwrap().next(&node_id, sn) {
-                        message_handler(payload.into());
+                        message_handler(payload);
                     }
                 }
-                ack @ TransportMsg::Ack { .. } => {
+                ack @ TransportMsg::<TransportedType>::Ack { .. } => {
                     let _ = incoming_ack_tx.try_send(ack);
                 }
             }
         };
         let ws_node = WsNode::new_with_connector(connector, ws_node_handle);
         let ws_node_send_q = ws_node.send_tx.clone();
-        let rtt_tag_clone = rtt_tag.clone();
         let ack_send_handle = tokio::spawn(async move {
             loop {
                 tokio::select! {
@@ -158,14 +159,14 @@ impl WsNodeHandler {
                     ack = ack_q_rx.recv() => {
                         match ack {
                             Some(ack) => {
-                                let wire = match to_wire_msg(&rtt_tag_clone, &ack) {
+                                let wire = match encoder(ack) {
                                     Ok(wire) => wire,
                                     Err(e) => {
                                         log::error!("[WSC] failed to serialize ack: {e}");
                                         continue;
                                     }
                                 };
-                                ws_node_send_q.send(Message::Text(wire)).await.unwrap_or_else(|e| {
+                                ws_node_send_q.send(wire).await.unwrap_or_else(|e| {
                                     log::error!("[WSC] failed to send ack: {e}");
                                 });
                             }
@@ -181,9 +182,10 @@ impl WsNodeHandler {
             stopper,
             seq_num_out: AtomicU64::new(0),
             ack_send_handle,
-            rtt_tag,
             incoming_ack_rx,
             node_id_out: Uuid::new_v4().to_string(),
+            decoder,
+            encoder
         }
     }
 
@@ -191,8 +193,8 @@ impl WsNodeHandler {
     /// Takes `&mut self` so the borrow checker enforces that only one
     /// caller can be waiting on the (single-consumer) ack queue at a time
     /// (mirrors the ts pseudocode's `sendAndWaitAck` caveat).
-    async fn send_and_wait_ack(&mut self, msg: WireMsg, expected_sn: u64) -> MyRes<()> {
-        self.ws_node.send(Message::Text(serde_json::to_string(&msg)?)).await?;
+    async fn send_and_wait_ack(&mut self, msg: CarrierType, expected_sn: u64) -> MyRes<()> {
+        self.ws_node.send(msg).await?;
         loop {
             match self.incoming_ack_rx.recv().await {
                 Some(TransportMsg::Ack { sn, .. }) if sn == expected_sn => return Ok(()),
@@ -202,7 +204,7 @@ impl WsNodeHandler {
         }
     }
 
-    async fn send_and_wait_ack_repeated(&mut self, msg: WireMsg, sn: u64, timeout: Duration) -> MyRes<()> {
+    async fn send_and_wait_ack_repeated(&mut self, msg: CarrierType, sn: u64, timeout: Duration) -> MyRes<()> {
         loop {
             tokio::select! {
                 _ = sleep(timeout) => continue,
@@ -218,10 +220,10 @@ impl WsNodeHandler {
     /// until acknowledged (see memo.md "Ack messages" / "Delivery retries").
     /// `timeout` controls how long to wait for an ack before retrying
     /// (defaults to 6s via [`WsNodeHandler::send_default`]).
-    pub async fn send(&mut self, payload: SignalMsg, timeout: Duration) -> MyRes<()> {
+    pub async fn send(&mut self, payload: TransportedType, timeout: Duration) -> MyRes<()> {
         let sn = self.seq_num_out.fetch_add(1, Ordering::Relaxed);
         let msg = TransportMsg::Normal { sn, node_id: self.node_id_out.clone(), payload };
-        let wire: WireMsg = WireMsg { tag: self.rtt_tag.clone(), message: Some(msg.clone()) };
+        let wire = (self.encoder)(msg)?;
         self.send_and_wait_ack_repeated(wire, sn, timeout).await
     }
 
@@ -230,45 +232,62 @@ impl WsNodeHandler {
     }
 
     /// Like [`WsNodeHandler::send`], using the default 6s retry timeout.
-    pub async fn send_default(&mut self, payload: SignalMsg) -> MyRes<()> {
+    pub async fn send_default(&mut self, payload: TransportedType) -> MyRes<()> {
         self.send(payload, Duration::from_secs(6)).await
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use async_trait::async_trait;
     use tokio::sync::mpsc::error::TryRecvError;
-use webrtc::rtp::extension::transport_cc_extension;
 
 use super::*;
-    use crate::test_helpers::make_test_pair;
+    use crate::{test_helpers::{ChannelReceiver, ChannelSender, TestPair, make_test_pair}, ws_node::{Receiver, Sender}};
 
     const RTT_TAG: &str = "tag";
     /// Builds a `WsNodeHandler` wired to a single fake `WsNode` connection
     /// (via `ws_node::tests::make_test_pair`), returning the handler plus the
     /// test-side channel ends used to inject/observe wire traffic.
-    fn make_handler() -> (WsNodeHandler, mpsc::Receiver<Message>, mpsc::Sender<Message>, mpsc::Receiver<SignalMsg>) {
-        let pair = make_test_pair();
-        let ws_sender_rx = pair.ws_sender_rx.expect("ws_sender_rx should be Some");
-        let ws_receiver_tx = pair.ws_receiver_tx.expect("ws_receiver_tx should be Some");
-        let inner = Mutex::new(Some((pair.ws_sender, pair.ws_receiver)));
-        let connector: Connector = Box::new(move || {
-            let (sender, receiver) = inner.lock().unwrap().take().expect("connector called more than once in this test");
-            Box::pin(async move {
-                Ok((Box::new(sender) as Box<dyn ws_node::WsSender>, Box::new(receiver) as Box<dyn ws_node::WsReceiver>))
-            })
-        });
+    struct TestConnector {
+        sender: Mutex<Option<ChannelSender>>,
+        receiver: Mutex<Option<ChannelReceiver>>,
+    }
+    impl TestConnector {
+        fn new(sender: ChannelSender, receiver: ChannelReceiver) -> Self {
+            Self { sender: Some(sender).into(), receiver: Some(receiver).into() }
+        }
+    }
+    #[async_trait]
+    impl Connector<Message> for TestConnector {
+        async fn connect(&self) -> MyRes<(Box<dyn Sender<Item = Message>>, Box<dyn Receiver<Item = Message>>)> {
+            let sender = self.sender.lock().unwrap().take().expect("sender already taken");
+            let receiver = self.receiver.lock().unwrap().take().expect("receiver already taken");
+            Ok((Box::new(sender) as Box<dyn Sender<Item = Message>>, Box::new(receiver) as Box<dyn Receiver<Item = Message>>))
+        }
+    }
+    fn make_handler() -> (WsNodeHandler<Message, SignalMsg>, mpsc::Receiver<Message>, mpsc::Sender<Message>, mpsc::Receiver<SignalMsg>) {
+        let TestPair {ws_sender, ws_receiver, ws_sender_rx, ws_receiver_tx} = make_test_pair();
+        // let inner = Mutex::new(Some((pair.ws_sender, pair.ws_receiver)));
+        let connector = Box::new(TestConnector::new(ws_sender, ws_receiver));
         let (handle_tx , handle_rx) = mpsc::channel::<SignalMsg>(16);
         let record_layer_header = move |msg: SignalMsg| {
-            let _ = handle_tx.try_send(msg.into());
+            let _ = handle_tx.try_send(msg);
         };
-        let handler = WsNodeHandler::new(connector, RTT_TAG.to_string(), record_layer_header);
-        (handler, ws_sender_rx, ws_receiver_tx, handle_rx)
+        let decoder = |msg: Message| {
+            let Message::Text(raw) = msg else { panic!("expected text message") };
+            from_wire_msg(&raw).expect("valid wire message")
+        };
+        let encoder = |msg: TransportMsg<SignalMsg>| {
+            to_wire_msg(RTT_TAG.to_string(), &msg)
+        };
+        let handler = WsNodeHandler::new(connector, record_layer_header, decoder, encoder);
+        (handler, ws_sender_rx.expect("1"), ws_receiver_tx.expect("2"), handle_rx)
     }
 
     fn ack_wire(sn: u64, node_id: &str) -> Message {
-        let msg = TransportMsg::Ack { sn, node_id: node_id.to_string() };
-        Message::Text(to_wire_msg(&"test".to_string(), &msg).unwrap())
+        let msg = TransportMsg::<SignalMsg>::Ack { sn, node_id: node_id.to_string() };
+        to_wire_msg("test".to_string(), &msg).unwrap()
     }
 
     fn decode_normal(msg: Message) -> (u64, String) {
@@ -298,8 +317,7 @@ use super::*;
     }
     fn make_wire_msg_txt(sn: u64) -> Message {
         let msg = TransportMsg::Normal { sn, node_id: NODE_ID.to_string(), payload: make_message() };
-        let wire = to_wire_msg(&RTT_TAG.to_string(), &msg).unwrap();
-        Message::Text(wire)
+        to_wire_msg(RTT_TAG.to_string(), &msg).unwrap()
     }
     fn check_ack(msg: Message, expected_sn: u64) {
         let (sn, node_id) = decode_ack(msg);

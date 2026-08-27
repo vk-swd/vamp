@@ -1,4 +1,4 @@
-# RtcConnector
+# RtcConnection
 
 Handles ICE channel establishment and maintenance: restarts, (re)negotiation, trickle, signalling server communications.
 
@@ -11,112 +11,65 @@ To ensure reliable connection the following need to be covered:
 
 Ideally, STUN/TURN and signalling servers need to be discovered, but here they are considered static and defined by a configuration.
 
-### Components
+# Components
 
-```mermaid
-flowchart
-    app["Application"]
-    subgraph rc["RtcConnector"]
-        subgraph wc["WsConnector"]
-        end
-        subgraph neg["Negotiator"]
-        end
-        dc["Data<br>Channel"]
-    end
-    op["Other<br>Peer"]
-    ss["Signalling<br>Server"]
-
-
-    wc -->|Restart connection| ss
-    wc -->|Deliver<br>Retry| ss
-    neg <-->|Exchange signalling message| wc
-    neg -->|"(Re)Create"| dc
-    dc -->|Signal problems| neg
-    dc <-->|Schedule message exchange<br>with the other peer| app
-
-    dc --- |p2p data exchange<br>over ICE|op
-
-    ss <--> |Signalling exchange|op
-
-    linkStyle 6,5 stroke:#ff0000,stroke-width:2px
-    linkStyle 1,2,7 stroke:#0000ff,stroke-width:2px
-    
-
-```
-
-## WsConnector:
+## Hirarchy
 ```mermaid
 flowchart LR
-    subgraph wscon["WsConnector"]
-        ch["WsNodeHandler"]
-        wsn["WsNode"]
-    end
-    wsn <---> |Reconnect<br>Exchange messages|wss["Ws Server"]
-    ch <---> |Retry<br>Enforce order<br>Send/Await Acks|wsn
-```
-### WsNode
-
-### WsNodeHandler
-* Provide callback to [WsNode](#wsnode) to receive incoming messages
-* Send messages with [WsNode](#wsnode) and retry until required ack arrives
-* Keep track of outgoing seq numbers
-* Decode incoming messges
-* Schedule acks on received regular messages
-* Record incoming acks to notify anyone sending
-* <a id="ws_transport_filter">Filter</a> old incoming seq numbers 
->[!NOTE]
->Side note: if we received but failed to process a message and the other peer retries, session might get stuck. Or the other peer migh want to replay the response - those cases are not supported for simplicity and keeping things pragmatic, because it fixes itself by restarting session, at the expense of some delay. Failed processing causes - bad/flaky ICE servers, bad message format, queue overflow.
-
-A handler passed to [ws node](#wsnode) parses and processes incoming opaque Message:
-1. Bad message: bad [rt tag](../signalling/memo.md#message_el_rtt_tag), non-text, failed parsing, [filtered](#ws_transport_filter)
-2. Data message: schedule an ack message without confirmation and pass the data to a provided processing handler, which must not return a future because wsNode must not be blocked.
-3. Ack message: add it to the record of ack messages
-
-## Negotiator
-Responsible for maintaining ICE connection session and for respoinding to or triggering (re)negotiations.
-It provides a datachannel connector that could be used to exchange data with the other peer.
-
-ok i need working memory again...picture is falling apart:
-
-connector: ice negotiation
-rtc_connector: (send_q, send_task[instream, outstream[ice_state_flag_shared]]) -> (ice negotiator[client i/o channels, debouncer, WsNodeHandler,ice_state_flag_shared])
-connector_handler[rtc_connector]
-outstream() -> error -> close send and receive streams -> connector() - returns same object after the connection is reestablished. (!!!)
-
-## RtcNode
-RtcNodeHandler is required to add Ack messages, order and retries. Despite datachannel working on top of SCTP protocol, which is reliable and provides configurations for maxRetransmits and ordered, the following problems remain:
-1. RTCDataChannel: send() method does not provide means to wait for a message to be delivered: promised result or a callback.
-2. There is no clean and reliable way in RTCDataChannel to confirm that the message even left the outgoing buffer. Polling buffersize would add complexity which would make the code less readeable and wouldnt guarantee that the message was actually delivered. bufferedAmount parameter only inditates quued messages that have not yet been passed to the system and docs don't explicitly guarantee that delivery results are communicated back in any way.
-3. In webrtc-rs implementation you could poll Association's stats on number of bytes sent, but it is not a documented way to determine that message was delivered either.
-
-RtcConnector - wait on the connection state
-
-
-```mermaid
-flowchart
-    subgraph rnh["RtcNodeHandler"]
-        rn["RtcNode"]
-    end
-    subgraph rc["RtcConnector"]
-        rtcp["RtcPeerConnection"]
-        rdc["RtcDataChannel"]
-        io["MessageBuffersTxRx"]
-        subgraph wnh["WsNodeHandler"]
-            wn["WsNode"]
+    subgraph rnh["TransportHandler&ltRtcDatachannel&gt"]
+        subgraph rn["Node&ltRtcDatachannel&gt"]
+            subgraph rc["Connector&ltRtcDataChannel&gt"]
+                sendrtc["Sender&ltRtcDataChannel&gt"]
+                recvrtc["Receiver&ltRtcDataChannel&gt"]
+                subgraph wnh["TransportHandler&ltWebsocket&gt"]
+                    subgraph wn["Node&ltWebsocket&gt"]
+                        subgraph conws["Connector&ltWebsocket&gt"]
+                            sendws["Sender&ltWebSocket&gt"]
+                            recvws["Receiver&ltWebSocket&gt"]
+                        end
+                    end
+                end
+      
+            end
         end
-        rtcp --- |Exchange SDPs|wnh
-        rtcp --> |Create|rdc
-        io --> |Subscribe| rdc
     end
     app["Application"]
-    ss["Signalling Server"]
     op["Other Peer"]
-    app <---> |Exchange data|rnh
-    rn --- |"Connect<br>(Wait ICE connected and get io streams)"| io
-    rn --- |Exchange data| op
-    wn --- |Exchange SDPs| ss 
-    op --- |Exchange SDPs| ss 
+    ss["Signalling Server"]
+    app---|"Exchange commands"| rnh
+    rnh---|"Exchange commands"| op
+    ss---|"Exchange SDPs"| op
+    conws~~~ss
+    rc---|"Exchange SDPs"| ss
 ```
+
+## Connector
+This component provides [Sender](#sender) and [Receiver](#receiver) streams to transfer data over an opaque channel.
+Whenever the [Sender](#sender) or [Receiver](#receiver) produce errors in sending or receiving messages, Connector can be used to create new connection or fix the old one and provide new Sender and Receiver objects to be used.
+
+### Sender
+
+### Receiver
+
+
+The Connector provides interface to create new connection, but what happens underneath is implementation dependent. There are two implementations: Connector\<RtcDataChannel\> and Connector\<Websocket\>
+
+### Receiver\<RtcDataChannel\>
+This implementation of the receiver waits for the [connector](#connectorrtcdatachannel) to be at connected state and then starts to wait for new messages to arrive over the ingress stream.
+
+### Sender\<RtcDataChannel\>
+This implementation of sender checks if the [connector](#connectorrtcdatachannel) is a connected state and either schedules message to send or drops it. The drop is done because the retransmission is handled by the [transport handler](#transporthandler).
+
+### Connector\<RtcDataChannel\>
+* The goal this implementation is to set up RtcPeerConnection, get RtcDataChannel and then exchange mesages over it as long as the Other Peer keeps this data channel alive.
+* The [Receiver](#receiverrtcdatachannel) and [Sender](#senderrtcdatachannel) keep the same reference to the underlying message passing channels to be able to hot swap the RtcDataChannel under the current session.
+
+
+
+
+
+
+## TransportHandler
 
 ### Signalling connection handling pipeline
 If I get an ack for an element in the out queue, then I get another one when I resend it, and I cannot get one before I send it.
@@ -170,6 +123,53 @@ flowchart RL
     A2 --> |Reliable send| queues
     
 ```
+
+## WsConnector:
+```mermaid
+flowchart LR
+    subgraph wscon["WsConnector"]
+        ch["TransportHandler<Ws>"]
+        wsn["WsNode"]
+    end
+    wsn <---> |Reconnect<br>Exchange messages|wss["Ws Server"]
+    ch <---> |Retry<br>Enforce order<br>Send/Await Acks|wsn
+```
+### WsNode
+
+### WsNodeHandler
+* Provide callback to [WsNode](#wsnode) to receive incoming messages
+* Send messages with [WsNode](#wsnode) and retry until required ack arrives
+* Keep track of outgoing seq numbers
+* Decode incoming messges
+* Schedule acks on received regular messages
+* Record incoming acks to notify anyone sending
+* <a id="ws_transport_filter">Filter</a> old incoming seq numbers 
+>[!NOTE]
+>Side note: if we received but failed to process a message and the other peer retries, session might get stuck. Or the other peer migh want to replay the response - those cases are not supported for simplicity and keeping things pragmatic, because it fixes itself by restarting session, at the expense of some delay. Failed processing causes - bad/flaky ICE servers, bad message format, queue overflow.
+
+A handler passed to [ws node](#wsnode) parses and processes incoming opaque Message:
+1. Bad message: bad [rt tag](../signalling/memo.md#message_el_rtt_tag), non-text, failed parsing, [filtered](#ws_transport_filter)
+2. Data message: schedule an ack message without confirmation and pass the data to a provided processing handler, which must not return a future because wsNode must not be blocked.
+3. Ack message: add it to the record of ack messages
+
+## Negotiator
+Responsible for maintaining ICE connection session and for respoinding to or triggering (re)negotiations.
+It provides a datachannel connector that could be used to exchange data with the other peer.
+
+connector: ice negotiation
+rtc_connector: (send_q, send_task[instream, outstream[ice_state_flag_shared]]) -> (ice negotiator[client i/o channels, debouncer, WsNodeHandler,ice_state_flag_shared])
+connector_handler[rtc_connector]
+outstream() -> error -> close send and receive streams -> connector() - returns same object after the connection is reestablished. (!!!)
+
+## RtcNode
+RtcNodeHandler is required to add Ack messages, order and retries. Despite datachannel working on top of SCTP protocol, which is reliable and provides configurations for maxRetransmits and ordered, the following problems remain:
+1. RTCDataChannel: send() method does not provide means to wait for a message to be delivered: promised result or a callback.
+2. There is no clean and reliable way in RTCDataChannel to confirm that the message even left the outgoing buffer. Polling buffersize would add complexity which would make the code less readeable and wouldnt guarantee that the message was actually delivered. bufferedAmount parameter only inditates quued messages that have not yet been passed to the system and docs don't explicitly guarantee that delivery results are communicated back in any way.
+3. In webrtc-rs implementation you could poll Association's stats on number of bytes sent, but it is not a documented way to determine that message was delivered either.
+
+RtcConnector - wait on the connection state
+
+
 
 ### Negotiation Flow
 There are several parallel control flows:

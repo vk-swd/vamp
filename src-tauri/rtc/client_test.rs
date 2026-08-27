@@ -11,6 +11,9 @@ use std::env;
 mod ws_node;
 mod ws_node_handler;
 pub(crate) mod test_helpers;
+mod rtc_connector;
+mod debouncer;
+mod rtc_peer_stuff;
 
 #[tokio::main]
 async fn main() {
