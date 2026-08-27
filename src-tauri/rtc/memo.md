@@ -43,7 +43,7 @@ flowchart LR
     rc---|"Exchange SDPs"| ss
 ```
 ## <a id="node">Node</a>
-This is an abstract/generic-ish asynchronious connection handler. It was decided to use once it became clear that the same processes were being used to construct a connection to some service with would:
+This is an abstract/generic-ish asynchronious connection handler. It was decided to use once it became clear that the same processes were being used to construct a connection to some service wich would:
 1. Not have message processing block the message receipt and vice versa.
 2. Not have message sending also block program operation.
 3. Handle reconnection automatically, without making any other routine wait for it.
@@ -70,7 +70,7 @@ As can be seen, node relies on an [abstract connector](#connector) which provide
 
 That way the only thing Node is concerned about is how to exchange messages with the application and whether Node needs to restart its connection or not, which that is communicated by [Sender](#sender) and [Receiver](#receiver) when they fail and have dedicated async tasks closed.
 
-### <a id="operation">Operation</a>
+### <a id="node_operation_loop">Operation</a>
 The node runs an operational loop, where
 
 ```mermaid
@@ -104,8 +104,10 @@ It is not communicated back to the sender for tro reasons:
 
 
 ## <a id="connector">Connector</a>
-This component provides [Sender](#sender) and [Receiver](#receiver) streams to transfer data over an opaque channel.
-Whenever the [Sender](#sender) or [Receiver](#receiver) produce errors in sending or receiving messages, Connector can be used to create new connection or fix the old one and provide new Sender and Receiver objects to be used.
+* This component provides [Sender](#sender) and [Receiver](#receiver) streams to transfer data over an opaque channel.
+* The only job of the connector is to tell the [Node](#node) when it can send or not and when it needs to reconnect:
+    * Whenever the [Sender](#sender) or [Receiver](#receiver) produce errors in sending or receiving messages, [Node](#node_operation_loop) will ask Connector for new ones, that will hopefully work.
+* Its exact operation depends on implementation
 
 ### <a id="sender">Sender</a>
 
@@ -121,15 +123,144 @@ This implementation of the receiver waits for the [connector](#connectorrtcdatac
 This implementation of sender checks if the [connector](#connectorrtcdatachannel) is a connected state and either schedules message to send or drops it. The drop is done because the retransmission is handled by the [transport handler](#transporthandler).
 
 ### <a id="connectorrtcdatachannel">Connector\<RtcDataChannel\></a>
-* The goal this implementation is to set up RtcPeerConnection, get RtcDataChannel and then exchange mesages over it as long as the Other Peer keeps this data channel alive.
+* This implementation is made to set up RtcDataChannel and keep it alive.
 * The [Receiver](#receiverrtcdatachannel) and [Sender](#senderrtcdatachannel) keep the same reference to the underlying message passing channels to be able to hot swap the RtcDataChannel under the current session.
+* The sending is allowed only when underlying RtcDataChannel is created and open.
 
+#### Connection state
+* The rust service only waits for incoming offers and this defines which states are possible:
+    1. IceConnected_DataChannelOpen
+    2. NoOp:
+    ICE state will produce many events related to many session establishment components: temporary connection loss, datachannel closure, reopening, signalling state chane, which usually (but not always) goes with connection loss. What is important is that the [Sender](#senderrtcdatachannel) should wait for the IceConnected_DataChannelOpen state to send anything
+#### Connector state
+* Here is what is important about the connector state:
+    1. The only thing that matters is the presense of an open RtcDataChannel during a connected ICE
+    2. The connector is passive and does not initiate any ICE restart, so it does not matter how long has been since ICE connection was losts
+    3. Connection to the signalling server must be kept open at all times, because any change to the connection must be communicated or requested by the Frontend, sending a new Offer
+    4. Any problems with the connection must be addressed by the frontend, which means that whatever happens, Backend should just wait for a new offer.
+>[!NOTE]
+>Side note: The fact that there is no ICE restart on the Backend side also saves us from having to make Rust service to be an impolite peer (since webrtc-rs does not support rollback), which could cause some uncomfortable edge cases where signalling might get stuck because polite Frontend is waiting for impolite Backend. 
+
+
+ 
+#### <a id="negotiation-handling">Negotiation handling:</a>
+The core principles are described in https://developer.mozilla.org/en-US/docs/Web/API/WebRTC_API/Perfect_negotiation - polite peer will disregard negotiation that he initiated and take impolite peer's offer for basis.
+
+   
+#### <a id="stale-answers-and-candidates">Stale answers and candidates</a>
+
+Even with measures against [message loss](#ack-messages) and [reordering](#unordered-messages) there are several unhappy paths (UPs) that might cause wrong answers or candidate messages be addressed to negotiations session:
+
+```mermaid
+sequenceDiagram
+    participant p1 as p1
+    participant ss
+    participant p2 as p2
+
+        
+    rect rgb(220, 200, 200)
+    note over p1,p2: UP - reset offer - stale answer
+    p1->>ss: offer1
+    p1->>p1: reset offer
+    ss->>p2: offer1
+    p2->>ss: answer1
+    rect rgb(260, 200, 200)
+    p1->>ss: offer2
+    ss->>p1: answer1
+    end
+    end
+```
+    
+<a id="negotiation_session_id">Negotiation session id</a> is introduced to make sure that session receives messages relevant to current sdp pair.
 
 
 
 
 
 ## <a id="transporthandler">TransportHandler</a>
+* Transport handler is a generic wrapper around a [Node](#node) and it provides message [ordering](#unordered_signalling_messages_payload_seq_num) and [acknowledgements](#ack-messages). 
+* It was decided to be made generic to be used during signalling session and during datachannel commungcations, because:
+    * Signalling server [does not provide message forwarding feedback](../signalling/memo.md#sec_no_forward_ack) and its design allows an unreliable delivery to another peer:
+    ```mermaid
+        sequenceDiagram
+            p1 ->> ss: connect
+            p1 ->> ss: offer1
+            rect rgb(260, 200, 200)
+            ss ->> ss: discard offer1
+            end
+            p2 ->> ss: connect
+            p1 ->> p1: resend timeout
+            p1 ->> ss: resend offer1
+            ss --x p2: connection lost
+            rect rgb(260, 200, 200)
+            ss ->> ss: discard offer1
+            end
+            ss -> p2: connection restored
+    ```
+    * Despite datachannel working on top of reliable SCTP protocol with its own retransmits and ordering, the following problems remain:
+        1. RTCDataChannel: send() method does not provide means to wait for a message to be delivered, such as promised result or a callback.
+        2. There is no clean and reliable way in RTCDataChannel to confirm that the message even left the outgoing buffer. Polling buffersize would add complexity which would make the code less readeable and wouldnt guarantee that the message was actually delivered. bufferedAmount parameter only inditates quued messages that have not yet been passed to the system and docs don't explicitly guarantee that delivery results are communicated back in any way.
+        3. In webrtc-rs implementation you could poll Association's stats on number of bytes sent, but it is not a documented way to determine that message was delivered either.
+    >Side Note:
+    >Though ordering is not necessary for datachannel messages, it will be a kind of a package deal here since it does not produce much overhead, given the context.
+
+#### <a id="ack-messages">Ack messages</a>
+Ack messages were introduced for faster failure detection.
+
+#### <a id="unordered-messages">Unordered messages</a>
+But even with delivery confirmation, there is a problem of unordered message delivery, which would prompt some message buffering and preprocessing on the receiver's side:
+
+```mermaid
+sequenceDiagram
+    participant p1
+    participant ss
+    participant p2
+    rect rgb(220, 200, 200)
+    note over p1, p2: unordered offer1 caused a missing candidate 1
+    p1 ->> ss: offer1
+    ss --x p2: conenction drop
+    p1 ->> ss: candidate 1
+    ss ->> ss: offer1 drop
+    ss -> p2: connection restore
+    ss ->> p2: candidate1
+    p2 ->> p1: candidate1 ack
+    rect rgb(260, 200, 200)
+    p2 ->> p2: candidate 1 ignored
+    p1 ->> p2: offer1 resend
+    p2 ->> p2: RTCPeerConnection create
+    end
+    end
+
+    rect rgb(220, 200, 200)
+    note over p1, p2: failed offer delivery and offer reset promote wrong offer
+    p1 ->> ss: offer1
+    ss --x p2: conenction drop
+    p1 ->> p1: offer reset
+    ss -> p2: connection restore
+    rect rgb(260, 200, 200)
+    p1 ->> p2: offer2
+    p1 ->> p2: resend offer1
+    end
+    end
+```
+Such [lack of order](#unordered-messages) is addressd by:
+1. <a id="unordered_signalling_messages_payload_seq_num">Sequence numbers</a> in payload messages.
+2. <a id="unordered_signalling_messgaes_hol">Send one message at a time</a>. It was chosen as an alternative to a reorder buffer to keep code simpler and message flow more steady as low latency is not as critical in the negotiation stage at this scale.
+
+
+#### <a id="transport-handler-operation">Operation</a>
+* Provide callback to [Node](#node) to receive incoming messages
+* Send messages to [Node](#node) and retry until required ack arrives
+* Keep track of outgoing seq numbers
+* Decode incoming raw messges (and dont send acks on acks)
+* Schedule acks on received regular messages (deliver unreliably)
+* Use incoming acks to notify successful delivery
+* Filter :
+    1. <a id="ws_transport_filter">Old incoming seq numbers</a>
+    2. Bad message: bad [rt tag](../signalling/memo.md#message_el_rtt_tag), non-text, failed parsing
+
+
+
 
 ### <a id="signalling-connection-handling-pipeline">Signalling connection handling pipeline</a>
 If I get an ack for an element in the out queue, then I get another one when I resend it, and I cannot get one before I send it.
@@ -183,270 +314,6 @@ flowchart RL
     A2 --> |Reliable send| queues
     
 ```
-
-## <a id="wsconnector">WsConnector:</a>
-```mermaid
-flowchart LR
-    subgraph wscon["WsConnector"]
-        ch["TransportHandler<Ws>"]
-        wsn["WsNode"]
-    end
-    wsn <---> |Reconnect<br>Exchange messages|wss["Ws Server"]
-    ch <---> |Retry<br>Enforce order<br>Send/Await Acks|wsn
-```
-### <a id="wsnode">WsNode</a>
-
-### <a id="wsnodehandler">WsNodeHandler</a>
-* Provide callback to [WsNode](#wsnode) to receive incoming messages
-* Send messages with [WsNode](#wsnode) and retry until required ack arrives
-* Keep track of outgoing seq numbers
-* Decode incoming messges
-* Schedule acks on received regular messages
-* Record incoming acks to notify anyone sending
-* <a id="ws_transport_filter">Filter</a> old incoming seq numbers 
->[!NOTE]
->Side note: if we received but failed to process a message and the other peer retries, session might get stuck. Or the other peer migh want to replay the response - those cases are not supported for simplicity and keeping things pragmatic, because it fixes itself by restarting session, at the expense of some delay. Failed processing causes - bad/flaky ICE servers, bad message format, queue overflow.
-
-A handler passed to [ws node](#wsnode) parses and processes incoming opaque Message:
-1. Bad message: bad [rt tag](../signalling/memo.md#message_el_rtt_tag), non-text, failed parsing, [filtered](#ws_transport_filter)
-2. Data message: schedule an ack message without confirmation and pass the data to a provided processing handler, which must not return a future because wsNode must not be blocked.
-3. Ack message: add it to the record of ack messages
-
-## <a id="negotiator">Negotiator</a>
-Responsible for maintaining ICE connection session and for respoinding to or triggering (re)negotiations.
-It provides a datachannel connector that could be used to exchange data with the other peer.
-
-connector: ice negotiation
-rtc_connector: (send_q, send_task[instream, outstream[ice_state_flag_shared]]) -> (ice negotiator[client i/o channels, debouncer, WsNodeHandler,ice_state_flag_shared])
-connector_handler[rtc_connector]
-outstream() -> error -> close send and receive streams -> connector() - returns same object after the connection is reestablished. (!!!)
-
-## <a id="rtcnode">RtcNode</a>
-RtcNodeHandler is required to add Ack messages, order and retries. Despite datachannel working on top of SCTP protocol, which is reliable and provides configurations for maxRetransmits and ordered, the following problems remain:
-1. RTCDataChannel: send() method does not provide means to wait for a message to be delivered: promised result or a callback.
-2. There is no clean and reliable way in RTCDataChannel to confirm that the message even left the outgoing buffer. Polling buffersize would add complexity which would make the code less readeable and wouldnt guarantee that the message was actually delivered. bufferedAmount parameter only inditates quued messages that have not yet been passed to the system and docs don't explicitly guarantee that delivery results are communicated back in any way.
-3. In webrtc-rs implementation you could poll Association's stats on number of bytes sent, but it is not a documented way to determine that message was delivered either.
-
-RtcConnector - wait on the connection state
-
-
-
-### <a id="negotiation-flow">Negotiation Flow</a>
-There are several parallel control flows:
-1. #### Connection to signalling server:
-    Keep reestablishing connection while it is required. Otherwise close it.
-2. #### Connection to another participant:
-
-    Signalling server [does not provide message forwarding feedback](../signalling/memo.md##sec_no_forward_ack) and its design allows an unreliable delivery to another peer:
-    ```mermaid
-    sequenceDiagram
-        p1 ->> ss: connect
-        p1 ->> ss: offer1
-        rect rgb(260, 200, 200)
-        ss ->> ss: discard offer1
-        end
-        p2 ->> ss: connect
-        p1 ->> p1: resend timeout
-        p1 ->> ss: resend offer1
-        ss --x p2: connection lost
-        rect rgb(260, 200, 200)
-        ss ->> ss: discard offer1
-        end
-        ss -> p2: connection restored
-    ```
-    #### <a id="ack-messages">Ack messages</a>
-     Ack messages were introduced for faster failure detection.
-    
-    Acks are sent back to the sender, so that the sender can identify a networking issue and retry the delivery. 
-     
-     Delivery retries were decided to move away from the [negotiation layer](#negotiation-handling) for simplicity. Negotiator will only track stale state timeout to restart negotiation itself, not to resend concrete messages (out buffer overflow = failure to send, timeout = clear buffer and renegotiate).
-
-    #### <a id="unordered-messages">Unordered messages</a>
-    But even with delivery confirmation, there is a problem of unordered message delivery, which would prompt some message buffering and preprocessing on the receiver's side:
-
-      ```mermaid
-    sequenceDiagram
-        participant p1
-        participant ss
-        participant p2
-        rect rgb(220, 200, 200)
-        note over p1, p2: unordered offer1 caused a missing candidate 1
-        p1 ->> ss: offer1
-        ss --x p2: conenction drop
-        p1 ->> ss: candidate 1
-        ss ->> ss: offer1 drop
-        ss -> p2: connection restore
-        ss ->> p2: candidate1
-        p2 ->> p1: candidate1 ack
-        rect rgb(260, 200, 200)
-        p2 ->> p2: candidate 1 ignored
-        p1 ->> p2: offer1 resend
-        p2 ->> p2: RTCPeerConnection create
-        end
-        end
-
-        rect rgb(220, 200, 200)
-        note over p1, p2: failed offer delivery and offer reset promote wrong offer
-        p1 ->> ss: offer1
-        ss --x p2: conenction drop
-        p1 ->> p1: offer reset
-        ss -> p2: connection restore
-        rect rgb(260, 200, 200)
-        p1 ->> p2: offer2
-        p1 ->> p2: resend offer1
-        end
-        end
-    ```
-    Such [lack of order](#unordered-messages) is addressd by:
-    1. <a id="unordered_signalling_messages_payload_seq_num">Sequence numbers</a> in payload messages.
-    2. <a id="unordered_signalling_messgaes_hol">Send one message at a time</a>. It was chosen as an alternative to a reorder buffer to keep code simpler and message flow more steady as low latency is not as critical in the negotiation stage at this scale.
-
-    3. #### <a id="negotiation-handling">Negotiation handling:</a>
-    The core principles are described in https://developer.mozilla.org/en-US/docs/Web/API/WebRTC_API/Perfect_negotiation - polite peer will disregard negotiation that he initiated and take impolite peer's offer for basis.
-
-    ```mermaid
-    sequenceDiagram
-        participant p1 as Polite
-        participant ss
-        participant p2 as Impolite
-        p1 ->> ss: polite offer
-        p2 ->> ss: impolite offer
-        ss ->> p1: impolite offer
-        ss ->> p2: polite offer
-        p2 ->> p2: drop polite offer
-        p1 ->> p1: rollback and take impolite offer
-        p1 ->> p2: impolite answer
-    ```
-    ### <a id="stale-answers-and-candidates">Stale answers and candidates</a>
-
-    Even with measures against [message loss](#ack-messages) and [reordering](#unordered-messages) there are several unhappy paths (UPs) that might cause wrong answers or candidate messages be addressed to negotiations session:
-
-    ```mermaid
-    sequenceDiagram
-        participant p1 as Polite
-        participant ss
-        participant p2 as Impolite
-
-          
-        rect rgb(220, 200, 200)
-        note over p1,p2: UP - reset offer - stale answer
-        p1->>ss: offer1
-        p1->>p1: reset offer
-        ss->>p2: offer1
-        p2->>ss: answer1
-        rect rgb(260, 200, 200)
-        p1->>ss: offer2
-        ss->>p1: answer1
-        end
-        end
- 
-        rect rgb(220, 200, 200)
-        note over p1,p2: UP - reset offer - stale answer 2
-        p1->>ss: offer1
-        p2->>ss: offer2
-        ss->>p2: offer1
-        p2->>p2: discard offer1
-        ss->>p1: offer2
-        p1->>p1: rollback offer1
-        p1->>ss: answer2
-        p2->>p2: reset connection
-        rect rgb(260, 200, 200)
-        p2->>ss: offer3
-        ss->>p2: answer2
-        end
-        end
-    ```
-    
-    <a id="negotiation_session_id">Negotiation session id</a> is introduced to make sure that session receives messages relevant to current sdp pair.
-
-
-#### <a id="footnotes">Footnotes</a>
-* [1]: Get events - update state - switch between timed (debouncing) or passive queue polling
-* [2]: Spawn a task - poll completion - trigger an ICE restart
-
-```mermaid
-    sequenceDiagram
-        participant p as Other<br>Peer
-        participant ss as Signalling<br>Server
-        participant pcrec as WsReceiver
-        participant wc as WsSender
-        participant pcout as OutBuffer
-        participant pcn as InBuffer
-        participant i as Interruptor
-        participant neg as Negotiation
-        neg ->> pcn: offer1
-        loop
-            wc -> pcout: try get <br> prioritised  <br>  messages: <br> none found
-            wc ->> wc: no acks to process
-            wc ->> wc: no acks to send        
-            wc <<->> pcn: get offer1
-            loop
-                par
-                    wc ->> ss: try send or restart <br> ws connection <br> including WsReceiver
-                    and
-                    i ->> wc: mb interrupt + <br> custom op
-                end
-            end
-            par
-                wc -> pcout: wait for offer1 ack
-            and
-                i ->> wc: mb interrupt
-            end
-        end
-
-        neg ->> pcn: candidate1
-        neg ->> pcn: candidate2
-        ss ->>p: offer1
-        p ->> pcrec: offer1 ack
-        pcrec ->> pcout : offer1 incoming ack
-
-        wc <<->> pcout : get and process <br> offer1 ack
-        wc <<->>  pcn: get candidate 1 and repeat the loop
-
-        p ->> pcrec : answer1
-        pcrec ->> pcout : answer1 outgoing ack 
-        pcrec ->> neg : answer1
-
-```
-
-### <a id="restarting-ice">Restarting ICE</a>
-1. 
-
-
-
-#### <a id="rust-implementation">Rust Implementation</a>
-##### <a id="always-impolite">Always impolite</a>
-Rust client does not support rollback operations for remote and local sdps.
-So it will be impolite.
-And it will reset RTCPeerConnection if it fails to get out of "have-remote-offer" state (Though it is to be implmeneted).
-
-If the rust tries to restart ice connection and hangs for some reason, it will remain like that until it finishes his negotiation session and will ignore any unrelated signalling from the other peer.
-
-The following cases are not handled exclusively because it is unclear what can cause them during current operation:
-
-```mermaid
-sequenceDiagram
-    participant p1 as Rust
-    participant ss
-    participant p2 as Browser
-
-    rect rgb(220, 200, 200)
-    note over p1,p2: UP - Ice restart fails before offer is sent
-    p1 --x p2: "failed create_offer({ice_restart:true})"
-    p1->>p1: debounce timeout
-    p1 ->> p2: fail again or succed with all the remaining steps
-    end
-
-    rect rgb(220, 200, 200)
-    note over p1,p2: UP - Ice restart fails before offer is sent
-    p1 --x p2: failed selLocalDescription
-    p1->>p1: debounce timeout
-    p1 ->> p2: fail again or succed with all the remaining steps
-    end
-
-```
-    
-
 
 
 #### <a id="browser-implementation">Browser implementation</a>
