@@ -1,4 +1,4 @@
-# RtcConnection
+# <a id="rtcconnection">RtcConnection</a>
 
 Handles ICE channel establishment and maintenance: restarts, (re)negotiation, trickle, signalling server communications.
 
@@ -11,9 +11,9 @@ To ensure reliable connection the following need to be covered:
 
 Ideally, STUN/TURN and signalling servers need to be discovered, but here they are considered static and defined by a configuration.
 
-# Components
+# <a id="components">Components</a>
 
-## Hirarchy
+## <a id="hirarchy">Hirarchy</a>
 ```mermaid
 flowchart LR
     subgraph rnh["TransportHandler&ltRtcDatachannel&gt"]
@@ -42,25 +42,85 @@ flowchart LR
     conws~~~ss
     rc---|"Exchange SDPs"| ss
 ```
+## <a id="node">Node</a>
+This is an abstract/generic-ish asynchronious connection handler. It was decided to use once it became clear that the same processes were being used to construct a connection to some service with would:
+1. Not have message processing block the message receipt and vice versa.
+2. Not have message sending also block program operation.
+3. Handle reconnection automatically, without making any other routine wait for it.
+To address this, the operation of this module is organised like so:
 
-## Connector
+```mermaid
+flowchart
+    subgraph app["Application"]
+        handler["IncomingMsgHandler&ltCarrierMessageType&gt"]
+    end
+    subgraph node["Node&ltCarrierMessageType&gt"]
+        recv["Receive Task"]
+        send["Send Task"]
+        io["Message Passing Channel"]
+        con["Connector&ltCarrierMessageType&gt"]
+    end
+    recv -->handler
+    io -->|Schedule|send
+    app -->|Send|io
+    con --> |Ingress Stream|recv
+    con --> |Egress Stream|send
+```
+As can be seen, node relies on an [abstract connector](#connector) which provides stream representing (a.k.a hiding) actual connections. Those could be streams for any kind of connections: TCP/ICE/Unix/ManualIO/etc and only Connector knows where to connect and how, not the Node. Those streams are also represented by opaque types: [Sender](#sender) and [Receiver](#receiver), which can perform any operation asynchroniously, while the node polls them for new messages or attempts sending.
+
+That way the only thing Node is concerned about is how to exchange messages with the application and whether Node needs to restart its connection or not, which that is communicated by [Sender](#sender) and [Receiver](#receiver) when they fail and have dedicated async tasks closed.
+
+### <a id="operation">Operation</a>
+The node runs an operational loop, where
+
+```mermaid
+flowchart
+    subgraph node["Node Operational Loop"]
+        con["Connector"]
+        io["Sender and Receiver"]
+        tasks["JoinHandle - s"]    
+    end
+    app["Applicaton"]
+    op["Other Application"]
+
+    app --- |Exchange data|io
+    io --- |Exchange data|op
+    con ---> |"(Re)Create Streams"|io
+    io ---> |"Handle Streams in async tasks"|tasks
+    tasks ---> |Wait on task handles and restart connection|con
+
+    classDef blue fill:#dbeafe,stroke:#2563eb,color:#1e3a8a;
+    classDef red fill:#fee2e2,stroke:#dc2626,color:#991b1b;
+    class con,tasks,io blue;
+    class app,op red;
+    linkStyle 2,3,4 stroke:#2563eb,stroke-width:2px;
+    linkStyle 0,1 stroke:#dc2626,stroke-width:2px;
+```
+As can be seen, Node only cares about how alive the streams are. It does not care much about how message delivery went. Its only goal is to initiate the connection establishment and was actually delivered, because message can be dropped by a Sender task (for example, if the connection is being restored).
+It is not communicated back to the sender for tro reasons:
+1. Make things simpler
+2. The delivery is ensured using Acknowledgement messages in [another layer](#transporthandler)
+
+
+
+## <a id="connector">Connector</a>
 This component provides [Sender](#sender) and [Receiver](#receiver) streams to transfer data over an opaque channel.
 Whenever the [Sender](#sender) or [Receiver](#receiver) produce errors in sending or receiving messages, Connector can be used to create new connection or fix the old one and provide new Sender and Receiver objects to be used.
 
-### Sender
+### <a id="sender">Sender</a>
 
-### Receiver
+### <a id="receiver">Receiver</a>
 
 
 The Connector provides interface to create new connection, but what happens underneath is implementation dependent. There are two implementations: Connector\<RtcDataChannel\> and Connector\<Websocket\>
 
-### Receiver\<RtcDataChannel\>
+### <a id="receiverrtcdatachannel">Receiver\<RtcDataChannel\></a>
 This implementation of the receiver waits for the [connector](#connectorrtcdatachannel) to be at connected state and then starts to wait for new messages to arrive over the ingress stream.
 
-### Sender\<RtcDataChannel\>
+### <a id="senderrtcdatachannel">Sender\<RtcDataChannel\></a>
 This implementation of sender checks if the [connector](#connectorrtcdatachannel) is a connected state and either schedules message to send or drops it. The drop is done because the retransmission is handled by the [transport handler](#transporthandler).
 
-### Connector\<RtcDataChannel\>
+### <a id="connectorrtcdatachannel">Connector\<RtcDataChannel\></a>
 * The goal this implementation is to set up RtcPeerConnection, get RtcDataChannel and then exchange mesages over it as long as the Other Peer keeps this data channel alive.
 * The [Receiver](#receiverrtcdatachannel) and [Sender](#senderrtcdatachannel) keep the same reference to the underlying message passing channels to be able to hot swap the RtcDataChannel under the current session.
 
@@ -69,9 +129,9 @@ This implementation of sender checks if the [connector](#connectorrtcdatachannel
 
 
 
-## TransportHandler
+## <a id="transporthandler">TransportHandler</a>
 
-### Signalling connection handling pipeline
+### <a id="signalling-connection-handling-pipeline">Signalling connection handling pipeline</a>
 If I get an ack for an element in the out queue, then I get another one when I resend it, and I cannot get one before I send it.
 
 ```mermaid
@@ -124,7 +184,7 @@ flowchart RL
     
 ```
 
-## WsConnector:
+## <a id="wsconnector">WsConnector:</a>
 ```mermaid
 flowchart LR
     subgraph wscon["WsConnector"]
@@ -134,9 +194,9 @@ flowchart LR
     wsn <---> |Reconnect<br>Exchange messages|wss["Ws Server"]
     ch <---> |Retry<br>Enforce order<br>Send/Await Acks|wsn
 ```
-### WsNode
+### <a id="wsnode">WsNode</a>
 
-### WsNodeHandler
+### <a id="wsnodehandler">WsNodeHandler</a>
 * Provide callback to [WsNode](#wsnode) to receive incoming messages
 * Send messages with [WsNode](#wsnode) and retry until required ack arrives
 * Keep track of outgoing seq numbers
@@ -152,7 +212,7 @@ A handler passed to [ws node](#wsnode) parses and processes incoming opaque Mess
 2. Data message: schedule an ack message without confirmation and pass the data to a provided processing handler, which must not return a future because wsNode must not be blocked.
 3. Ack message: add it to the record of ack messages
 
-## Negotiator
+## <a id="negotiator">Negotiator</a>
 Responsible for maintaining ICE connection session and for respoinding to or triggering (re)negotiations.
 It provides a datachannel connector that could be used to exchange data with the other peer.
 
@@ -161,7 +221,7 @@ rtc_connector: (send_q, send_task[instream, outstream[ice_state_flag_shared]]) -
 connector_handler[rtc_connector]
 outstream() -> error -> close send and receive streams -> connector() - returns same object after the connection is reestablished. (!!!)
 
-## RtcNode
+## <a id="rtcnode">RtcNode</a>
 RtcNodeHandler is required to add Ack messages, order and retries. Despite datachannel working on top of SCTP protocol, which is reliable and provides configurations for maxRetransmits and ordered, the following problems remain:
 1. RTCDataChannel: send() method does not provide means to wait for a message to be delivered: promised result or a callback.
 2. There is no clean and reliable way in RTCDataChannel to confirm that the message even left the outgoing buffer. Polling buffersize would add complexity which would make the code less readeable and wouldnt guarantee that the message was actually delivered. bufferedAmount parameter only inditates quued messages that have not yet been passed to the system and docs don't explicitly guarantee that delivery results are communicated back in any way.
@@ -171,7 +231,7 @@ RtcConnector - wait on the connection state
 
 
 
-### Negotiation Flow
+### <a id="negotiation-flow">Negotiation Flow</a>
 There are several parallel control flows:
 1. #### Connection to signalling server:
     Keep reestablishing connection while it is required. Otherwise close it.
@@ -194,14 +254,14 @@ There are several parallel control flows:
         end
         ss -> p2: connection restored
     ```
-    #### Ack messages
+    #### <a id="ack-messages">Ack messages</a>
      Ack messages were introduced for faster failure detection.
     
     Acks are sent back to the sender, so that the sender can identify a networking issue and retry the delivery. 
      
      Delivery retries were decided to move away from the [negotiation layer](#negotiation-handling) for simplicity. Negotiator will only track stale state timeout to restart negotiation itself, not to resend concrete messages (out buffer overflow = failure to send, timeout = clear buffer and renegotiate).
 
-     #### Unordered messages
+    #### <a id="unordered-messages">Unordered messages</a>
     But even with delivery confirmation, there is a problem of unordered message delivery, which would prompt some message buffering and preprocessing on the receiver's side:
 
       ```mermaid
@@ -241,7 +301,7 @@ There are several parallel control flows:
     1. <a id="unordered_signalling_messages_payload_seq_num">Sequence numbers</a> in payload messages.
     2. <a id="unordered_signalling_messgaes_hol">Send one message at a time</a>. It was chosen as an alternative to a reorder buffer to keep code simpler and message flow more steady as low latency is not as critical in the negotiation stage at this scale.
 
-3. #### Negotiation handling:
+    3. #### <a id="negotiation-handling">Negotiation handling:</a>
     The core principles are described in https://developer.mozilla.org/en-US/docs/Web/API/WebRTC_API/Perfect_negotiation - polite peer will disregard negotiation that he initiated and take impolite peer's offer for basis.
 
     ```mermaid
@@ -257,7 +317,7 @@ There are several parallel control flows:
         p1 ->> p1: rollback and take impolite offer
         p1 ->> p2: impolite answer
     ```
-    ### Stale answers and candidates
+    ### <a id="stale-answers-and-candidates">Stale answers and candidates</a>
 
     Even with measures against [message loss](#ack-messages) and [reordering](#unordered-messages) there are several unhappy paths (UPs) that might cause wrong answers or candidate messages be addressed to negotiations session:
 
@@ -300,7 +360,7 @@ There are several parallel control flows:
     <a id="negotiation_session_id">Negotiation session id</a> is introduced to make sure that session receives messages relevant to current sdp pair.
 
 
-#### Footnotes
+#### <a id="footnotes">Footnotes</a>
 * [1]: Get events - update state - switch between timed (debouncing) or passive queue polling
 * [2]: Spawn a task - poll completion - trigger an ICE restart
 
@@ -349,19 +409,18 @@ There are several parallel control flows:
 
 ```
 
-### Restarting ICE
+### <a id="restarting-ice">Restarting ICE</a>
 1. 
 
 
 
-#### Rust Implementation
-##### Always impolite
+#### <a id="rust-implementation">Rust Implementation</a>
+##### <a id="always-impolite">Always impolite</a>
 Rust client does not support rollback operations for remote and local sdps.
 So it will be impolite.
-And it will reset RTCPeerConnection if it fails to get out of "have-remote-offer" state.
+And it will reset RTCPeerConnection if it fails to get out of "have-remote-offer" state (Though it is to be implmeneted).
 
-If the rust tries to restart ice connection and hangs for some reason, it will remain like that
-until it finishes his negotiation session and will ignore any unrelated signalling from the other peer.
+If the rust tries to restart ice connection and hangs for some reason, it will remain like that until it finishes his negotiation session and will ignore any unrelated signalling from the other peer.
 
 The following cases are not handled exclusively because it is unclear what can cause them during current operation:
 
@@ -390,6 +449,6 @@ sequenceDiagram
 
 
 
-#### Browser implementation
-Using flags to check for answer setting in progress is needed to see if negotiation is about to finish. BEcause single therad is used to schedule event processing, if flag is not set it would mean no answer was received at all.
+#### <a id="browser-implementation">Browser implementation</a>
+Using flags to check for answer setting in progress is needed to see if negotiation is about to finish. BEcause single therad is used to schedule event processing, if flag is not set it would mean no answer was received yet at all.
 
