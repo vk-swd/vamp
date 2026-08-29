@@ -51,9 +51,6 @@ enum ConnectionState {
 // and the coturn ice_servers from env (see coturn_ice_servers_from_env). Used by every
 // webrtc test in this file so they all negotiate against the same TURN/STUN setup.
 pub async fn new_default_peer_connection() -> Arc<RTCPeerConnection> {
-    let (local_candidate_tx, local_candidate_rx) = tokio::sync::mpsc::channel::<SignalMsg>(8);
-    
-    
     let mut media_engine = MediaEngine::default();
     let mut registry = Registry::new();
     registry = register_default_interceptors(registry, &mut media_engine).unwrap();

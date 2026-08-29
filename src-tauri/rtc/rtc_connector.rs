@@ -1,14 +1,17 @@
 
 use std::collections::HashMap;
-use std::{iter::Map, sync::Arc};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use async_trait::async_trait;
 use serde::{Serialize, Deserialize};
 use tokio::sync::Notify;
 use tokio_tungstenite::tungstenite::Message;
+use webrtc::ice_transport::ice_candidate::RTCIceCandidateInit;
 use webrtc::peer_connection::RTCPeerConnection;
-use crate::{common::{MyErr, MyRes}, debouncer::SimpleDebouncer, rtc_peer_stuff::new_default_peer_connection, ws_node::{Connector, Receiver, Sender}};
-use tokio::{signal, sync::Mutex};
+use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
+use crate::{common::{MyErr, MyRes}, debouncer::IceRestartDebouncer, rtc_peer_stuff::new_default_peer_connection, ws_node::{Connector, Receiver, Sender}};
+use tokio::sync::Mutex;
+use tokio_util::sync::CancellationToken;
 use crate::ws_node_handler::{TransportMsg, SignalMsg, TransportHandler, TransportHandlerControl};
 
 type ToMutex<T> = tokio::sync::Mutex<T>;
@@ -110,9 +113,10 @@ struct TransportHandlerState {
 type DCMapPrt = Arc<ToMutex<HashMap<String, Arc<TransportHandlerState>>>>;
 struct RtcConnector {
     shared_state: DCMapPrt,
-    ice_debouncer: SimpleDebouncer,
-    incoming_channels: ToReceiver<String>,
+    ice_debouncer: Arc<IceRestartDebouncer>,
     incoming_channels_notifier: Arc<tokio::sync::Notify>,
+    cancellation_token: CancellationToken,
+    run_handle: tokio::task::JoinHandle<()>,
 }
 
 struct RtcConnectorConfig {
@@ -125,16 +129,18 @@ impl RtcConnector {
         // let (rtc_sender, rtc_receiver) = tokio::sync::mpsc::channel(16);
         let shared_state = Arc::new(ToMutex::new(HashMap::new()));
         let ws_connector = Box::new(crate::rtc_peer_stuff::signalling_server_connector());
-        let (signal_tx, mut signal_rx) = tokio::sync::mpsc::channel::<SignalMsg>(8);
-        let (offer_tx, mut offer_rx) = tokio::sync::mpsc::channel::<SignalMsg>(8);
-        let (local_candidate_tx, mut local_candidate_rx) = tokio::sync::mpsc::channel::<SignalMsg>(8);
+        let (signal_tx, signal_rx) = tokio::sync::mpsc::channel::<SignalMsg>(8);
+        let (offer_tx, offer_rx) = tokio::sync::mpsc::channel::<SignalMsg>(8);
+        let incoming_channels_notifier = Arc::new(Notify::new());
+        let cancellation_token = CancellationToken::new();
+        let ice_debouncer = Arc::new(IceRestartDebouncer::new());
         
+        let signal_tx_clone = signal_tx.clone();
         let message_handler = move |msg: SignalMsg| {
             if msg.kind == "offer" {
-                let _ = offer_tx.try_send(msg);
-            } else {
-                let _ = signal_tx.try_send(msg);
+                let _ = offer_tx.try_send(msg.clone());
             }
+            let _ = signal_tx_clone.try_send(msg);
         };
         let ws_node_handler = TransportHandler::<Message, SignalMsg>::new(
             ws_connector, 
@@ -150,10 +156,27 @@ impl RtcConnector {
                 crate::ws_node_handler::to_wire_msg("signalling".to_string(), &msg)
             },
         );
+        let run_handle = run(
+            signal_rx,
+            offer_rx,
+            signal_tx,
+            ws_node_handler,
+            incoming_channels_notifier.clone(),
+            shared_state.clone(),
+            cancellation_token.clone(),
+            ice_debouncer.clone(),
+        );
         RtcConnector {
             shared_state,
-            ice_debouncer: SimpleDebouncer::new(),
+            ice_debouncer,
+            incoming_channels_notifier,
+            cancellation_token,
+            run_handle,
         }
+    }
+
+    pub fn cancel(&self) {
+        self.cancellation_token.cancel();
     }
 
 
@@ -220,6 +243,7 @@ fn init_rtc_connection(
     connection: &RTCPeerConnection, 
     incoming_channels_notifier: Arc<tokio::sync::Notify>,
     data_channels: DCMapPrt,
+    ice_debouncer: Arc<IceRestartDebouncer>,
 ) {
     let connection_flag = Arc::new(AtomicBool::new(false));
     let connection_flag_clone = connection_flag.clone();
@@ -233,12 +257,12 @@ fn init_rtc_connection(
             webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState::Connected => {
                 connection_flag_clone.store(true, Ordering::SeqCst);
                 connection_notifier_clone.notify_waiters();
+                ice_debouncer.end();
             }
-            webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState::Disconnected => {
+            webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState::Disconnected
+            | webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState::Failed => {
                 connection_flag_clone.store(false, Ordering::SeqCst);
-            }
-            webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState::Failed => {
-                connection_flag_clone.store(false, Ordering::SeqCst);
+                ice_debouncer.start();
             }
             webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState::Closed => {
                 connection_flag_clone.store(false, Ordering::SeqCst);
@@ -310,56 +334,211 @@ fn init_rtc_connection(
         })
     }));
 }
-fn run(mut signal_rx: ToReceiver<SignalMsg>, 
-    mut offer_rx: ToReceiver<SignalMsg>, 
-    mut local_candidate_rx: ToReceiver<SignalMsg>, 
-    shared_state: Arc<RtcConnectorSharedState>,
-    dc_map: DCMapPrt) {
+
+fn init_local_candidate_handling(
+    connection: Arc<RTCPeerConnection>,
+    signal_tx: ToSender<SignalMsg>,
+) {
+    connection.on_ice_candidate(Box::new(move |candidate| {
+        let signal_tx = signal_tx.clone();
+        Box::pin(async move {
+            let Some(candidate) = candidate else {
+                // A None candidate marks the end of ICE gathering.
+                return;
+            };
+
+            let candidate = match candidate.to_json() {
+                Ok(candidate) => candidate,
+                Err(error) => {
+                    log::warn!("failed to convert local ICE candidate: {error}");
+                    return;
+                }
+            };
+            let sdp = match serde_json::to_string(&candidate) {
+                Ok(sdp) => sdp,
+                Err(error) => {
+                    log::warn!("failed to serialize local ICE candidate: {error}");
+                    return;
+                }
+            };
+
+            let local_candidate = SignalMsg {
+                kind: "local_candidate".to_string(),
+                sdp,
+                // The negotiation ID is assigned when this message is
+                // consumed, after the corresponding offer is known.
+                neg_id: String::new(),
+            };
+            if let Err(error) = signal_tx.send(local_candidate).await {
+                log::warn!("failed to queue local ICE candidate: {error}");
+            }
+        })
+    }));
+}
+
+async fn handle_offer(
+    connection: &RTCPeerConnection,
+    offer: SignalMsg,
+    websocket_transport_handler: &mut TransportHandler<Message, SignalMsg>,
+) -> MyRes<()> {
+    let negotiation_id = offer.neg_id;
+    let remote_description = RTCSessionDescription::offer(offer.sdp)?;
+    connection.set_remote_description(remote_description).await?;
+
+    let answer = connection.create_answer(None).await?;
+    connection.set_local_description(answer).await?;
+
+    let local_description = connection
+        .local_description()
+        .await
+        .ok_or_else(|| "peer connection returned no local answer description")?;
+    websocket_transport_handler
+        .send_default(SignalMsg {
+            kind: "answer".to_string(),
+            sdp: local_description.sdp,
+            neg_id: negotiation_id,
+        })
+        .await?;
+
+    Ok(())
+}
+
+async fn handle_incoming_candidate(
+    connection: &RTCPeerConnection,
+    candidate: SignalMsg,
+) -> MyRes<()> {
+    let candidate = serde_json::from_str::<RTCIceCandidateInit>(&candidate.sdp)?;
+    connection.add_ice_candidate(candidate).await?;
+    Ok(())
+}
+
+async fn close_data_channels(data_channels: &DCMapPrt) {
+    let channels = {
+        let mut guard = data_channels.lock().await;
+        guard.drain().map(|(_, state)| state).collect::<Vec<_>>()
+    };
+
+    for channel in channels {
+        if let Some(control) = channel.transport_handler_control.lock().await.take() {
+            control.cancel();
+        }
+        let _ = channel.dc_shared_state.dc_state.dc.close().await;
+    }
+}
+
+fn run(mut signal_rx: ToReceiver<SignalMsg>,
+    mut offer_rx: ToReceiver<SignalMsg>,
+    signal_tx: ToSender<SignalMsg>,
+    mut websocket_transport_handler: TransportHandler<Message, SignalMsg>,
+    incoming_channels_notifier: Arc<tokio::sync::Notify>,
+    dc_map: DCMapPrt,
+    cancellation_token: CancellationToken,
+    ice_debouncer: Arc<IceRestartDebouncer>) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
-        let rtc_peer_con = new_default_peer_connection().await;
+        let mut debounce_rx = ice_debouncer.subscribe();
+        let mut rtc_peer_con = Option::<Arc<RTCPeerConnection>>::None;
         let mut current_offer = Option::<SignalMsg>::None;
         let mut current_negotiation_id = Option::<String>::None;
+        let mut restart_rtc_peer = true;
         loop {
+            
+            if restart_rtc_peer {
+                restart_rtc_peer = false;
+                if let Some(peer_con) = rtc_peer_con.as_ref() {
+                    close_data_channels(&dc_map).await;
+                    let _ = peer_con.close().await;
+                    current_offer = None;
+                    current_negotiation_id = None;
+                }
+
+                rtc_peer_con = Some(new_default_peer_connection().await);
+                init_rtc_connection(
+                    rtc_peer_con.as_ref().unwrap(),
+                    incoming_channels_notifier.clone(),
+                    dc_map.clone(),
+                    ice_debouncer.clone(),
+                );
+                init_local_candidate_handling(rtc_peer_con.as_ref().unwrap().clone(), signal_tx.clone());
+            }
+            // it is ok to handle signalling in the same select as 
+            // other current events because they can only get interrupted
+            // by a new offer or by a debounce, which is fine.
             tokio::select! {
+                _ = cancellation_token.cancelled() => break,
+                debounce_event = debounce_rx.recv() => {
+                    match debounce_event {
+                        Ok(_) => {
+                            restart_rtc_peer = true;
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                    }
+                }
                 offer = offer_rx.recv() => {
                     match offer {
                         Some(offer) => {
                             current_offer = Some(offer);
+                            current_negotiation_id = current_offer.as_ref().map(|offer| offer.neg_id.clone());
                         }
                         None => break,
                     }
-                    // add tombstone to local candidates and to connection state
                 }
 
-                _ = async {}, if current_offer.is_some() => {
+                _ = async {}, if current_negotiation_id.as_ref().is_some_and(|id| !id.is_empty()) && current_offer.is_some() => {
                     let offer = current_offer
                         .take()
                         .expect("current_offer was checked above");
-                    current_negotiation_id = Some(offer.neg_id.clone());
-                    // Process `offer` and use `rtc_peer_con` here.
-                    let _ = offer;
-                }
-                signal_msg = signal_rx.recv() => {
-                    match signal_msg {
-                        Some(msg) => {
-                            // Process `msg` and use `rtc_peer_con` here.
-                            let _ = msg;
-                        }
-                        None => break,
+                    if let Err(error) = handle_offer(
+                        rtc_peer_con.as_ref().expect("rtc_peer_con should be Some"),
+                        offer,
+                        &mut websocket_transport_handler,
+                    ).await {
+                        log::warn!("failed to handle signalling offer: {error}");
                     }
                 }
-                local_candidate_msg = local_candidate_rx.recv() => {
-                    match local_candidate_msg {
+                signal_msg = signal_rx.recv(), if current_negotiation_id.as_ref().is_some_and(|id| !id.is_empty()) => {
+                    match signal_msg {
                         Some(msg) => {
-                            // Process `msg` and use `rtc_peer_con` here.
-                            let _ = msg;
+                            let Some(negotiation_id) = current_negotiation_id.as_ref() else {
+                                continue;
+                            };
+
+                            let msg = if msg.kind == "local_candidate" {
+                                SignalMsg {
+                                    neg_id: negotiation_id.clone(),
+                                    ..msg
+                                }
+                            } else if msg.neg_id != *negotiation_id {
+                                continue;
+                            } else {
+                                msg
+                            };
+
+                            if msg.kind == "local_candidate" {
+                                let local_candidate = SignalMsg {
+                                    kind: "ice-candidate".to_string(),
+                                    ..msg
+                                };
+                                if let Err(error) = websocket_transport_handler.send_default(local_candidate).await {
+                                    log::warn!("failed to send local ICE candidate: {error}");
+                                }
+                            } else if msg.kind == "ice-candidate" {
+                                if let Err(error) = handle_incoming_candidate(
+                                    rtc_peer_con.as_ref().expect("rtc_peer_con should be Some"),
+                                    msg,
+                                ).await {
+                                    log::warn!("failed to handle incoming ICE candidate: {error}");
+                                }
+                            }
                         }
                         None => break,
                     }
                 }
             }
+
         }
-    });
+        websocket_transport_handler.stop().await;
+    })
 }
 enum RtcState {
     AwaitingOffer,
@@ -373,10 +552,7 @@ enum Action {
     ReceiveOffer(String),
     Wait,
     ReceiveCandidate(String),
-    ChannelClosed(String),
-    ChannelOpened(String),
     StunError(String),
-    // can i fail to send to datachannel with a connected ice?
 }
 async fn process_events() -> MyRes<Action> {
     Ok(Action::Wait)
