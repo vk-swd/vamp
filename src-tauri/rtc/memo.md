@@ -12,7 +12,6 @@ To ensure reliable connection the following need to be covered:
 Ideally, STUN/TURN and signalling servers need to be discovered, but here they are considered static and defined by a configuration.
 
 # <a id="components">Components</a>
-
 ## <a id="hirarchy">Hirarchy</a>
 ```mermaid
 flowchart LR

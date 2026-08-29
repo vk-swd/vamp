@@ -20,6 +20,8 @@ use webrtc::interceptor::registry::Registry;
 use webrtc::data_channel::RTCDataChannel;
 use webrtc::data_channel::data_channel_message::DataChannelMessage;
 
+use crate::ws_node::{Connector, WsConnector};
+
 
 fn coturn_ice_servers_from_env() -> Vec<RTCIceServer> {
     let coturn_ip = std::env::var("COTURN_IP").expect("COTURN_IP env var not set (see test/yamls/services/backend.yaml)");
@@ -37,10 +39,21 @@ fn coturn_ice_servers_from_env() -> Vec<RTCIceServer> {
     }]
 }
 
+
+enum ConnectionState {
+    Connecting,
+    Connected,
+    UpReconnecting, // when ice connected by offer arrives or we send an offer
+    DownReconnecting, // when ice disconnected by offer arrives or we send an offer
+    Closed
+}
 // Builds a peer connection with a default API (default MediaEngine + interceptors)
 // and the coturn ice_servers from env (see coturn_ice_servers_from_env). Used by every
 // webrtc test in this file so they all negotiate against the same TURN/STUN setup.
-async fn new_default_peer_connection() -> Arc<RTCPeerConnection> {
+pub async fn new_default_peer_connection() -> Arc<RTCPeerConnection> {
+    let (local_candidate_tx, local_candidate_rx) = tokio::sync::mpsc::channel::<SignalMsg>(8);
+    
+    
     let mut media_engine = MediaEngine::default();
     let mut registry = Registry::new();
     registry = register_default_interceptors(registry, &mut media_engine).unwrap();
@@ -56,7 +69,11 @@ async fn new_default_peer_connection() -> Arc<RTCPeerConnection> {
     Arc::new(api.new_peer_connection(conf).await.unwrap())
 }
 
-async fn set_up_data_channel_listener() {
+pub fn signalling_server_connector() -> WsConnector {
+    let url = std::env::var("SS_URL").expect("SS_URL env var not set (see compose.yaml)");
+    WsConnector::new(url)
+}
+pub async fn set_up_data_channel_listener() {
     // let ss_url = std::env::var("SS_URL").expect("SS_URL env var not set (see compose.yaml)");
     // let tag = std::env::var("RTC_SESSION_ID").expect("RTC_SESSION_ID env var not set (see test/yamls/services/backend.yaml)");
 

@@ -87,13 +87,13 @@ struct WireMsg<T> {
     message: Option<TransportMsg<T>>,
 }
 
-fn to_wire_msg<T: Serialize + Clone>(rtt: String, msg: &TransportMsg<T>) -> MyRes<Message> {
+pub(crate) fn to_wire_msg<T: Serialize + Clone>(rtt: String, msg: &TransportMsg<T>) -> MyRes<Message> {
     serde_json::to_string(&WireMsg { tag: rtt, message: Some(msg.clone()) })
         .map(|s| Message::Text(s))
         .map_err(|e| Box::new(e) as MyErr)
 }
 
-fn from_wire_msg(raw: &String) -> Option<TransportMsg<SignalMsg>> {
+pub(crate) fn from_wire_msg(raw: &String) -> Option<TransportMsg<SignalMsg>> {
     serde_json::from_str::<WireMsg<SignalMsg>>(raw).ok().and_then(|w| w.message)
 }
 
@@ -101,23 +101,38 @@ use super::ws_node::WsNode;
 
 pub type MessageHandler<T> = fn(T) -> ();
 
+#[derive(Clone)]
+pub struct TransportHandlerControl {
+    stopper: CancellationToken,
+}
+
+impl TransportHandlerControl {
+    pub fn cancel(&self) {
+        self.stopper.cancel();
+    }
+
+    pub async fn cancelled(&self) {
+        self.stopper.cancelled().await;
+    }
+}
+
 /// Handles transport messages exchanged by a [`WsNode`].
-pub struct WsNodeHandler<CarrierType: Send + Sync + 'static, TransportedType: Send + Sync + 'static> {
+pub struct TransportHandler<CarrierType: Send + Sync + 'static, TransportedType: Send + Sync + 'static> {
     ws_node: WsNode<CarrierType>,
     stopper: CancellationToken,
     seq_num_out: AtomicU64,
     ack_send_handle: tokio::task::JoinHandle<()>,
     incoming_ack_rx: mpsc::Receiver<TransportMsg<TransportedType>>,
     node_id_out: String,
-    decoder: fn(CarrierType) -> TransportMsg<TransportedType>,
+    decoder: fn(CarrierType) -> MyRes<TransportMsg<TransportedType>>,
     encoder: fn(TransportMsg<TransportedType>) -> MyRes<CarrierType>,
 }
 
-impl<CarrierType: Clone + Send + Sync + 'static, TransportedType: Send + Sync + 'static> WsNodeHandler<CarrierType, TransportedType> {
+impl<CarrierType: Clone + Send + Sync + 'static, TransportedType: Send + Sync + 'static> TransportHandler<CarrierType, TransportedType> {
     pub fn new<F>(
         connector: Box<dyn Connector<CarrierType>>,
         message_handler: F,
-        decoder: fn(CarrierType) -> TransportMsg<TransportedType>,
+        decoder: fn(CarrierType) -> MyRes<TransportMsg<TransportedType>>,
         encoder: fn(TransportMsg<TransportedType>) -> MyRes<CarrierType>,
     ) -> Self
     where
@@ -133,7 +148,13 @@ impl<CarrierType: Clone + Send + Sync + 'static, TransportedType: Send + Sync + 
         let ws_node_handle = move |msg| {
             // let Message::Text(raw) = msg else { return };
             // let Some(transport_message) = from_wire_msg(&raw) else { return };
-            let transport_message = decoder(msg);
+            let transport_message = match decoder(msg) {
+                Ok(transport_message) => transport_message,
+                Err(e) => {
+                    log::warn!("[WSC] failed to decode incoming message: {e}");
+                    return;
+                }
+            };
             match transport_message {
                 TransportMsg::Normal { sn, node_id, payload } => {
                     let _ = ack_q_tx.try_send(TransportMsg::Ack {
@@ -235,6 +256,18 @@ impl<CarrierType: Clone + Send + Sync + 'static, TransportedType: Send + Sync + 
     pub async fn send_default(&mut self, payload: TransportedType) -> MyRes<()> {
         self.send(payload, Duration::from_secs(6)).await
     }
+
+    pub fn control(&self) -> TransportHandlerControl {
+        TransportHandlerControl {
+            stopper: self.stopper.clone(),
+        }
+    }
+
+    pub async fn stop(self) {
+        self.stopper.cancel();
+        let _ = self.ack_send_handle.await;
+        self.ws_node.stop().await;
+    }
 }
 
 #[cfg(test)]
@@ -266,7 +299,7 @@ use super::*;
             Ok((Box::new(sender) as Box<dyn Sender<Item = Message>>, Box::new(receiver) as Box<dyn Receiver<Item = Message>>))
         }
     }
-    fn make_handler() -> (WsNodeHandler<Message, SignalMsg>, mpsc::Receiver<Message>, mpsc::Sender<Message>, mpsc::Receiver<SignalMsg>) {
+    fn make_handler() -> (TransportHandler<Message, SignalMsg>, mpsc::Receiver<Message>, mpsc::Sender<Message>, mpsc::Receiver<SignalMsg>) {
         let TestPair {ws_sender, ws_receiver, ws_sender_rx, ws_receiver_tx} = make_test_pair();
         // let inner = Mutex::new(Some((pair.ws_sender, pair.ws_receiver)));
         let connector = Box::new(TestConnector::new(ws_sender, ws_receiver));
@@ -274,14 +307,16 @@ use super::*;
         let record_layer_header = move |msg: SignalMsg| {
             let _ = handle_tx.try_send(msg);
         };
-        let decoder = |msg: Message| {
-            let Message::Text(raw) = msg else { panic!("expected text message") };
-            from_wire_msg(&raw).expect("valid wire message")
+        let decoder = |msg: Message| -> MyRes<TransportMsg<SignalMsg>> {
+            let Message::Text(raw) = msg else {
+                return Err("expected text message".into());
+            };
+            from_wire_msg(&raw).ok_or_else(|| "invalid wire message".into())
         };
         let encoder = |msg: TransportMsg<SignalMsg>| {
             to_wire_msg(RTT_TAG.to_string(), &msg)
         };
-        let handler = WsNodeHandler::new(connector, record_layer_header, decoder, encoder);
+        let handler = TransportHandler::new(connector, record_layer_header, decoder, encoder);
         (handler, ws_sender_rx.expect("1"), ws_receiver_tx.expect("2"), handle_rx)
     }
 

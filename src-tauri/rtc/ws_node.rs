@@ -61,8 +61,13 @@ pub trait Connector<T>: Send + Sync {
     async fn connect(&self) -> MyRes<(Box<dyn Sender<Item = T>>, Box<dyn Receiver<Item = T>>)>;
 }
 
-struct WsConnector {
+pub struct WsConnector {
     url: String,
+}
+impl WsConnector {
+    pub fn new(url: String) -> Self {
+        Self { url }
+    }
 }
 #[async_trait]
 impl Connector<Message> for WsConnector {
