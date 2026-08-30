@@ -109,7 +109,15 @@ function getDataChannel(iceConnection, dcName, ac) {
         dc.onmessage = (event) => {
             logIce('log', `dc message received: ${event.data}`);
             if (event.data === 'hello') {
-                dc.send('what is your name');
+                const size = 10 * 1024 * 1024; // 10 MiB
+
+                const data = new Uint8Array(size);
+
+                const blob = new Blob([data], {
+                type: "application/octet-stream"
+                });
+                dc.send(blob);
+                // dc.send('what is your name');
             }
         };
         dc.onopen = () => {

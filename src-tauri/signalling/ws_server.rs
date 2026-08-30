@@ -468,6 +468,7 @@ impl ServerState {
         }
 
         if !rtt_record.contains(cid) {
+            log::info!("[SS2] Adding connection id {} to routing record for tag {:?}", cid, rtt_tag);
             rtt_record.add(cid);
         }
 

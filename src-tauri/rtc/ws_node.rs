@@ -63,16 +63,33 @@ pub trait Connector<T>: Send + Sync {
 
 pub struct WsConnector {
     url: String,
+    initial_message: Option<Message>,
 }
 impl WsConnector {
     pub fn new(url: String) -> Self {
-        Self { url }
+        Self { url, initial_message: None }
+    }
+
+    pub fn with_initial_message(url: String, initial_message: Message) -> Self {
+        Self {
+            url,
+            initial_message: Some(initial_message),
+        }
     }
 }
 #[async_trait]
 impl Connector<Message> for WsConnector {
     async fn connect(&self) -> MyRes<(Box<dyn Sender<Item = Message>>, Box<dyn Receiver<Item = Message>>)> {
-        let (sender, receiver) = open_ws(&self.url).await?;
+        let (mut sender, receiver) = open_ws(&self.url).await?;
+        if let Some(initial_message) = &self.initial_message {
+            match sender.send(initial_message.clone()).await {
+                Ok(_) => log::info!("[WSC] sent initial message"),
+                Err(e) => {
+                    log::warn!("[WSC] failed to send initial message: {e}");
+                    return Err(e);
+                }
+            }
+        }
         Ok((Box::new(sender) as Box<dyn Sender<Item = Message>>, Box::new(receiver) as Box<dyn Receiver<Item = Message>>))
     }
 }
@@ -122,7 +139,7 @@ async fn open_ws(url: &str) -> MyRes<(RealSender, RealReceiver)> {
 
 /// `Connector` that opens a real websocket connection to `url`.
 fn real_connector(url: String) -> Box<dyn Connector<Message>> {
-    Box::new(WsConnector { url })
+    Box::new(WsConnector::new(url))
 }
 
 
@@ -140,6 +157,7 @@ async fn sender_task<T>(
             _ = stopper.cancelled() => break,
             msg = send_rx.recv() => match msg {
                 Some(m) => {
+                    log::info!("[WSC] sending message");
                     if let Err(e) = ws_sender.send(m).await {
                         // This means ws is broken, needs restart.
                         // Stop the task and restart will be done from outside.
@@ -252,6 +270,7 @@ async fn run_loop<F, T>(
                 }
             }
         };
+        log::info!("[WSC] connection lost, reconnecting...");
         // TODO: add a metric for connection restarts
     }
     connected_state.store(false, std::sync::atomic::Ordering::SeqCst);
@@ -310,8 +329,8 @@ mod tests {
     use super::*;
     use async_trait::async_trait;
     use std::sync::Mutex;
-    use crate::test_helpers::make_test_pair;
-    use crate::test_helpers::TestPair;
+    use super::super::test_helpers::make_test_pair;
+    use super::super::test_helpers::TestPair;
     struct TestConnector {
         pairs: Mutex<Vec<TestPair>>,
     }

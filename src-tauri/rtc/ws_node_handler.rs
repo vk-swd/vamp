@@ -15,13 +15,22 @@ use tokio::time::sleep;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_util::sync::CancellationToken;
 
-use crate::common::{MyRes, MyErr};
-use crate::ws_node::{self, Connector};
+use super::common::{MyRes, MyErr};
+use super::ws_node::{self, Connector};
 
-#[derive(Deserialize, Serialize, Clone, Debug)]
+#[derive(Deserialize, Serialize, Clone, Debug, PartialEq, Eq, specta::Type)]
+#[serde(rename_all = "kebab-case")]
+pub enum SignalKind {
+    Offer,
+    Answer,
+    IceCandidate,
+    LocalCandidate,
+}
+
+#[derive(Deserialize, Serialize, Clone, Debug, specta::Type)]
 pub struct SignalMsg {
     #[serde(rename = "type")]
-    pub kind: String, // "offer" | "answer" | "ice-candidate" | "ice-candidate-guest"
+    pub kind: SignalKind,
     pub sdp: String,
     pub neg_id: String,
 }
@@ -82,13 +91,13 @@ impl<T> TransportMsg<T> {
 
 
 #[derive(Deserialize, Serialize, Clone, Debug)]
-struct WireMsg<T> {
-    tag: String,
-    message: Option<TransportMsg<T>>,
+pub struct WireMsg<T> {
+    pub tag: String,
+    pub message: Option<TransportMsg<T>>,
 }
 
-pub(crate) fn to_wire_msg<T: Serialize + Clone>(rtt: String, msg: &TransportMsg<T>) -> MyRes<Message> {
-    serde_json::to_string(&WireMsg { tag: rtt, message: Some(msg.clone()) })
+pub(crate) fn to_wire_msg<T: Serialize + Clone>(rtt: String, msg: Option<TransportMsg<T>>) -> MyRes<Message> {
+    serde_json::to_string(&WireMsg { tag: rtt, message: msg.clone() })
         .map(|s| Message::Text(s))
         .map_err(|e| Box::new(e) as MyErr)
 }
@@ -125,18 +134,19 @@ pub struct TransportHandler<CarrierType: Send + Sync + 'static, TransportedType:
     incoming_ack_rx: mpsc::Receiver<TransportMsg<TransportedType>>,
     node_id_out: String,
     decoder: fn(CarrierType) -> MyRes<TransportMsg<TransportedType>>,
-    encoder: fn(TransportMsg<TransportedType>) -> MyRes<CarrierType>,
+    encoder: Box<dyn Fn(TransportMsg<TransportedType>) -> MyRes<CarrierType> + Send + Sync>,
 }
 
 impl<CarrierType: Clone + Send + Sync + 'static, TransportedType: Send + Sync + 'static> TransportHandler<CarrierType, TransportedType> {
-    pub fn new<F>(
+    pub fn new<F, E>(
         connector: Box<dyn Connector<CarrierType>>,
         message_handler: F,
         decoder: fn(CarrierType) -> MyRes<TransportMsg<TransportedType>>,
-        encoder: fn(TransportMsg<TransportedType>) -> MyRes<CarrierType>,
+        encoder: E,
     ) -> Self
     where
         F: Fn(TransportedType) + Send + Sync + 'static,
+        E: Fn(TransportMsg<TransportedType>) -> MyRes<CarrierType> + Send + Sync + Clone + 'static,
     {
         let (ack_q_tx, mut ack_q_rx) = mpsc::channel::<TransportMsg<TransportedType>>(16);
         let (incoming_ack_tx, incoming_ack_rx) = mpsc::channel::<TransportMsg<TransportedType>>(16);
@@ -173,6 +183,7 @@ impl<CarrierType: Clone + Send + Sync + 'static, TransportedType: Send + Sync + 
         };
         let ws_node = WsNode::new_with_connector(connector, ws_node_handle);
         let ws_node_send_q = ws_node.send_tx.clone();
+        let encoder_clone = encoder.clone();
         let ack_send_handle = tokio::spawn(async move {
             loop {
                 tokio::select! {
@@ -180,7 +191,7 @@ impl<CarrierType: Clone + Send + Sync + 'static, TransportedType: Send + Sync + 
                     ack = ack_q_rx.recv() => {
                         match ack {
                             Some(ack) => {
-                                let wire = match encoder(ack) {
+                                let wire = match encoder_clone(ack) {
                                     Ok(wire) => wire,
                                     Err(e) => {
                                         log::error!("[WSC] failed to serialize ack: {e}");
@@ -206,7 +217,7 @@ impl<CarrierType: Clone + Send + Sync + 'static, TransportedType: Send + Sync + 
             incoming_ack_rx,
             node_id_out: Uuid::new_v4().to_string(),
             decoder,
-            encoder
+            encoder: Box::new(encoder),
         }
     }
 
@@ -247,6 +258,9 @@ impl<CarrierType: Clone + Send + Sync + 'static, TransportedType: Send + Sync + 
         let wire = (self.encoder)(msg)?;
         self.send_and_wait_ack_repeated(wire, sn, timeout).await
     }
+    pub async fn send_raw(&self, payload: CarrierType) -> MyRes<()> {
+        self.ws_node.send(payload).await
+    }
 
     pub fn last_sent_sn(&self) -> u64 {
         self.seq_num_out.load(Ordering::Relaxed)
@@ -276,7 +290,7 @@ mod tests {
     use tokio::sync::mpsc::error::TryRecvError;
 
 use super::*;
-    use crate::{test_helpers::{ChannelReceiver, ChannelSender, TestPair, make_test_pair}, ws_node::{Receiver, Sender}};
+    use super::super::{test_helpers::{ChannelReceiver, ChannelSender, TestPair, make_test_pair}, ws_node::{Receiver, Sender}};
 
     const RTT_TAG: &str = "tag";
     /// Builds a `WsNodeHandler` wired to a single fake `WsNode` connection
@@ -314,7 +328,7 @@ use super::*;
             from_wire_msg(&raw).ok_or_else(|| "invalid wire message".into())
         };
         let encoder = |msg: TransportMsg<SignalMsg>| {
-            to_wire_msg(RTT_TAG.to_string(), &msg)
+            to_wire_msg(RTT_TAG.to_string(), Some(msg))
         };
         let handler = TransportHandler::new(connector, record_layer_header, decoder, encoder);
         (handler, ws_sender_rx.expect("1"), ws_receiver_tx.expect("2"), handle_rx)
@@ -322,7 +336,7 @@ use super::*;
 
     fn ack_wire(sn: u64, node_id: &str) -> Message {
         let msg = TransportMsg::<SignalMsg>::Ack { sn, node_id: node_id.to_string() };
-        to_wire_msg("test".to_string(), &msg).unwrap()
+        to_wire_msg("test".to_string(), Some(msg)).unwrap()
     }
 
     fn decode_normal(msg: Message) -> (u64, String) {
@@ -345,14 +359,14 @@ use super::*;
     const SDP: &str = "sdp";
     fn make_message() -> SignalMsg {
         SignalMsg {
-            kind: "offer".to_string(),
+            kind: SignalKind::Offer,
             sdp: SDP.to_string(),
             neg_id: NEG_ID.to_string(),
         }
     }
     fn make_wire_msg_txt(sn: u64) -> Message {
         let msg = TransportMsg::Normal { sn, node_id: NODE_ID.to_string(), payload: make_message() };
-        to_wire_msg(RTT_TAG.to_string(), &msg).unwrap()
+        to_wire_msg(RTT_TAG.to_string(), Some(msg)).unwrap()
     }
     fn check_ack(msg: Message, expected_sn: u64) {
         let (sn, node_id) = decode_ack(msg);

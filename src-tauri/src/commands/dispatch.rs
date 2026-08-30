@@ -184,6 +184,7 @@ pub enum Command {
     LogFromUi(LogFromUiArgs),
     // Database maintenance
     ResetDatabase(()),
+    PageSource(String)
 }
 
 // ─── Shared execution logic ───────────────────────────────────────────────────

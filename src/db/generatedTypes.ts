@@ -42,7 +42,7 @@ export type BigintId = string;
  *  Discriminated union of every DB operation.
  *  JS serialises as `{ "kind": "<VariantName>", "payload": <args> }`.
  */
-export type Command = { kind: "AddTrack"; payload: NewTrack } | { kind: "AddTracks"; payload: NewTrack[] } | { kind: "UpdateTrack"; payload: UpdateTrackArgs } | { kind: "GetTracks"; payload: GetTracksArgs } | { kind: "GetTracksWithSources"; payload: GetTracksArgs } | { kind: "GetTracksFiltered"; payload: GetTracksFilteredArgs } | { kind: "GetTrack"; payload: IdArg } | { kind: "DeleteTrack"; payload: IdArg } | { kind: "AddListen"; payload: AddListenArgs } | { kind: "GetListensForTrack"; payload: TrackIdArg } | { kind: "AddListenedSeconds"; payload: AddListenedSecondsArgs } | { kind: "AddTag"; payload: NameArg } | { kind: "EditTag"; payload: EditTagArgs } | { kind: "DeleteTag"; payload: IdArg } | { kind: "GetAllTags"; payload: null } | { kind: "GetTags"; payload: PatternArg } | { kind: "AssignTag"; payload: AssignTagArgs } | { kind: "AssignTags"; payload: TagAssignment[] } | { kind: "RemoveTag"; payload: AssignTagArgs } | { kind: "GetTagsForTrack"; payload: TrackIdArg } | { kind: "AddMeta"; payload: AddMetaArgs } | { kind: "UpdateMeta"; payload: UpdateMetaArgs } | { kind: "DeleteMeta"; payload: IdArg } | { kind: "GetMetaForTrack"; payload: TrackIdArg } | { kind: "AddTrackSource"; payload: AddTrackSourceArgs } | { kind: "RemoveTrackSource"; payload: RemoveTrackSourceArgs } | { kind: "EditTrackSource"; payload: EditTrackSourceArgs } | { kind: "GetSourcesForTrack"; payload: TrackIdArg } | { kind: "GetHtmlBundle"; payload: null } | { kind: "LogFromUi"; payload: LogFromUiArgs };
+export type Command = { kind: "AddTrack"; payload: NewTrack } | { kind: "AddTracks"; payload: NewTrack[] } | { kind: "UpdateTrack"; payload: UpdateTrackArgs } | { kind: "GetTracks"; payload: GetTracksArgs } | { kind: "GetTracksWithSources"; payload: GetTracksArgs } | { kind: "GetTracksFiltered"; payload: GetTracksFilteredArgs } | { kind: "GetTrack"; payload: IdArg } | { kind: "DeleteTrack"; payload: IdArg } | { kind: "AddListen"; payload: AddListenArgs } | { kind: "GetListensForTrack"; payload: TrackIdArg } | { kind: "AddListenedSeconds"; payload: AddListenedSecondsArgs } | { kind: "AddTag"; payload: NameArg } | { kind: "EditTag"; payload: EditTagArgs } | { kind: "DeleteTag"; payload: IdArg } | { kind: "GetAllTags"; payload: null } | { kind: "GetTags"; payload: PatternArg } | { kind: "AssignTag"; payload: AssignTagArgs } | { kind: "AssignTags"; payload: TagAssignment[] } | { kind: "RemoveTag"; payload: AssignTagArgs } | { kind: "GetTagsForTrack"; payload: TrackIdArg } | { kind: "AddMeta"; payload: AddMetaArgs } | { kind: "UpdateMeta"; payload: UpdateMetaArgs } | { kind: "DeleteMeta"; payload: IdArg } | { kind: "GetMetaForTrack"; payload: TrackIdArg } | { kind: "AddTrackSource"; payload: AddTrackSourceArgs } | { kind: "RemoveTrackSource"; payload: RemoveTrackSourceArgs } | { kind: "EditTrackSource"; payload: EditTrackSourceArgs } | { kind: "GetSourcesForTrack"; payload: TrackIdArg } | { kind: "GetHtmlBundle"; payload: null } | { kind: "LogFromUi"; payload: LogFromUiArgs } | { kind: "ResetDatabase"; payload: null };
 
 /**  Strongly-typed filter names accepted by `get_tracks_filtered`. */
 export type CriteriaName = "id" | "artist" | "track_name" | "length_seconds" | "bitrate_kbps" | "tempo_bpm" | "addition_time" | "tags" | "listened_seconds";
@@ -128,6 +128,14 @@ export type SearchParam = { mode: "numeric_comparison"; operator: NumericOperato
 /**  Like TagsIn, but only returns tracks that have ALL of the provided tag IDs assigned. */
 { mode: "tags_all"; tag_ids: BigintId[] };
 
+export type SignalKind = "offer" | "answer" | "ice-candidate" | "local-candidate";
+
+export type SignalMsg = {
+	type: SignalKind,
+	sdp: string,
+	neg_id: string,
+};
+
 /**  Input for `assign_tags`: one track paired with the tag IDs to assign to it. */
 export type TagAssignment = {
 	track_id: BigintId,
@@ -163,7 +171,6 @@ export type UpdateTrackArgs = {
 
 export type WsRequest = {
 	id: string,
-	kind: string,
 	cmd: Command,
 };
 

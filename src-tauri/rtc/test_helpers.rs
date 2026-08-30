@@ -5,7 +5,7 @@ use tokio::sync::mpsc;
 use tokio_tungstenite::tungstenite::Message;
 
 use super::common::{MyRes};
-use crate::ws_node::{Sender, Receiver};
+use super::ws_node::{Sender, Receiver};
 
 /// `WsSender` that forwards to an mpsc channel instead of a real socket.
 pub(crate) struct ChannelSender(pub(crate) mpsc::Sender<Message>);

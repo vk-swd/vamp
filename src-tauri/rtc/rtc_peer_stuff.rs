@@ -20,7 +20,7 @@ use webrtc::interceptor::registry::Registry;
 use webrtc::data_channel::RTCDataChannel;
 use webrtc::data_channel::data_channel_message::DataChannelMessage;
 
-use crate::ws_node::{Connector, WsConnector};
+use super::ws_node::{Connector, WsConnector};
 
 
 fn coturn_ice_servers_from_env() -> Vec<RTCIceServer> {

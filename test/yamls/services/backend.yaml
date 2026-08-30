@@ -16,7 +16,7 @@ services:
         ip route add ${EDGE_SUBNET} via ${NAT_A_ADDR}
         useradd --system --shell /usr/sbin/nologin --no-create-home appuser
         chown -R appuser:appuser /rtc_client_test_dir
-        exec gosu appuser sh -c "/rtc_client_test_dir/select_test; tail -f /dev/null"
+        exec gosu appuser sh -c "/rtc_client_test_dir/select_test > /logs/select_test.log 2>&1; tail -f /dev/null"
     environment:
       - COTURN_PORT=${COTURN_PORT}
       - COTURN_IP=${VPS_EDGE_IP}
@@ -27,8 +27,10 @@ services:
       - RTC_SESSION_ID=${RTC_SESSION_ID}
       - RUST_LOG=info
       - RUST_BACKTRACE=1
+      - RUST_LOG=info
     volumes:
       - rust_debug_artifacts:/rtc_client_test_dir
+      - log_folder:/logs
     networks:
       backend_net:
         interface_name: ${BACKEND_NIF}

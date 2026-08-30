@@ -23,6 +23,7 @@ services:
         exec gosu pptruser sh -c "cp /browser/test.js ~/test.js; cp /browser/package.json ~/package.json; npm run test"
     volumes:
       - browser_test_scripts:/browser
+      - log_folder:/logs
     environment:
       - COTURN_PORT=${COTURN_PORT}
       - COTURN_IP=${VPS_EDGE_IP}

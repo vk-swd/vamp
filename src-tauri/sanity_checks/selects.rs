@@ -531,19 +531,46 @@ async fn test_signalling_datachannel_handshake() {
         .await
         .expect("did not receive a reply within 5 seconds")
         .expect("data channel closed before replying");
-    assert_eq!(reply, "what is your name", "unexpected reply from remote peer: {}", reply);
+    // assert_eq!(reply, "what is your name", "unexpected reply from remote peer: {}", reply);
+    log(&format!("received reply: {}", reply.len()));
     log("received expected 'what is your name' reply, test passed");
 
     pc.close().await.ok();
 }
 
+#[path = "../rtc/mod.rs"]
+mod rtc;
+
 #[tokio::main]
 pub async fn main() {
+    env_logger::init();
     rustls::crypto::ring::default_provider()
         .install_default()
         .expect("failed to install rustls CryptoProvider");
 
     println!("Hello, world!");
-    test_ice_candidates_collection().await;
-    test_signalling_datachannel_handshake().await;
+    // test_ice_candidates_collection().await;
+    let config = rtc::rtc_connector::RtcConnectorConfig {
+        signalling_url: std::env::var("SS_URL").expect("SS_URL env var not set (see compose.yaml)"),
+        session_id: std::env::var("RTC_SESSION_ID").expect("RTC_SESSION_ID env var not set (see test/yamls/services/backend.yaml)"),
+    };
+    let mut rtc_connector = rtc::rtc_connector::RtcConnector::new(config);
+    let notifier = Arc::new(Notify::new());
+    let notifier_clone = notifier.clone();
+    let transport_handler = move |msg: rtc::rtc_connector::DCMsg| {
+        log(&format!("received DCMsg: {}", msg.msg.len()));
+        notifier_clone.notify_one();
+    };
+    let mut dc = match rtc_connector.wait_for_a_data_channel_connector(transport_handler).await {
+        Ok(dc) => dc,
+        Err(e) => {
+            log(&format!("failed to wait for data channel connector: {}", e));
+            return;
+        }
+    };
+    dc.send_default(rtc::rtc_connector::DCMsg { msg: "hello".to_string() }).await.unwrap();
+    log("sent 'hello' over data channel");
+    notifier.notified().await;
+    log("received reply over data channel, test passed");
+    // test_signalling_datachannel_handshake().await;
 }

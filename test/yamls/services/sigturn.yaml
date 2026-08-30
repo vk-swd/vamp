@@ -17,7 +17,7 @@ services:
         ip route add ${EDGE_SUBNET} via ${VPS_FRONT_LOCAL_ADDR}
         envsubst < /etc/coturn/turnserver.conf.template > /etc/turnserver.conf
         turnserver --daemon
-        /targets/signalling_server
+        /targets/signalling_server > /logs/signalling_server.log 2>&1 &
         tail -f /dev/null
     environment:
       - COTURN_PORT=${COTURN_PORT}
@@ -28,9 +28,11 @@ services:
       - STUN_CREDENTIALS=${STUN_CREDENTIALS}
       - SS_PORT=${SS_PORT}
       - SS_ADDR=${SIGTURN_IP}
+      - RUST_LOG=info
     volumes:
       - ${REPO_ROOT}/test/turn/turnserver.conf.template:/etc/coturn/turnserver.conf.template
       - rust_debug_artifacts:/targets
+      - log_folder:/logs
     networks:
       vps_net:
         ipv4_address: ${SIGTURN_IP}

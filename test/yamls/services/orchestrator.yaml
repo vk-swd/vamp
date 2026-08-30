@@ -17,6 +17,8 @@ services:
         # over the orc network and drive the test scenarios listed in test/memo.md
         # (carrier change, connectivity loss, ICE restarts, page reloads, regular operation).
         tail -f /dev/null
+    volumes:
+      - log_folder:/logs
     networks:
       orc:
         interface_name: ${ORCHESTRATOR_ORC_NIF}

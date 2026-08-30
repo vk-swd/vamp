@@ -17,6 +17,4 @@ pub mod schema;
 pub mod sqlite;
 
 #[cfg(test)]
-mod specta_export;
-#[cfg(test)]
 mod testdb;

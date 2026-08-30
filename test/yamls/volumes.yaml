@@ -16,3 +16,9 @@ volumes:
       type: none
       o: bind
       device: ${REPO_ROOT}/test/browser
+  log_folder:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${LOG_FOLDER}

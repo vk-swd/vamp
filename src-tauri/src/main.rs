@@ -9,6 +9,10 @@ mod app_core;
 mod app_ws_handler;
 mod db_config;
 mod tauri_handle;
+#[path = "../specta_export.rs"]
+mod specta_export;
+#[path = "../rtc/mod.rs"]
+mod rtc;
 #[path = "../../common/defines.rs"]
 pub mod defines;
 
