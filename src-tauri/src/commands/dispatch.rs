@@ -319,6 +319,9 @@ pub async fn execute(repo: &ArcRepo, guard: &ArcListenGuard, cmd: Command) -> Re
             // Needs write access to AppCore's repo lock; handled by dispatch_with_core
             // before execute() is ever called, so this arm should be unreachable.
             return Err("ResetDatabase must be dispatched via dispatch_with_core".to_string());
+        },
+        Command::PageSource(url) => {
+            serde_json::Value::String("filler".to_string()) // TODO: implement page source fetching
         }
     };
 

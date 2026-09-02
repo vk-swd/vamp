@@ -4,7 +4,7 @@
 //! for every received websocket message.  This module owns transport
 //! decoding, sequence filtering, acknowledgements, and reliable sending.
 
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -16,6 +16,7 @@ use tokio_tungstenite::tungstenite::Message;
 use tokio_util::sync::CancellationToken;
 
 use super::common::{MyRes, MyErr};
+pub use super::transport_types::{TransportMsg, WireMsg};
 use super::ws_node::{self, Connector};
 
 #[derive(Deserialize, Serialize, Clone, Debug, PartialEq, Eq, specta::Type)]
@@ -40,13 +41,13 @@ pub struct SignalMsg {
 /// See memo.md "Unordered messages".
 struct SnFilter {
     node_id: Option<String>,
-    last_sn: Option<u64>,
+    last_sn: Option<u32>,
 }
 impl SnFilter {
     fn new() -> Self {
         Self { node_id: None, last_sn: None }
     }
-    fn next(&mut self, node_id: &str, sn: u64) -> bool {
+    fn next(&mut self, node_id: &str, sn: u32) -> bool {
         let last = match self.last_sn {
             Some(last) => last,
             None => {
@@ -74,27 +75,14 @@ impl SnFilter {
 /// Wire message: either a payload ("normal") or an acknowledgement of one.
 /// `sn` + `node_id` form the sequence-number pair used to detect loss/reorder
 /// (see memo.md "Sequence numbers").
-#[derive(Deserialize, Serialize, Clone, Debug)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum TransportMsg<T> {
-    Ack { sn: u64, node_id: String },
-    Normal { sn: u64, node_id: String, payload: T },
-}
-
 impl<T> TransportMsg<T> {
-    fn sn(&self) -> u64 {
+    fn sn(&self) -> u32 {
         match self {
             TransportMsg::Ack { sn, .. } | TransportMsg::Normal { sn, .. } => *sn,
         }
     }
 }
 
-
-#[derive(Deserialize, Serialize, Clone, Debug)]
-pub struct WireMsg<T> {
-    pub tag: String,
-    pub message: Option<TransportMsg<T>>,
-}
 
 pub(crate) fn to_wire_msg<T: Serialize + Clone>(rtt: String, msg: Option<TransportMsg<T>>) -> MyRes<Message> {
     serde_json::to_string(&WireMsg { tag: rtt, message: msg.clone() })
@@ -129,7 +117,7 @@ impl TransportHandlerControl {
 pub struct TransportHandler<CarrierType: Send + Sync + 'static, TransportedType: Send + Sync + 'static> {
     ws_node: WsNode<CarrierType>,
     stopper: CancellationToken,
-    seq_num_out: AtomicU64,
+    seq_num_out: AtomicU32,
     ack_send_handle: tokio::task::JoinHandle<()>,
     incoming_ack_rx: mpsc::Receiver<TransportMsg<TransportedType>>,
     node_id_out: String,
@@ -212,7 +200,7 @@ impl<CarrierType: Clone + Send + Sync + 'static, TransportedType: Send + Sync + 
         Self {
             ws_node,
             stopper,
-            seq_num_out: AtomicU64::new(0),
+            seq_num_out: AtomicU32::new(0),
             ack_send_handle,
             incoming_ack_rx,
             node_id_out: Uuid::new_v4().to_string(),
@@ -221,11 +209,18 @@ impl<CarrierType: Clone + Send + Sync + 'static, TransportedType: Send + Sync + 
         }
     }
 
-
+    async fn disconnect(&mut self) -> MyRes<()> {
+        self.ws_node.stop().await;
+        Ok(())
+    }
+    // async fn reconnect(&mut self) -> MyRes<()> {
+    //     when connection is lost, ws listener will get error an restart on its own.
+    //     self.ws_node.reconnect().await
+    // }
     /// Takes `&mut self` so the borrow checker enforces that only one
     /// caller can be waiting on the (single-consumer) ack queue at a time
     /// (mirrors the ts pseudocode's `sendAndWaitAck` caveat).
-    async fn send_and_wait_ack(&mut self, msg: CarrierType, expected_sn: u64) -> MyRes<()> {
+    async fn send_and_wait_ack(&mut self, msg: CarrierType, expected_sn: u32) -> MyRes<()> {
         self.ws_node.send(msg).await?;
         loop {
             match self.incoming_ack_rx.recv().await {
@@ -236,7 +231,7 @@ impl<CarrierType: Clone + Send + Sync + 'static, TransportedType: Send + Sync + 
         }
     }
 
-    async fn send_and_wait_ack_repeated(&mut self, msg: CarrierType, sn: u64, timeout: Duration) -> MyRes<()> {
+    async fn send_and_wait_ack_repeated(&mut self, msg: CarrierType, sn: u32, timeout: Duration) -> MyRes<()> {
         loop {
             tokio::select! {
                 _ = sleep(timeout) => continue,
@@ -262,7 +257,7 @@ impl<CarrierType: Clone + Send + Sync + 'static, TransportedType: Send + Sync + 
         self.ws_node.send(payload).await
     }
 
-    pub fn last_sent_sn(&self) -> u64 {
+    pub fn last_sent_sn(&self) -> u32 {
         self.seq_num_out.load(Ordering::Relaxed)
     }
 
@@ -334,12 +329,12 @@ use super::*;
         (handler, ws_sender_rx.expect("1"), ws_receiver_tx.expect("2"), handle_rx)
     }
 
-    fn ack_wire(sn: u64, node_id: &str) -> Message {
+    fn ack_wire(sn: u32, node_id: &str) -> Message {
         let msg = TransportMsg::<SignalMsg>::Ack { sn, node_id: node_id.to_string() };
         to_wire_msg("test".to_string(), Some(msg)).unwrap()
     }
 
-    fn decode_normal(msg: Message) -> (u64, String) {
+    fn decode_normal(msg: Message) -> (u32, String) {
         let Message::Text(raw) = msg else { panic!("expected text message") };
         match from_wire_msg(&raw).expect("valid wire message") {
             TransportMsg::Normal { sn, node_id, .. } => (sn, node_id),
@@ -347,7 +342,7 @@ use super::*;
         }
     }
 
-    fn decode_ack(msg: Message) -> (u64, String) {
+    fn decode_ack(msg: Message) -> (u32, String) {
         let Message::Text(raw) = msg else { panic!("expected text message") };
         match from_wire_msg(&raw).expect("valid wire message") {
             TransportMsg::Ack { sn, node_id } => (sn, node_id),
@@ -364,11 +359,11 @@ use super::*;
             neg_id: NEG_ID.to_string(),
         }
     }
-    fn make_wire_msg_txt(sn: u64) -> Message {
+    fn make_wire_msg_txt(sn: u32) -> Message {
         let msg = TransportMsg::Normal { sn, node_id: NODE_ID.to_string(), payload: make_message() };
         to_wire_msg(RTT_TAG.to_string(), Some(msg)).unwrap()
     }
-    fn check_ack(msg: Message, expected_sn: u64) {
+    fn check_ack(msg: Message, expected_sn: u32) {
         let (sn, node_id) = decode_ack(msg);
         assert_eq!(sn, expected_sn);
         assert_eq!(node_id, NODE_ID.to_string());
@@ -407,7 +402,7 @@ use super::*;
         let (mut handler, mut ws_sender_rx, ws_receiver_tx, _handle_rx) = make_handler();
 
         let timeout = Duration::from_millis(200);
-        let (done_tx, mut done_rx) = mpsc::unbounded_channel::<u64>();
+        let (done_tx, mut done_rx) = mpsc::unbounded_channel::<u32>();
         let starting_sn = handler.last_sent_sn();
         let dummy_msg = make_message();
         let msg_to_add = 2;

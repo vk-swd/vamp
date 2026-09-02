@@ -58,8 +58,8 @@ struct Participant {
 impl Participant {
     fn send_json(&self, tag: &str, payload: Option<&str>) {
         let message = match payload {
-            Some(payload) => Message::Text(format!(r#"{{"tag":"{tag}","payload":"{payload}"}}"#)),
-            None => Message::Text(format!(r#"{{"tag":"{tag}"}}"#)),
+            Some(payload) => text_message(tag, Some(payload)),
+            None => text_message(tag, None),
         };
         // Ignore errors: if the connection already closed, tests assert that separately.
         let _ = self.to_server.send(message);
@@ -121,10 +121,17 @@ impl Harness {
 const RECV_TIMEOUT: Duration = Duration::from_millis(200);
 
 fn text_message(tag: &str, payload: Option<&str>) -> Message {
-    match payload {
-        Some(payload) => Message::Text(format!(r#"{{"tag":"{tag}","payload":"{payload}"}}"#)),
-        None => Message::Text(format!(r#"{{"tag":"{tag}"}}"#)),
-    }
+    let message = serde_json::json!({
+        "tag": tag,
+        "message": payload.map(|payload| serde_json::json!({
+            "type": "normal",
+            "sn": 0,
+            "node_id": "test",
+            "payload": payload,
+        })),
+    });
+
+    Message::Text(message.to_string())
 }
 
 // --- Ported ServerState-level unit tests (previously in ws_server.rs) ---
@@ -197,7 +204,7 @@ fn third_participant_for_full_room_is_dropped() {
 
 #[test]
 fn parser_accepts_tag_aliases_and_optional_payload() {
-    let parsed = parse_incoming(&Message::Text(r#"{"rtt_tag":"room","payload":{"sdp":"x"}}"#.to_string())).unwrap();
+    let parsed = parse_incoming(&text_message("room", Some(r#"{"sdp":"x"}"#))).unwrap();
     assert_eq!(parsed.rtt_tag, "room");
     assert!(parsed.has_payload);
 

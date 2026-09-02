@@ -1,4 +1,3 @@
-mod common_types;
 #[path="../src/commands/common.rs"]
 mod common;
 mod ws_server;

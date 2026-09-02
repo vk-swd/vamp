@@ -4,7 +4,6 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use futures_util::{SinkExt, StreamExt};
-use serde::Deserialize;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::TcpListener;
 use tokio::sync::{mpsc, Mutex};
@@ -16,6 +15,10 @@ use tokio_tungstenite::{
 use webkit2gtk::gio::TcpConnection;
 
 use crate::common::{MyErr, MyRes};
+
+#[path = "../rtc/transport_types.rs"]
+mod transport_types;
+use transport_types::WireMsg;
 
 pub type ConnectionId = u64;
 pub type RoutingTag = String;
@@ -544,14 +547,6 @@ impl RoutingRecord {
     }
 }
 
-#[derive(Debug, Deserialize)]
-struct WireMessage {
-    #[serde(alias = "rtt_tag", alias = "rt")]
-    tag: RoutingTag,
-    #[serde(default)]
-    payload: Option<serde_json::Value>,
-}
-
 pub(crate) struct ParsedMessage {
     pub(crate) rtt_tag: RoutingTag,
     pub(crate) has_payload: bool,
@@ -564,14 +559,14 @@ pub(crate) fn parse_incoming(message: &Message) -> MyRes<ParsedMessage> {
         _ => return Err(MyErr::from("unsupported websocket message")),
     };
 
-    let wire_message = serde_json::from_str::<WireMessage>(&text).map_err(|_| MyErr::from("invalid signalling message"))?;
+    let wire_message = serde_json::from_str::<WireMsg<serde_json::Value>>(&text).map_err(|e| MyErr::from(format!("invalid signalling message: {}", e)))?;
     if wire_message.tag.is_empty() {
         return Err(MyErr::from("empty routing tag"));
     }
 
     Ok(ParsedMessage {
         rtt_tag: wire_message.tag,
-        has_payload: wire_message.payload.is_some(),
+        has_payload: wire_message.message.is_some(),
     })
 }
 

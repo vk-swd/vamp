@@ -211,7 +211,8 @@ async fn run_loop<F, T>(
     stopper: CancellationToken,
     mut send_rx: mpsc::Receiver<T>,
     mut handler: F,
-    connected_state: Arc<AtomicBool>
+    connected_state: Arc<AtomicBool>,
+    end_notifyer: CancellationToken,
 ) 
     where
         F: Fn(T) + Send + Sync + 'static,
@@ -274,6 +275,7 @@ async fn run_loop<F, T>(
         // TODO: add a metric for connection restarts
     }
     connected_state.store(false, std::sync::atomic::Ordering::SeqCst);
+    end_notifyer.cancel();
 }
 
 /// Keeps a websocket connection to `url` alive, reconnecting as needed.
@@ -286,6 +288,7 @@ pub struct WsNode<T: Send + 'static>
     stopper: CancellationToken,
     is_connected: Arc<AtomicBool>,
     task: tokio::task::JoinHandle<()>,
+    end_notifyer: CancellationToken,
 }
 
 impl<T: Send + 'static> WsNode<T>
@@ -302,9 +305,10 @@ impl<T: Send + 'static> WsNode<T>
         let stopper = CancellationToken::new();
 
         let is_connected = Arc::new(AtomicBool::new(false));
-        let task = tokio::spawn(run_loop(connector, stopper.clone(), send_rx, handler, is_connected.clone()));
+        let end_notifyer = CancellationToken::new();
+        let task = tokio::spawn(run_loop(connector, stopper.clone(), send_rx, handler, is_connected.clone(), end_notifyer.clone()));
 
-        Self { send_tx, stopper, is_connected, task }
+        Self { send_tx, stopper, is_connected, task, end_notifyer }
     }
 
     pub async fn send(&self, msg: T) -> MyRes<()> {
@@ -315,9 +319,9 @@ impl<T: Send + 'static> WsNode<T>
         }
     }
 
-    pub async fn stop(self) {
+    pub async fn stop(&self) {
         self.stopper.cancel();
-        let _ = self.task.await;
+        self.end_notifyer.cancelled().await;
     }
 }
 

@@ -14,13 +14,15 @@ use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 
 use super::ws_node::WsConnector;
 
-use super::ws_node_handler::{from_wire_msg, to_wire_msg, WireMsg};
+use super::ws_node_handler::{from_wire_msg, to_wire_msg};
 use super::common::{MyErr, MyRes};
 use super::debouncer::IceRestartDebouncer;
+use super::transport_types::WireMsg;
 use super::ws_node::{Connector, Receiver, Sender};
 use super::ws_node_handler::{
-    SignalKind, SignalMsg, TransportHandler, TransportHandlerControl, TransportMsg,
+    SignalKind, SignalMsg, TransportHandler, TransportHandlerControl,
 };
+use super::transport_types::TransportMsg;
 
 use super::rtc_peer_stuff::new_default_peer_connection;
 
@@ -359,10 +361,10 @@ fn init_rtc_connection(
 
 fn init_local_candidate_handling(
     connection: Arc<RTCPeerConnection>,
-    signal_tx: ToSender<SignalMsg>,
+    local_candidate_queue_tx: ToSender<SignalMsg>,
 ) {
     connection.on_ice_candidate(Box::new(move |candidate| {
-        let signal_tx = signal_tx.clone();
+        let local_candidate_queue_tx_clone = local_candidate_queue_tx.clone();
         Box::pin(async move {
             let Some(candidate) = candidate else {
                 // A None candidate marks the end of ICE gathering.
@@ -391,7 +393,7 @@ fn init_local_candidate_handling(
                 // consumed, after the corresponding offer is known.
                 neg_id: String::new(),
             };
-            if let Err(error) = signal_tx.send(local_candidate).await {
+            if let Err(error) = local_candidate_queue_tx_clone.send(local_candidate).await {
                 log::warn!("failed to queue local ICE candidate: {error}");
             }
         })
