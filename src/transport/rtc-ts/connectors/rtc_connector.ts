@@ -119,8 +119,51 @@ export class RtcConnector implements Connector<string> {
         }
         // ignore offers as this peer is the initiator
         if (msg.type === 'answer') {
+            const negState = this.sessions.get(msg.neg_id)!;
+            if (!negState.flags.awaitingAnswer ||
+                // The rollback case that means that coming answer will be discarded
+                // But before rollback, the awaitingAnswer state should be set to false,
+                //  so this should not be possible.
+                negState.flags.rollingBack ||
+                // Just in case we received a duplicate answer
+                // (thw awaitingAnswer state is not set to false unless the sdp is 
+                // successfully applied)
+                negState.flags.applyingRemoteDescription ||
+                // Again, this can happen if we didnt get an ack message,
+                // but the answer was sent, or if the intrnet routed ack after
+                // the answer. It will be very rare, but still possible. Let
+                // the renegotiation timer handle it for now.
+                // Maybe later just consider this answer as the ack.
+                negState.flags.sendingOffer ||
+                // This means we haven't yet started waiting for an answer 
+                // or sent the offer...this is just an experimental flag for now.
+                negState.flags.applyingLocalDescription
+                // Ignore sending event - at this point just apply the answer and let
+                // problems with outgoing messages be handled 
+                // by the cosmos (ICE connection failure + debouncer).
+                // negState.flags.sendingCandidate
+            ) {
+                // this should not be possible
+                console.warn(`Anomaly: Received answer while ${JSON.stringify(negState)}. Ignore ${msg.sdp}`);
+                return;
+            }
             // TODO: validate sdp
-            await this.peerConnection.setRemoteDescription({ type: 'answer', sdp: msg.sdp });
+            negState.flags.applyingRemoteDescription = true;
+            try {
+                await this.peerConnection.setRemoteDescription({ type: 'answer', sdp: msg.sdp });
+            } catch (e) {
+                console.error('Failed to apply remote description', e);
+            }
+            negState.flags.applyingRemoteDescription = false;
+            // Here the following case is not handled: when an ICE restart was triggered and 
+            // the local sdp was assigned, offer sent and answer await started.
+            // It is done because it is very unlikely to happen.
+            // Actually, if ICE restart happens, the whole current negotiation state will change.
+            if (this.peerConnection.signalingState === 'stable') {
+                negState.flags.awaitingAnswer = false;
+            } else {
+                console.warn('Unexpected signalling state after applying answer:', this.peerConnection.signalingState);
+            }
         } else if (msg.type === 'ice-candidate') {
             const negState = this.sessions.get(msg.neg_id)!;
             if (negState.flags.awaitingAnswer || 
@@ -143,12 +186,15 @@ export class RtcConnector implements Connector<string> {
                 // but for now this will not be handled for simplicity.
                 negState.flags.sendingOffer) {
                 // wait for next restart
-                console.info(`Anomaly: Received ICE candidate while ${JSON.stringify(negState)}. Ignore ${msg.sdp}`);
+                console.warn(`Anomaly: Received ICE candidate while ${JSON.stringify(negState)}. Ignore ${msg.sdp}`);
                 return;
             }
             // TODO: validate sdp
-            if (!this.peerConnection.remoteDescription) {
-            await this.peerConnection.addIceCandidate(JSON.parse(msg.sdp));
+            try {
+                await this.peerConnection.addIceCandidate(JSON.parse(msg.sdp));
+            } catch (e) {
+                console.error('Failed to add ICE candidate', e);
+            }
         }
     }
 
