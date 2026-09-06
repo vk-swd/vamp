@@ -1,0 +1,369 @@
+import { SignalMsg, TransportMsg, WireMsg } from '../../generatedTypes';
+import { Connector, NodeState } from './connector';
+import { WsSignallingConnector } from './ws_signalling_connector';
+import { TransportHandler } from '../transport_handler';
+
+type QueueEvent = {
+    id: number;
+    name: string;
+    run: () => Promise<void>;
+};
+
+function parseMessage<T>(frame: string): T {
+    return JSON.parse(frame) as T;
+}
+
+/**
+ * Owns one initiator-side WebRTC connection.
+ *
+ * WebRTC callbacks are external event sources. They only enqueue work here;
+ * peer mutations and signalling sends are performed by one FIFO processor.
+ */
+
+class SessionLifeTimeFlags {
+    applyingLocalDescription = false; //after this new candidates will berelated to this session
+    // track candidates using the gathering state change
+    gatheringStarted = false;
+    sendingOffer = false;
+    awaitingAnswer = false;
+    rollingBack = false;
+    applyingRemoteDescription = false;
+    sendingCandidate = false;
+    // addingCandidate = false; // this is not montored since it does not have any processing after it...yet
+    awaitingReconnect = false;
+    waitingForRestart = false;
+}
+class SessionLifeTime {
+    SessionId = crypto.randomUUID();
+    flags: SessionLifeTimeFlags = new SessionLifeTimeFlags();
+    dcState: DCLifeTime = new DCLifeTime();
+    pendingRequests: SignalMsg[] = [];
+    debounceState: DebounceState = new DebounceState();
+}
+
+
+/**
+ * makea test to see how signals are sent...
+ * but i need to design things for a safe operation, not rely on observed one...
+ * 
+ * 
+ */
+class DCLifeTime {
+    waitingForRestart = false;
+}
+
+class DebounceState {
+    ongoningNegotiation = false;
+    disconnectedStateWait = false;
+    closedChannelWait = false;
+}
+
+
+
+
+function parse_msg<T>(json: string): T {
+    try {
+        const msg = JSON.parse(json) as T;
+        return msg;
+    } catch (e) {
+        console.error('Failed to parse message', e);
+        throw e;
+    }
+}
+
+export class RtcConnector implements Connector<string> {
+    private sessions = new Map<string, SessionLifeTime>();
+    private currentSessionId: string | undefined;
+
+    private channel: RTCDataChannel | undefined;
+    private peerConnection: RTCPeerConnection | undefined;
+    private readonly wsConnector: WsSignallingConnector;
+    private readonly wsTransportHandler: TransportHandler<SignalMsg>;
+
+
+    constructor(
+        tag: string,
+        private channelName: string,
+        private ssUrl: string,
+        private config: { iceServers: RTCIceServer[] }
+    
+    ) {
+        const wireRegistrationFrame: WireMsg<void> = { tag, message: null }
+        this.wsTransportHandler = new TransportHandler<SignalMsg>(
+            (payload: TransportMsg<SignalMsg>) => {
+                const frame = JSON.stringify(payload);
+                this.wsConnector.send(frame);
+            },
+            async (payload: SignalMsg) => {
+                await this.handleSignalMsg(payload);
+            }
+        );
+        this.wsConnector = new WsSignallingConnector(this.ssUrl, 
+            /* registrationFrame */ JSON.stringify(wireRegistrationFrame), /* messageHandler */ 
+            (frame: string) => {
+                const msg = parse_msg<WireMsg<SignalMsg>>(frame);
+                this.wsTransportHandler.handle_incoming(msg.message!);
+                // handle incoming messages
+            });
+    }
+
+    async handleSignalMsg(msg: SignalMsg) {
+        if (!this.peerConnection) {
+            console.error('Received signal message but no peer connection exists');
+            return;
+        }
+        if (!this.sessions.has(msg.neg_id) || msg.neg_id !== this.currentSessionId) {
+            // Nobody else can initiate any negotiation, so skip unexpected ids.
+            console.warn('Received signal message with unexpected negotiation id', msg.neg_id);
+            return;
+        }
+        // ignore offers as this peer is the initiator
+        if (msg.type === 'answer') {
+            // TODO: validate sdp
+            await this.peerConnection.setRemoteDescription({ type: 'answer', sdp: msg.sdp });
+        } else if (msg.type === 'ice-candidate') {
+            const negState = this.sessions.get(msg.neg_id)!;
+            if (negState.flags.awaitingAnswer || 
+                // candidate while rolling back is inconvenient but could be ignored: it means offer came through
+                // but we decided not to apply it and start a new one...and it probably 
+                // means we haven't changed new current negotiation and that's why 
+                // stale candidate was allowed.
+                negState.flags.rollingBack || 
+                // if the remote description is not set, adding candidate will throw
+                // It is also posible that there is current remote sdp and a pending sdp 
+                // is still in the process of being applied. In that case it could be accepted,
+                // bit for simplicity this case will just be logged for now, since it is not 
+                // proven to be a problem.
+                negState.flags.applyingRemoteDescription ||
+                // That would mean that we haven't got any answer yet or that we got 
+                // a candidate before we got an answer and without getting acknowledgement for the offer.
+                // In the former case this case should be impossible.
+                // The latter case should be very unlikely and we could buffer incoming signalling events until 
+                // one of our retries gets a response and all message sequence arrives,
+                // but for now this will not be handled for simplicity.
+                negState.flags.sendingOffer) {
+                // wait for next restart
+                console.info(`Anomaly: Received ICE candidate while ${JSON.stringify(negState)}. Ignore ${msg.sdp}`);
+                return;
+            }
+            // TODO: validate sdp
+            if (!this.peerConnection.remoteDescription) {
+            await this.peerConnection.addIceCandidate(JSON.parse(msg.sdp));
+        }
+    }
+
+
+
+    state(): NodeState {
+        if (this.closed) return NodeState.Closed;
+        if (!this.peerConnection || !this.channel) return NodeState.Connecting;
+        if (this.peerConnection.connectionState === 'connected' && this.channel.readyState === 'open') {
+            return NodeState.Connected;
+        }
+        return NodeState.Connecting;
+    }
+
+    send(frame: string): void {
+        if (this.state() !== NodeState.Connected) {
+            throw new Error('peer connection not connected');
+        }
+        this.channel!.send(frame);
+    }
+
+    getConnector(): Connector<string> {
+        return this;
+    }
+
+    close(): void {
+        if (this.closed) return;
+        this.closed = true;
+        if (this.restartTimer) clearTimeout(this.restartTimer);
+        this.restartTimer = undefined;
+        this.queue = [];
+        this.wsTransportHandler.abort_current_delivery('RTC connector closed');
+        this.wsTransportHandler.stop();
+        this.clearPeer();
+        this.wsConnector.close();
+    }
+
+    private enqueue(name: string, run: () => Promise<void>): number {
+        const id = ++this.nextEventId;
+        if (this.closed) return id;
+        this.queue.push({ id, name, run });
+        void this.processQueue();
+        return id;
+    }
+
+    private async processQueue(): Promise<void> {
+        if (this.processingQueue) return;
+        this.processingQueue = true;
+        try {
+            while (!this.closed && this.queue.length > 0) {
+                const event = this.queue.shift()!;
+                try {
+                    await event.run();
+                } catch (error) {
+                    console.warn(`[rtc] event ${event.name} (${event.id}) failed`, error);
+                }
+            }
+        } finally {
+            this.processingQueue = false;
+            if (!this.closed && this.queue.length > 0) void this.processQueue();
+        }
+    }
+
+    private enqueueSignal(message: SignalMsg): void {
+        if (message.type === 'offer' || message.type === 'local-candidate') return;
+        const negotiationId = Number(message.neg_id);
+        if (!Number.isInteger(negotiationId)) return;
+
+        if (message.type === 'answer') {
+            this.enqueue('remoteAnswer', () => this.applyAnswer(negotiationId, message.sdp));
+        } else if (message.type === 'ice-candidate') {
+            this.enqueue('remoteIceCandidate', () => this.applyRemoteCandidate(negotiationId, message.sdp));
+        }
+    }
+
+    private async createConnection(): Promise<void> {
+        if (this.closed || this.peerConnection) return;
+
+        const peer = new RTCPeerConnection(this.config);
+        this.peerConnection = peer;
+        this.assignPeerCallbacks(peer);
+        this.createChannel(peer);
+        await this.negotiate(false);
+    }
+
+    private assignPeerCallbacks(peer: RTCPeerConnection): void {
+        peer.onicecandidate = (event) => {
+            if (!event.candidate || peer !== this.peerConnection) return;
+            const negotiationId = this.nextNegotiationId;
+            this.enqueue('localIceCandidate', async () => {
+                if (peer !== this.peerConnection || negotiationId !== this.nextNegotiationId) return;
+                await this.sendSignal({
+                    type: 'ice-candidate',
+                    sdp: JSON.stringify(event.candidate!.toJSON()),
+                    neg_id: `${negotiationId}`,
+                });
+            });
+        };
+
+        peer.ondatachannel = (event) => {
+            event.channel.close();
+        };
+
+        peer.onconnectionstatechange = () => {
+            if (peer !== this.peerConnection) return;
+            if (peer.connectionState === 'disconnected' || peer.connectionState === 'failed') {
+                this.scheduleRestart(false);
+            } else if (peer.connectionState === 'connected' && !this.restartWithNewChannel) {
+                this.cancelRestartTimer();
+            }
+        };
+    }
+
+    private createChannel(peer: RTCPeerConnection): void {
+        this.clearChannel();
+        const channelId = ++this.nextChannelId;
+        const channel = peer.createDataChannel(this.channelName);
+        this.channel = channel;
+        channel.onopen = () => console.debug('[rtc] data channel open');
+        channel.onmessage = (event) => console.debug('[rtc] data channel message', event.data);
+        channel.onerror = (event) => console.error('[rtc] data channel error', event);
+        channel.onclose = () => {
+            if (peer !== this.peerConnection || channelId !== this.nextChannelId) return;
+            this.channel = undefined;
+            this.scheduleRestart(true);
+        };
+    }
+
+    private async negotiate(iceRestart: boolean): Promise<void> {
+        const peer = this.peerConnection;
+        if (!peer || this.closed) return;
+        const negotiationId = ++this.nextNegotiationId;
+        this.remoteDescriptionNegotiation = undefined;
+        this.pendingRemoteCandidates = [];
+        const offer = await peer.createOffer({ iceRestart });
+        if (peer !== this.peerConnection || negotiationId !== this.nextNegotiationId) return;
+        await peer.setLocalDescription(offer);
+        if (peer !== this.peerConnection || negotiationId !== this.nextNegotiationId) return;
+        await this.sendSignal({ type: 'offer', sdp: offer.sdp ?? '', neg_id: `${negotiationId}` });
+    }
+
+    private async sendSignal(message: SignalMsg): Promise<void> {
+        await this.wsTransportHandler.send(message, 5000);
+    }
+
+    private async applyAnswer(negotiationId: number, sdp: string): Promise<void> {
+        if (!this.peerConnection || negotiationId !== this.nextNegotiationId) return;
+        await this.peerConnection.setRemoteDescription({ type: 'answer', sdp });
+        this.remoteDescriptionNegotiation = negotiationId;
+        const pending = this.pendingRemoteCandidates.filter((candidate) => candidate.negotiationId === negotiationId);
+        this.pendingRemoteCandidates = [];
+        for (const candidate of pending) {
+            await this.peerConnection.addIceCandidate(JSON.parse(candidate.sdp));
+        }
+    }
+
+    private async applyRemoteCandidate(negotiationId: number, sdp: string): Promise<void> {
+        if (!this.peerConnection || negotiationId !== this.nextNegotiationId) return;
+        if (this.remoteDescriptionNegotiation !== negotiationId) {
+            this.pendingRemoteCandidates.push({ negotiationId, sdp });
+            return;
+        }
+        await this.peerConnection.addIceCandidate(JSON.parse(sdp));
+    }
+
+    private scheduleRestart(withNewChannel: boolean): void {
+        if (this.closed) return;
+        if (withNewChannel) this.restartWithNewChannel = true;
+        if (this.restartTimer) return;
+        this.restartTimer = setTimeout(() => {
+            this.restartTimer = undefined;
+            this.needRestart = true;
+            this.queue = [];
+            this.wsTransportHandler.abort_current_delivery('RTC restart requested');
+            this.enqueue('restartConnection', () => this.restartConnection());
+        }, this.restartDelayMs);
+    }
+
+    private cancelRestartTimer(): void {
+        if (!this.restartTimer) return;
+        clearTimeout(this.restartTimer);
+        this.restartTimer = undefined;
+    }
+
+    private async restartConnection(): Promise<void> {
+        if (this.closed || !this.needRestart) return;
+        this.needRestart = false;
+        const withNewChannel = this.restartWithNewChannel;
+        this.restartWithNewChannel = false;
+        const peer = this.peerConnection;
+        if (!peer) {
+            await this.createConnection();
+            return;
+        }
+        if (withNewChannel) this.createChannel(peer);
+        await this.negotiate(true);
+    }
+
+    private clearChannel(): void {
+        if (!this.channel) return;
+        this.channel.onopen = null;
+        this.channel.onclose = null;
+        this.channel.onmessage = null;
+        this.channel.onerror = null;
+        this.channel.close();
+        this.channel = undefined;
+    }
+
+    private clearPeer(): void {
+        this.clearChannel();
+        if (!this.peerConnection) return;
+        this.peerConnection.onicecandidate = null;
+        this.peerConnection.ondatachannel = null;
+        this.peerConnection.onconnectionstatechange = null;
+        this.peerConnection.close();
+        this.peerConnection = undefined;
+    }
+}

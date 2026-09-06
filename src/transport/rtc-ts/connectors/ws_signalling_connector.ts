@@ -2,7 +2,7 @@ import { Connector, NodeState } from './connector';
 
 type ValueRef<T> = { value: T };
 
-class WsSignallingConnector implements Connector<String> {
+export class WsSignallingConnector implements Connector<String> {
     #ws: WebSocket | undefined = undefined;
     #state: ValueRef<NodeState> = { value: NodeState.Connecting };
     #restartTimer: ReturnType<typeof setTimeout> | undefined = undefined;

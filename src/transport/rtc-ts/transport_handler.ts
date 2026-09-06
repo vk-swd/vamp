@@ -33,8 +33,8 @@ class SnFilter {
     }
 }
 
-export class TransportHandler<CarrierType, TransportedType> {
-    awaited_delivery: { sn: number, resend_task: Promise<void>, resolve_fn: () => void } | undefined = undefined;
+export class TransportHandler<TransportedType> {
+    awaited_delivery: { sn: number, resend_task: Promise<void>, resolve_fn: () => void, abort_controller: AbortController } | undefined = undefined;
     last_sent_sn: number | undefined = undefined;
     seq_num_out: number = 0;
     node_id_out: string = crypto.randomUUID();
@@ -45,6 +45,10 @@ export class TransportHandler<CarrierType, TransportedType> {
     }
     stop() {
         this.signal.abort();
+    }
+
+    abort_current_delivery(reason = 'send aborted') {
+        this.awaited_delivery?.abort_controller.abort(new Error(reason));
     }
 
     handle_incoming(msg: TransportMsg<TransportedType>) {
@@ -71,6 +75,7 @@ export class TransportHandler<CarrierType, TransportedType> {
         if (this.awaited_delivery) {
             return Promise.reject(new Error('send already in progress'));
         }
+        const abort_controller = new AbortController();
         let resolve_fn: () => void = () => {};
         const resend_task = new Promise<void>((resolve, reject) => {
             let timer: ReturnType<typeof setTimeout> | undefined;
@@ -81,13 +86,18 @@ export class TransportHandler<CarrierType, TransportedType> {
                 if (timer !== undefined) clearTimeout(timer);
                 this.awaited_delivery = undefined;
                 this.signal.signal.removeEventListener('abort', onAbort);
+                abort_controller.signal.removeEventListener('abort', onDeliveryAbort);
             };
             const settle = (err?: Error) => {
                 cleanup();
                 if (err) reject(err);
                 else resolve();
             };
-            const onAbort = () => settle(new Error('send aborted'));
+            const onAbort = () => abort_controller.abort(new Error('send aborted'));
+            const onDeliveryAbort = () => {
+                const reason = abort_controller.signal.reason;
+                settle(reason instanceof Error ? reason : new Error('send aborted'));
+            };
             const resend = () => {
                 if (timer !== undefined) clearTimeout(timer);
                 try {
@@ -98,9 +108,10 @@ export class TransportHandler<CarrierType, TransportedType> {
                 timer = setTimeout(resend, timeout);
             };
             this.signal.signal.addEventListener('abort', onAbort, { once: true });
+            abort_controller.signal.addEventListener('abort', onDeliveryAbort, { once: true });
             resend();
         });
-        this.awaited_delivery = { sn, resend_task, resolve_fn };
+        this.awaited_delivery = { sn, resend_task, resolve_fn, abort_controller };
         return resend_task;
     }
 
