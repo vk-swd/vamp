@@ -33,6 +33,11 @@ class SnFilter {
     }
 }
 
+export type SendRetryHandle = {
+    resend_task: Promise<void>;
+    abort_controller?: AbortController;
+};
+
 export class TransportHandler<TransportedType> {
     awaited_delivery: { sn: number, resend_task: Promise<void>, resolve_fn: () => void, abort_controller: AbortController } | undefined = undefined;
     last_sent_sn: number | undefined = undefined;
@@ -119,7 +124,7 @@ export class TransportHandler<TransportedType> {
     /// until acknowledged (see memo.md "Ack messages" / "Delivery retries").
     /// `timeout` controls how long to wait for an ack before retrying
     /// (defaults to 6s via [`WsNodeHandler::send_default`]).
-    send(payload: TransportedType, timeout: number): { resend_task: Promise<void>, abort_controller?: AbortController } {
+    send(payload: TransportedType, timeout: number): SendRetryHandle {
         if (this.awaited_delivery) {
             return { resend_task: Promise.reject(new Error('send already in progress')) };
         }

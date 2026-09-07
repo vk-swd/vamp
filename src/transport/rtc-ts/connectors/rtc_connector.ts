@@ -1,7 +1,7 @@
 import { SignalMsg, TransportMsg, WireMsg } from '../../generatedTypes';
 import { Connector, NodeState } from './connector';
 import { WsSignallingConnector } from './ws_signalling_connector';
-import { TransportHandler } from '../transport_handler';
+import { SendRetryHandle, TransportHandler } from '../transport_handler';
 
 type QueueEvent = {
     id: number;
@@ -38,25 +38,28 @@ class SessionLifeTime {
     SessionId = crypto.randomUUID();
     flags: SessionLifeTimeFlags = new SessionLifeTimeFlags();
     dcState: DCLifeTime = new DCLifeTime();
-    pendingRequests: SignalMsg[] = [];
+    pendingRequests: [SignalMsg, (() => void) | undefined][] = [];
     debounceState: DebounceState = new DebounceState();
+    deliveryState: SendRetryHandle | undefined = undefined;
+    abandoned = false;
     // senderHandle: 
-    sendSignallingMessage(msg: SignalMsg): Promise<void> {
-        this.pendingRequests.push(msg);
-        if (this.pendingRequests.length > 1) {
+    async sendSignallingMessage(msg: SignalMsg, sender: TransportHandler<SignalMsg>, callback?: () => void): Promise<void> {
+        this.pendingRequests.push([msg, callback]);
+        if (this.deliveryState) {
             return Promise.resolve();
         }
-        return this.sendPendingSignallingMessages();
-    }
-    async sendPendingSignallingMessages(): Promise<void> {
-        while (this.pendingRequests.length > 0) {
-            const msg = this.pendingRequests.shift()!;
-            await this.sendSignallingMessageToNetwork(msg);
+        while (this.pendingRequests.length > 0 && !this.abandoned) {
+            const [msg, callback] = this.pendingRequests[0];
+            try {
+                this.deliveryState = sender.send(msg, 4000);
+                await this.deliveryState.resend_task;
+                this.pendingRequests.shift();
+                callback?.();
+            } catch (e) {
+                console.error('Failed to send signalling message: ', msg, " because: ", e);
+            }
         }
-    }
-    private sendSignallingMessageToNetwork(msg: SignalMsg): Promise<void> {
-        // Implement the actual network sending logic here
-        return Promise.resolve();
+        this.deliveryState = undefined;
     }
 }
 
@@ -196,9 +199,7 @@ export class RtcConnector implements Connector<string> {
                 type: 'ice-candidate',
                 sdp: JSON.stringify(event.candidate.toJSON()),
                 neg_id: this.currentSessionId!,
-            }).catch((err) => {
-                console.error('Failed to send ICE candidate', err);
-            });
+            }, this.wsTransportHandler);
         };
 
         this.createChannel(this.peerConnection);
