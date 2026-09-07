@@ -95,13 +95,24 @@ function parse_msg<T>(json: string): T {
 
 export class RtcConnector implements Connector<string> {
     private sessions = new Map<string, SessionLifeTime>();
+    /**
+     * Datachannels are independent of sessions...sort of...you can negotiate
+     * new datachannels without ice restarts...
+     * do if the channel was closed while ice was connected, then i trigger opening channel with regular sdp
+     * within the same session i mean...
+     * if the channel was closed while the session was disconnected, then i would need to restart ice and recreate datachannel
+     * if the channel was not closed at all, then i need to restart ice, but not create a new channel.
+     * i might get close event while i have an ongoing ice restart negotiation, or i might loose conecntion while i have an ongoing datachannel negotiation...
+     */
     private currentSessionId: string | undefined;
 
     private channel: RTCDataChannel | undefined;
     private peerConnection: RTCPeerConnection | undefined;
+
     private readonly wsConnector: WsSignallingConnector;
     private readonly wsTransportHandler: TransportHandler<SignalMsg>;
 
+    private nodeState: NodeState = NodeState.Connecting;
 
     constructor(
         tag: string,
@@ -201,9 +212,30 @@ export class RtcConnector implements Connector<string> {
                 neg_id: this.currentSessionId!,
             }, this.wsTransportHandler);
         };
-
         this.createChannel(this.peerConnection);
         await this.negotiate(false);
+    }
+    startNewChannel() {
+        if (!this.peerConnection) {
+            console.error('No peer connection exists');
+            return;
+        }
+        const newChannelId = this.channel?.id 
+        this.clearChannel();
+        const channel = this.peerConnection.createDataChannel(this.channelName);
+        this.channel = channel;
+        channel.id
+        channel.onopen = () => {
+            console.debug('[rtc] data channel open');
+            this.nodeState = NodeState.Connected;
+        }
+        channel.onmessage = (event) => console.debug('[rtc] data channel message', event.data);
+        channel.onerror = (event) => console.error('[rtc] data channel error', event);
+        channel.onclose = () => {
+            if (peer !== this.peerConnection || channelId !== this.nextChannelId) return;
+            this.channel = undefined;
+            this.scheduleRestart(true);
+        };
     }
     async handleSignalMsg(msg: SignalMsg) {
         if (!this.peerConnection) {
