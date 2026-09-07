@@ -134,17 +134,17 @@ export class RtcConnector implements Connector<string> {
 
         this.peerConnection.oniceconnectionstatechange = (event) => {
             if (this.peerConnection?.iceConnectionState === 'disconnected') {
-                // start debounce timer and wait for reconnect.   
+                // TODO // start debounce timer and wait for reconnect.   
             }
             if (this.peerConnection?.iceConnectionState === 'failed') {
                 // connection will not recover, skip an interval and restart.
-                this.scheduleRestart(false);
+                // TODO this.scheduleRestart(false);
             }
             // connected of completed represent a working connection
             if (this.peerConnection?.iceConnectionState === 'connected' ||
                 this.peerConnection?.iceConnectionState === 'completed') {
                 // cancel any pending restart timer
-                this.cancelRestartTimer();
+                // TODO this.cancelRestartTimer();
             }
         };
         this.peerConnection.onicegatheringstatechange = () => {
@@ -154,6 +154,9 @@ export class RtcConnector implements Connector<string> {
                     console.error('No session found for current negotiation id', this.currentSessionId);
                     return;
                 }
+                // Once gathering started, mark new session ready do accept
+                // new candidates, to make sure those are current candidates
+                // since Peer Connection is still the same.
                 session.flags.gatheringStarted = true;
             }
         };
@@ -161,7 +164,18 @@ export class RtcConnector implements Connector<string> {
             // Channels can only be created by current peer - the initiator.
             event.channel.close();
         };
-        this.peerConnection.onconnectionstatechange = () => {};
+        this.peerConnection.onconnectionstatechange = () => {
+            // For now it is included to check behavior.
+            // Seems like it should mirror iceconnectionstatechange
+            // + reflect dtls problems.
+            console.warn('[rtc] connection state changed', 
+                this.peerConnection?.connectionState, this.peerConnection?.iceConnectionState);
+            this.peerConnection?.getTransceivers().forEach(t => {
+                const rt = t.receiver.transport;
+                const st = t.sender.transport;
+                console.warn('[rtc] transceiver recv state:', rt?.state,', send: ', st?.state);
+            });
+        };
         this.peerConnection.onicecandidate = (event) => {
             if (!event.candidate) return;
             if (this.currentSessionId === undefined) {
