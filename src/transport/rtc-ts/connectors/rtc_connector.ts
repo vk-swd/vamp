@@ -24,11 +24,12 @@ class SessionLifeTimeFlags {
     applyingLocalDescription = false; //after this new candidates will berelated to this session
     // track candidates using the gathering state change
     gatheringStarted = false;
-    sendingOffer = false;
     awaitingAnswer = false;
     rollingBack = false;
     applyingRemoteDescription = false;
+    sendingOffer = false;
     sendingCandidate = false;
+    sending = false;
     // addingCandidate = false; // this is not montored since it does not have any processing after it...yet
     awaitingReconnect = false;
     waitingForRestart = false;
@@ -39,6 +40,24 @@ class SessionLifeTime {
     dcState: DCLifeTime = new DCLifeTime();
     pendingRequests: SignalMsg[] = [];
     debounceState: DebounceState = new DebounceState();
+    // senderHandle: 
+    sendSignallingMessage(msg: SignalMsg): Promise<void> {
+        this.pendingRequests.push(msg);
+        if (this.pendingRequests.length > 1) {
+            return Promise.resolve();
+        }
+        return this.sendPendingSignallingMessages();
+    }
+    async sendPendingSignallingMessages(): Promise<void> {
+        while (this.pendingRequests.length > 0) {
+            const msg = this.pendingRequests.shift()!;
+            await this.sendSignallingMessageToNetwork(msg);
+        }
+    }
+    private sendSignallingMessageToNetwork(msg: SignalMsg): Promise<void> {
+        // Implement the actual network sending logic here
+        return Promise.resolve();
+    }
 }
 
 
@@ -106,7 +125,71 @@ export class RtcConnector implements Connector<string> {
                 // handle incoming messages
             });
     }
+    async startPeerConnection(): Promise<void> {
+        if (this.peerConnection) {
+            console.warn('Peer connection already exists');
+            return;
+        }
+        this.peerConnection = new RTCPeerConnection(this.config);
 
+        this.peerConnection.oniceconnectionstatechange = (event) => {
+            if (this.peerConnection?.iceConnectionState === 'disconnected') {
+                // start debounce timer and wait for reconnect.   
+            }
+            if (this.peerConnection?.iceConnectionState === 'failed') {
+                // connection will not recover, skip an interval and restart.
+                this.scheduleRestart(false);
+            }
+            // connected of completed represent a working connection
+            if (this.peerConnection?.iceConnectionState === 'connected' ||
+                this.peerConnection?.iceConnectionState === 'completed') {
+                // cancel any pending restart timer
+                this.cancelRestartTimer();
+            }
+        };
+        this.peerConnection.onicegatheringstatechange = () => {
+            if (this.peerConnection?.iceGatheringState === 'gathering') {
+                let session = this.sessions.get(this.currentSessionId!);
+                if (!session) {
+                    console.error('No session found for current negotiation id', this.currentSessionId);
+                    return;
+                }
+                session.flags.gatheringStarted = true;
+            }
+        };
+        this.peerConnection.ondatachannel = (event) => {
+            // Channels can only be created by current peer - the initiator.
+            event.channel.close();
+        };
+        this.peerConnection.onconnectionstatechange = () => {};
+        this.peerConnection.onicecandidate = (event) => {
+            if (!event.candidate) return;
+            if (this.currentSessionId === undefined) {
+                console.error('No current session id for ICE candidate');
+                return;
+            }
+            let session = this.sessions.get(this.currentSessionId!);
+            if (!session) {
+                console.error('No session found for current negotiation id', this.currentSessionId);
+                return;
+            }
+            if (!session.flags.gatheringStarted) {
+                console.warn(`ICE candidate ${JSON.stringify(event.candidate)} 
+                received before gathering started for session ${this.currentSessionId}`);
+                return;
+            }
+            session.sendSignallingMessage({
+                type: 'ice-candidate',
+                sdp: JSON.stringify(event.candidate.toJSON()),
+                neg_id: this.currentSessionId!,
+            }).catch((err) => {
+                console.error('Failed to send ICE candidate', err);
+            });
+        };
+
+        this.createChannel(this.peerConnection);
+        await this.negotiate(false);
+    }
     async handleSignalMsg(msg: SignalMsg) {
         if (!this.peerConnection) {
             console.error('Received signal message but no peer connection exists');
@@ -166,6 +249,11 @@ export class RtcConnector implements Connector<string> {
             }
         } else if (msg.type === 'ice-candidate') {
             const negState = this.sessions.get(msg.neg_id)!;
+            // Candidates should start coming only after the answer was generated 
+            // and set as local SDP by a remote peer. And since the implemented protocol here
+            // is to send one message at a time, the case when two messages were sent in
+            // order but due to routing differences arrived in different order should
+            // be impossible.
             if (negState.flags.awaitingAnswer || 
                 // candidate while rolling back is inconvenient but could be ignored: it means offer came through
                 // but we decided not to apply it and start a new one...and it probably 

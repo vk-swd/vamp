@@ -71,9 +71,9 @@ export class TransportHandler<TransportedType> {
         }
     }
 
-    async #send_and_wait_ack_repeated(msg: TransportMsg<TransportedType>, sn: number, timeout: number) {
+    #send_and_wait_ack_repeated(msg: TransportMsg<TransportedType>, sn: number, timeout: number) {
         if (this.awaited_delivery) {
-            return Promise.reject(new Error('send already in progress'));
+            return { resend_task: Promise.reject(new Error('send already in progress')) };
         }
         const abort_controller = new AbortController();
         let resolve_fn: () => void = () => {};
@@ -112,19 +112,19 @@ export class TransportHandler<TransportedType> {
             resend();
         });
         this.awaited_delivery = { sn, resend_task, resolve_fn, abort_controller };
-        return resend_task;
+        return { resend_task, abort_controller };
     }
 
     /// Reliably deliver a signalling message to the other peer, retrying
     /// until acknowledged (see memo.md "Ack messages" / "Delivery retries").
     /// `timeout` controls how long to wait for an ack before retrying
     /// (defaults to 6s via [`WsNodeHandler::send_default`]).
-    async send(payload: TransportedType, timeout: number): Promise<void> {
+    send(payload: TransportedType, timeout: number): { resend_task: Promise<void>, abort_controller?: AbortController } {
         if (this.awaited_delivery) {
-            return Promise.reject(new Error('send already in progress'));
+            return { resend_task: Promise.reject(new Error('send already in progress')) };
         }
         if (this.signal.signal.aborted) {
-            return Promise.reject(new Error('send aborted'));
+            return { resend_task: Promise.reject(new Error('send aborted')) };
         }
         this.seq_num_out++;
         const sn = this.seq_num_out;
