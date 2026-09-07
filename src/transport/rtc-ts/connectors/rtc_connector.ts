@@ -64,6 +64,11 @@ class SessionLifeTime {
 }
 
 
+enum DebounceEvent {
+    DisconnectedIce,
+    FailedIce,
+    ClosedChannel,
+}
 /**
  * makea test to see how signals are sent...
  * but i need to design things for a safe operation, not rely on observed one...
@@ -71,7 +76,9 @@ class SessionLifeTime {
  * 
  */
 class DCLifeTime {
-    waitingForRestart = false;
+    waitingForRestart = true;
+    // ??? if i close dc and then restart ice, will it reopen the dc?
+    isClosed = true;
 }
 
 class DebounceState {
@@ -113,12 +120,13 @@ export class RtcConnector implements Connector<string> {
     private readonly wsTransportHandler: TransportHandler<SignalMsg>;
 
     private nodeState: NodeState = NodeState.Connecting;
-
+    private debounceEvents: Set<DebounceEvent> = new Set();
     constructor(
         tag: string,
         private channelName: string,
         private ssUrl: string,
-        private config: { iceServers: RTCIceServer[] }
+        private config: { iceServers: RTCIceServer[] },
+        private messageHandler: (frame: string) => void
     
     ) {
         const wireRegistrationFrame: WireMsg<void> = { tag, message: null }
@@ -138,6 +146,25 @@ export class RtcConnector implements Connector<string> {
                 this.wsTransportHandler.handle_incoming(msg.message!);
                 // handle incoming messages
             });
+    }
+
+    debounceEvent(event: DebounceEvent) {
+        switch (event) {
+            case DebounceEvent.DisconnectedIce:
+                if (this.debounceEvents.has(DebounceEvent.DisconnectedIce)) {
+                    // Already handling disconnected ice
+                    break;
+                }
+                this.debounceEvents.add(DebounceEvent.DisconnectedIce);
+                break;
+            case DebounceEvent.FailedIce:
+                // TODO: handle failed ice
+                break;
+            case DebounceEvent.ClosedChannel:
+                // TODO: handle closed channel
+                break;
+        }
+        // TODO: implement debounce logic based on the event type
     }
     async startPeerConnection(): Promise<void> {
         if (this.peerConnection) {
@@ -159,6 +186,7 @@ export class RtcConnector implements Connector<string> {
                 this.peerConnection?.iceConnectionState === 'completed') {
                 // cancel any pending restart timer
                 // TODO this.cancelRestartTimer();
+                // check that datachannel was closed and needs to be recreated
             }
         };
         this.peerConnection.onicegatheringstatechange = () => {
@@ -220,21 +248,37 @@ export class RtcConnector implements Connector<string> {
             console.error('No peer connection exists');
             return;
         }
-        const newChannelId = this.channel?.id 
+        const newChannelId = this.channel?.id;
         this.clearChannel();
         const channel = this.peerConnection.createDataChannel(this.channelName);
         this.channel = channel;
-        channel.id
         channel.onopen = () => {
-            console.debug('[rtc] data channel open');
+            // TODO check if the ice restart was not scheduled while the channel 
+            // was being negotiated on top of working ice connection. Though this
+            // should not be possible as the server uses only single channel which means 
+            // single underlying transport and the aggreate iceconnectionstate should 
+            // reflect exactly this transport's state, but leave the check to catch 
+            // anomalies.
+            if (this.peerConnection?.iceConnectionState !== 'connected' &&
+                this.peerConnection?.iceConnectionState !== 'completed'
+            ) {
+                console.warn('[rtc] data channel opened but ICE connection state is not connected or completed', this.peerConnection?.iceConnectionState);
+                return;
+            }
             this.nodeState = NodeState.Connected;
         }
-        channel.onmessage = (event) => console.debug('[rtc] data channel message', event.data);
-        channel.onerror = (event) => console.error('[rtc] data channel error', event);
+        channel.onmessage = (event) => {
+            this.messageHandler(event.data);
+        };
+        channel.onerror = (event) => {
+            console.error('[rtc] data channel error', event);
+        };
         channel.onclose = () => {
-            if (peer !== this.peerConnection || channelId !== this.nextChannelId) return;
-            this.channel = undefined;
-            this.scheduleRestart(true);
+            // if ice connection is disconnected, then no need to schedule faster datachannel
+            // negotiation, because it will not happen until the connection is restarted.
+            // if the reconnection has not started yet, mark the need for a new datachannel
+            // if the reconnection is ongoing, still mark the need for a new datachannel, so
+            // that it is established when the connection was established.
         };
     }
     async handleSignalMsg(msg: SignalMsg) {
