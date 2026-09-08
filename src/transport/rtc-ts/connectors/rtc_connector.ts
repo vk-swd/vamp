@@ -41,14 +41,14 @@ class SessionLifeTime {
     pendingRequests: [SignalMsg, (() => void) | undefined][] = [];
     debounceState: DebounceState = new DebounceState();
     deliveryState: SendRetryHandle | undefined = undefined;
-    abandoned = false;
+    isAlive = true;
     // senderHandle: 
     async sendSignallingMessage(msg: SignalMsg, sender: TransportHandler<SignalMsg>, callback?: () => void): Promise<void> {
         this.pendingRequests.push([msg, callback]);
         if (this.deliveryState) {
             return Promise.resolve();
         }
-        while (this.pendingRequests.length > 0 && !this.abandoned) {
+        while (this.pendingRequests.length > 0 && this.isAlive) {
             const [msg, callback] = this.pendingRequests[0];
             try {
                 this.deliveryState = sender.send(msg, 4000);
@@ -78,8 +78,6 @@ enum DebounceEvent {
  * 
  */
 class DCLifeTime {
-    waitingForRestart = true;
-    // ??? if i close dc and then restart ice, will it reopen the dc?
     isClosed = true;
 }
 
@@ -246,28 +244,38 @@ export class RtcConnector implements Connector<string> {
         //    new channel negotiation.
 
     }
-    startNewSession() {
-        if (!this.peerConnection) {
-            console.warn('Peer connection does not exist');
-            return;
-        }
-        const newSession = new SessionLifeTime();
-        if (this.currentSessionId) {
-            const currentSession = this.sessions.get(this.currentSessionId);
-            if (currentSession) {
-                newSession .dcState = currentSession.dcState;
-                currentSession.abandoned = true;
-            }
-        }
-    }
     async startPeerConnection(): Promise<void> {
         if (this.peerConnection) {
             console.warn('Peer connection already exists');
             return;
         }
         this.peerConnection = new RTCPeerConnection(this.config);
+        this.startNewSession();
+    }
+    startNewSession() {
+        if (!this.peerConnection) {
+            console.warn('Peer connection does not exist');
+            return;
+        }
+        const newSession = new SessionLifeTime();
+        this.addDebounceEvent(DebounceEvent.NegotiatingICE);
+        if (this.currentSessionId) {
+            const currentSession = this.sessions.get(this.currentSessionId);
+            if (currentSession) {
+                newSession.dcState = currentSession.dcState;
+                currentSession.isAlive = true;
+            }
+        }
+        const newSessionId = newSession.SessionId;
+        this.sessions.set(newSessionId, newSession);
+        this.currentSessionId = newSessionId;
 
-        this.peerConnection.oniceconnectionstatechange = (event) => {
+        this.peerConnection.oniceconnectionstatechange = () => {
+            if (this.currentSessionId != newSessionId ||
+                !newSession.isAlive) {
+                console.warn('[rtc] ignoring iceconnectionstatechange for abandoned session', newSessionId);
+                return;
+            }
             if (this.peerConnection?.iceConnectionState === 'disconnected') {
                 this.addDebounceEvent(DebounceEvent.DisconnectedIce);
             }
@@ -283,16 +291,16 @@ export class RtcConnector implements Connector<string> {
             }
         };
         this.peerConnection.onicegatheringstatechange = () => {
+            if (this.currentSessionId != newSessionId ||
+                !newSession.isAlive) {
+                console.warn('[rtc] ignoring icegatheringstatechange for abandoned session', newSessionId);
+                return;
+            }
             if (this.peerConnection?.iceGatheringState === 'gathering') {
-                let session = this.sessions.get(this.currentSessionId!);
-                if (!session) {
-                    console.error('No session found for current negotiation id', this.currentSessionId);
-                    return;
-                }
                 // Once gathering started, mark new session ready do accept
                 // new candidates, to make sure those are current candidates
                 // since Peer Connection is still the same.
-                session.flags.gatheringStarted = true;
+                newSession.flags.gatheringStarted = true;
             }
         };
         this.peerConnection.ondatachannel = (event) => {
@@ -313,28 +321,28 @@ export class RtcConnector implements Connector<string> {
         };
         this.peerConnection.onicecandidate = (event) => {
             if (!event.candidate) return;
-            if (this.currentSessionId === undefined) {
+            if (this.currentSessionId !== newSessionId ||
+                !newSession.isAlive
+            ) {
                 console.error('No current session id for ICE candidate');
                 return;
             }
-            let session = this.sessions.get(this.currentSessionId!);
-            if (!session) {
-                console.error('No session found for current negotiation id', this.currentSessionId);
-                return;
-            }
-            if (!session.flags.gatheringStarted) {
+            if (!newSession.flags.gatheringStarted) {
                 console.warn(`ICE candidate ${JSON.stringify(event.candidate)} 
                 received before gathering started for session ${this.currentSessionId}`);
                 return;
             }
-            session.sendSignallingMessage({
+            newSession.sendSignallingMessage({
                 type: 'ice-candidate',
                 sdp: JSON.stringify(event.candidate.toJSON()),
                 neg_id: this.currentSessionId!,
             }, this.wsTransportHandler);
         };
-        this.createChannel(this.peerConnection);
-        await this.negotiate(false);
+        if (!newSession.dcState || newSession.dcState.isClosed) {
+            this.createChannel(this.peerConnection);
+            this.addDebounceEvent(DebounceEvent.NegotiatingChannel);
+        }
+        // await this.negotiate(false);
     }
     startNewChannel() {
         if (!this.peerConnection) {
