@@ -78,6 +78,7 @@ enum DebounceEvent {
  * 
  */
 class DCLifeTime {
+    id = crypto.randomUUID();
     isClosed = true;
 }
 
@@ -112,6 +113,7 @@ export class RtcConnector implements Connector<string> {
      * i might get close event while i have an ongoing ice restart negotiation, or i might loose conecntion while i have an ongoing datachannel negotiation...
      */
     private currentSessionId: string | undefined;
+    private currentChannelId: string | undefined;
 
     private channel: RTCDataChannel | undefined;
     private peerConnection: RTCPeerConnection | undefined;
@@ -249,13 +251,11 @@ export class RtcConnector implements Connector<string> {
             console.warn('Peer connection already exists');
             return;
         }
-        this.peerConnection = new RTCPeerConnection(this.config);
         this.startNewSession();
     }
     startNewSession() {
         if (!this.peerConnection) {
-            console.warn('Peer connection does not exist');
-            return;
+            this.peerConnection = new RTCPeerConnection(this.config);
         }
         const newSession = new SessionLifeTime();
         this.addDebounceEvent(DebounceEvent.NegotiatingICE);
@@ -266,20 +266,21 @@ export class RtcConnector implements Connector<string> {
                 currentSession.isAlive = true;
             }
         }
-        const newSessionId = newSession.SessionId;
-        this.sessions.set(newSessionId, newSession);
-        this.currentSessionId = newSessionId;
+        this.sessions.set(newSession.SessionId, newSession);
+        this.currentSessionId = newSession.SessionId;
 
         this.peerConnection.oniceconnectionstatechange = () => {
-            if (this.currentSessionId != newSessionId ||
+            if (this.currentSessionId != newSession.SessionId ||
                 !newSession.isAlive) {
-                console.warn('[rtc] ignoring iceconnectionstatechange for abandoned session', newSessionId);
+                console.warn('[rtc] ignoring iceconnectionstatechange for abandoned session', newSession.SessionId);
                 return;
             }
             if (this.peerConnection?.iceConnectionState === 'disconnected') {
+                this.nodeState = NodeState.Connecting;
                 this.addDebounceEvent(DebounceEvent.DisconnectedIce);
             }
             if (this.peerConnection?.iceConnectionState === 'failed') {
+                this.nodeState = NodeState.Connecting;
                 this.addDebounceEvent(DebounceEvent.FailedIce);
             }
             // connected of completed represent a working connection
@@ -288,12 +289,15 @@ export class RtcConnector implements Connector<string> {
                 this.clearDebounceEvent(DebounceEvent.DisconnectedIce);
                 this.clearDebounceEvent(DebounceEvent.FailedIce);
                 this.clearDebounceEvent(DebounceEvent.NegotiatingICE);
+                if (this.channel?.readyState === 'open') {
+                    this.nodeState = NodeState.Connected;
+                }
             }
         };
         this.peerConnection.onicegatheringstatechange = () => {
-            if (this.currentSessionId != newSessionId ||
+            if (this.currentSessionId != newSession.SessionId ||
                 !newSession.isAlive) {
-                console.warn('[rtc] ignoring icegatheringstatechange for abandoned session', newSessionId);
+                console.warn('[rtc] ignoring icegatheringstatechange for abandoned session', newSession.SessionId);
                 return;
             }
             if (this.peerConnection?.iceGatheringState === 'gathering') {
@@ -321,10 +325,10 @@ export class RtcConnector implements Connector<string> {
         };
         this.peerConnection.onicecandidate = (event) => {
             if (!event.candidate) return;
-            if (this.currentSessionId !== newSessionId ||
+            if (this.currentSessionId !== newSession.SessionId ||
                 !newSession.isAlive
             ) {
-                console.error('No current session id for ICE candidate');
+                console.error('No current session id for ICE candidate', newSession.SessionId, this.currentSessionId);
                 return;
             }
             if (!newSession.flags.gatheringStarted) {
@@ -338,48 +342,68 @@ export class RtcConnector implements Connector<string> {
                 neg_id: this.currentSessionId!,
             }, this.wsTransportHandler);
         };
+        this.sessions.set(newSession.SessionId, newSession);
         if (!newSession.dcState || newSession.dcState.isClosed) {
-            this.createChannel(this.peerConnection);
             this.addDebounceEvent(DebounceEvent.NegotiatingChannel);
+            this.startNewChannel();
         }
         // await this.negotiate(false);
     }
     startNewChannel() {
-        if (!this.peerConnection) {
-            console.error('No peer connection exists');
+        if (!this.peerConnection || !this.currentSessionId) {
+            console.error('No peer connection exists or current session set', 
+            this.currentSessionId);
             return;
         }
-        const newChannelId = this.channel?.id;
+        const currentSession = this.sessions.get(this.currentSessionId!);
+        if (!currentSession) {
+            console.error('No current session exists');
+            return;
+        }
         this.clearChannel();
-        const channel = this.peerConnection.createDataChannel(this.channelName);
-        this.channel = channel;
-        channel.onopen = () => {
-            // TODO check if the ice restart was not scheduled while the channel 
-            // was being negotiated on top of working ice connection. Though this
-            // should not be possible as the server uses only single channel which means 
-            // single underlying transport and the aggreate iceconnectionstate should 
-            // reflect exactly this transport's state, but leave the check to catch 
-            // anomalies.
-            if (this.peerConnection?.iceConnectionState !== 'connected' &&
-                this.peerConnection?.iceConnectionState !== 'completed'
-            ) {
-                console.warn('[rtc] data channel opened but ICE connection state is not connected or completed', this.peerConnection?.iceConnectionState);
+        const newChannelState = new DCLifeTime();
+        currentSession.dcState = newChannelState;
+        this.channel = this.peerConnection.createDataChannel(this.channelName);
+        this.channel.onopen = () => {
+            const currentSessionLocal = this.sessions.get(this.currentSessionId!);
+            if (!currentSessionLocal || 
+                currentSessionLocal.dcState?.id !== newChannelState.id) {
+                console.error('No current session exists');
                 return;
             }
-            this.nodeState = NodeState.Connected;
+            this.clearDebounceEvent(DebounceEvent.NegotiatingChannel);
+            this.clearDebounceEvent(DebounceEvent.ClosedChannel);
+            // Because the channel will be a single track in the ICE connection,
+            // it will be impossible to have an open channel 
+            // with iceConnectionState != completed or connected
+            if (this.peerConnection?.iceConnectionState == 'connected' ||
+                this.peerConnection?.iceConnectionState == 'completed'
+            ) {
+                this.nodeState = NodeState.Connected;
+            }
         }
-        channel.onmessage = (event) => {
+        this.channel.onmessage = (event) => {
+            if (!this.currentSessionId || 
+                this.sessions.get(this.currentSessionId)?.dcState?.id 
+                !== newChannelState.id ) {
+                console.warn('Message from a stale data channel', event.data);
+            }
             this.messageHandler(event.data);
         };
-        channel.onerror = (event) => {
+        this.channel.onerror = (event) => {
             console.error('[rtc] data channel error', event);
         };
-        channel.onclose = () => {
-            // if ice connection is disconnected, then no need to schedule faster datachannel
-            // negotiation, because it will not happen until the connection is restarted.
-            // if the reconnection has not started yet, mark the need for a new datachannel
-            // if the reconnection is ongoing, still mark the need for a new datachannel, so
-            // that it is established when the connection was established.
+        this.channel.onclose = () => {
+            // since datachannels are unrelated to ICE connection session,
+            // isAlive is not checked
+            if (!this.currentSessionId || 
+                this.sessions.get(this.currentSessionId)?.dcState?.id 
+                !== newChannelState.id ) {
+                console.error('No current session exists');
+                return;
+            }
+            this.nodeState = NodeState.Connecting;
+            this.addDebounceEvent(DebounceEvent.ClosedChannel);
         };
     }
     async handleSignalMsg(msg: SignalMsg) {
@@ -585,21 +609,6 @@ export class RtcConnector implements Connector<string> {
             } else if (peer.connectionState === 'connected' && !this.restartWithNewChannel) {
                 this.cancelRestartTimer();
             }
-        };
-    }
-
-    private createChannel(peer: RTCPeerConnection): void {
-        this.clearChannel();
-        const channelId = ++this.nextChannelId;
-        const channel = peer.createDataChannel(this.channelName);
-        this.channel = channel;
-        channel.onopen = () => console.debug('[rtc] data channel open');
-        channel.onmessage = (event) => console.debug('[rtc] data channel message', event.data);
-        channel.onerror = (event) => console.error('[rtc] data channel error', event);
-        channel.onclose = () => {
-            if (peer !== this.peerConnection || channelId !== this.nextChannelId) return;
-            this.channel = undefined;
-            this.scheduleRestart(true);
         };
     }
 
