@@ -68,6 +68,8 @@ enum DebounceEvent {
     DisconnectedIce,
     FailedIce,
     ClosedChannel,
+    NegotiatingChannel,
+    NegotiatingICE
 }
 /**
  * makea test to see how signals are sent...
@@ -165,7 +167,7 @@ export class RtcConnector implements Connector<string> {
         this.debounceStartTime = now;
         this.debounceTimer = setTimeout(() => this.onDebounceTimeout(), delay);
     }
-    debounceEvent(event: DebounceEvent) {
+    addDebounceEvent(event: DebounceEvent) {
         if (this.debounceEvents.has(event)) {
             // Ignore duplicates
             return;
@@ -197,15 +199,28 @@ export class RtcConnector implements Connector<string> {
                 // But if ICE has already failed in some form, then when restart
                 // happens OR when the connection is restored, new channel will
                 // need to be recreated, part of restart or not.
+                if (this.debounceEvents.has(DebounceEvent.FailedIce) || 
+                    this.debounceEvents.has(DebounceEvent.DisconnectedIce)) {
+                    return;
+                }
                 const CLOSED_CHANNEL_INTERVAL = 1000;
                 this.startDebounceIfFaster(CLOSED_CHANNEL_INTERVAL);
                 break;
         }
     }
+    private clearDebounceEvent(event: DebounceEvent) {
+        this.debounceEvents.delete(event);
+    }
     private onDebounceTimeout() {
-        // It is possible, that debounce event happened during the decounce timeout routine.
+        // It is possible, that debounce event happened during the debounce timeout routine.
         // It might happen if ICE connection breaks during channel negotiation.
+        //      In that case channel negotiation does not need to finish. 
+        //      If it finishes before ice restores (which should be impossible) - fine.
+        //      If it does not finish - create new SessionLifeTime and start anew, 
+        //          with new channel or not.
         // It might happen if the channel gets closed during ICE restart negotiation.
+        //    In that case, the ICE restart needs to finish first, and then start
+        //    new channel negotiation.
 
     }
     async startPeerConnection(): Promise<void> {
