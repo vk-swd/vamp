@@ -37,7 +37,7 @@ class SessionLifeTimeFlags {
 class SessionLifeTime {
     SessionId = crypto.randomUUID();
     flags: SessionLifeTimeFlags = new SessionLifeTimeFlags();
-    dcState: DCLifeTime = new DCLifeTime();
+    dcState: DCLifeTime | undefined = undefined;
     pendingRequests: [SignalMsg, (() => void) | undefined][] = [];
     debounceState: DebounceState = new DebounceState();
     deliveryState: SendRetryHandle | undefined = undefined;
@@ -127,6 +127,10 @@ export class RtcConnector implements Connector<string> {
     private debounceEvents: Set<DebounceEvent> = new Set();
     private debounceStartTime: number | undefined = undefined;
     private debounceTimer: ReturnType<typeof setTimeout> | undefined = undefined;
+    private readonly DISCONNECTED_RESTART_INTERVAL = 5000;
+    private readonly FAILED_RESTART_INTERVAL = 1000;
+    private readonly CLOSED_CHANNEL_INTERVAL = 1000;
+    private readonly NEGOTIATING_INTERVAL = Math.max(10000, this.DISCONNECTED_RESTART_INTERVAL, this.FAILED_RESTART_INTERVAL); // must be longest timeout among all others
     // =========================
 
     constructor(
@@ -168,6 +172,15 @@ export class RtcConnector implements Connector<string> {
         this.debounceTimer = setTimeout(() => this.onDebounceTimeout(), delay);
     }
     addDebounceEvent(event: DebounceEvent) {
+        /**
+         * Old debounce events:
+         * 1. Old datachannel "onopen" event was scheduled before new channel replaced
+         * the old one and the negotiation started = premature and fake negotiation success.
+         * Solution - use current channel id to reconcile channel events. 
+         * 2. Similar conflict with peer connection (though it is very unlikely to happen) 
+         * - similar solution.
+         * Both ids should be checked outside.
+         */
         if (this.debounceEvents.has(event)) {
             // Ignore duplicates
             return;
@@ -184,14 +197,15 @@ export class RtcConnector implements Connector<string> {
                 if (this.debounceEvents.has(DebounceEvent.ClosedChannel)) {
                     return;
                 }
-                const DISCONNECTED_RESTART_INTERVAL = 5000;
-                this.startDebounceIfFaster(DISCONNECTED_RESTART_INTERVAL);
+                // If the channel is being created after DebounceEvent.ClosedChannel,
+                // then unless ICE recovers the channel creation will fail.
+                // Just update the timer for a faster restart.
+                this.startDebounceIfFaster(this.DISCONNECTED_RESTART_INTERVAL);
                 break;
             case DebounceEvent.FailedIce:
                 // There is no recovery, so the disconnected event will be ignored,
                 // and timer should restart to timeout sooner.
-                const FAILED_RESTART_INTERVAL = 1000;
-                this.startDebounceIfFaster(FAILED_RESTART_INTERVAL);
+                this.startDebounceIfFaster(this.FAILED_RESTART_INTERVAL);
                 break;
             case DebounceEvent.ClosedChannel:
                 // If ICE didnt fail, it means remote peer closed channel,
@@ -200,11 +214,20 @@ export class RtcConnector implements Connector<string> {
                 // happens OR when the connection is restored, new channel will
                 // need to be recreated, part of restart or not.
                 if (this.debounceEvents.has(DebounceEvent.FailedIce) || 
-                    this.debounceEvents.has(DebounceEvent.DisconnectedIce)) {
+                    this.debounceEvents.has(DebounceEvent.DisconnectedIce) ||
+                    // When ICE is renegotiated, it should finish first.
+                    // It means if ICE is established, then we will be left
+                    // with a channel negotiation and it will be rescheduled
+                    // when ICE set up finishes.
+                    this.debounceEvents.has(DebounceEvent.NegotiatingICE)) {
                     return;
                 }
-                const CLOSED_CHANNEL_INTERVAL = 1000;
-                this.startDebounceIfFaster(CLOSED_CHANNEL_INTERVAL);
+                this.startDebounceIfFaster(this.CLOSED_CHANNEL_INTERVAL);
+                break;
+            case DebounceEvent.NegotiatingChannel:
+            case DebounceEvent.NegotiatingICE:
+                // supposed to be called when no other events are pending
+                this.startDebounce(this.NEGOTIATING_INTERVAL, Date.now());
                 break;
         }
     }
@@ -223,6 +246,20 @@ export class RtcConnector implements Connector<string> {
         //    new channel negotiation.
 
     }
+    startNewSession() {
+        if (!this.peerConnection) {
+            console.warn('Peer connection does not exist');
+            return;
+        }
+        const newSession = new SessionLifeTime();
+        if (this.currentSessionId) {
+            const currentSession = this.sessions.get(this.currentSessionId);
+            if (currentSession) {
+                newSession .dcState = currentSession.dcState;
+                currentSession.abandoned = true;
+            }
+        }
+    }
     async startPeerConnection(): Promise<void> {
         if (this.peerConnection) {
             console.warn('Peer connection already exists');
@@ -232,18 +269,17 @@ export class RtcConnector implements Connector<string> {
 
         this.peerConnection.oniceconnectionstatechange = (event) => {
             if (this.peerConnection?.iceConnectionState === 'disconnected') {
-                // TODO // start debounce timer and wait for reconnect.   
+                this.addDebounceEvent(DebounceEvent.DisconnectedIce);
             }
             if (this.peerConnection?.iceConnectionState === 'failed') {
-                // connection will not recover, skip an interval and restart.
-                // TODO this.scheduleRestart(false);
+                this.addDebounceEvent(DebounceEvent.FailedIce);
             }
             // connected of completed represent a working connection
             if (this.peerConnection?.iceConnectionState === 'connected' ||
                 this.peerConnection?.iceConnectionState === 'completed') {
-                // cancel any pending restart timer
-                // TODO this.cancelRestartTimer();
-                // check that datachannel was closed and needs to be recreated
+                this.clearDebounceEvent(DebounceEvent.DisconnectedIce);
+                this.clearDebounceEvent(DebounceEvent.FailedIce);
+                this.clearDebounceEvent(DebounceEvent.NegotiatingICE);
             }
         };
         this.peerConnection.onicegatheringstatechange = () => {
