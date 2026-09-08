@@ -21,6 +21,7 @@ function parseMessage<T>(frame: string): T {
  */
 
 class SessionLifeTimeFlags {
+    creatingOffer = false;
     applyingLocalDescription = false; //after this new candidates will berelated to this session
     // track candidates using the gathering state change
     gatheringStarted = false;
@@ -33,6 +34,10 @@ class SessionLifeTimeFlags {
     // addingCandidate = false; // this is not montored since it does not have any processing after it...yet
     awaitingReconnect = false;
     waitingForRestart = false;
+
+    // Needed during negotiation steps to stop previous flow.
+    negotiationId = crypto.randomUUID(); 
+    negotiationDone = false;
 }
 class SessionLifeTime {
     SessionId = crypto.randomUUID();
@@ -365,6 +370,7 @@ export class RtcConnector implements Connector<string> {
         this.clearChannel();
         const newChannelState = new DCLifeTime();
         currentSession.dcState = newChannelState;
+        const currentNegotiationId = currentSession.flags.negotiationId;
         this.channel = this.peerConnection.createDataChannel(this.channelName);
         this.channel.onopen = () => {
             const currentSessionLocal = this.sessions.get(this.currentSessionId!);
@@ -400,7 +406,7 @@ export class RtcConnector implements Connector<string> {
             // isAlive is not checked
             if (!this.currentSessionId || 
                 this.sessions.get(this.currentSessionId)?.dcState?.id 
-                !== newChannelState.id ) {
+                !== newChannelState.id) {
                 console.error('No current session exists');
                 return;
             }
@@ -411,37 +417,47 @@ export class RtcConnector implements Connector<string> {
 
     private async negotiate(iceRestart: boolean, session: SessionLifeTime): Promise<void> {
         const peer = this.peerConnection;
+        const negotiationId = session.flags.negotiationId;
         if (!peer || !session.isAlive) {
             return;
         }
-        session.flags.applyingLocalDescription = true;
+        session.flags.creatingOffer = true;
         let offer;
         try {
             offer = await peer.createOffer({ iceRestart });
         } catch (e) {
-            console.error('Failed to create offer for ', session.SessionId, e);
+            console.error('Failed to restart ICE for ', session.SessionId, e);
             return;
         }
-        if (!session.isAlive) {
+        if (!session.isAlive || negotiationId !== session.flags.negotiationId) {
             return;
         }
+        session.flags.creatingOffer = false;
+        session.flags.applyingLocalDescription = true;
         try {
             await peer.setLocalDescription(offer);
         } catch (e) {
             console.error('Failed to set local description for ', session.SessionId, e);
             return;
         }
+        if (!session.isAlive || negotiationId !== session.flags.negotiationId) {
+            return;
+        }
         session.flags.applyingLocalDescription = false;
-        if (!session.isAlive) return;
         session.flags.sendingOffer = true;
         session.flags.awaitingAnswer = true;
         try {
-            await this.sendSignal({ type: 'offer', sdp: offer.sdp ?? '', neg_id: `${session.SessionId}` });
+            await this.sendSignal({ type: 'offer', sdp: peer.localDescription?.sdp ?? '', neg_id: `${session.SessionId}` });
         } catch (e) {
             console.error('Failed to send offer signal for ', session.SessionId, e);
         }
+        if (!session.isAlive || negotiationId !== session.flags.negotiationId) {
+            return;
+        }
         session.flags.sendingOffer = false;
     }
+
+    
     async handleSignalMsg(msg: SignalMsg) {
         if (!this.peerConnection) {
             console.error('Received signal message but no peer connection exists');
