@@ -240,6 +240,20 @@ export class RtcConnector implements Connector<string> {
         this.debounceEvents.delete(event);
     }
     private onDebounceTimeout() {
+        // Debounce happens to restart ice (current session) or restart channel.
+        // Also session or channel need to be failing.
+        // Session means a signalling state, not a peer connection. 
+        // That means current connection may recover at some point.
+        const events = this.debounceEvents;
+        this.debounceEvents = new Set();
+        if (!this.currentSessionId) {
+            // It is unclear how that could happen, but debounce handler
+            // cant exit without scheduling a new assignement for 
+            // a current session or a datachannel.
+            console.error('No current session id for debounce timeout');
+            return;
+        }
+
         // It is possible, that debounce event happened during the debounce timeout routine.
         // It might happen if ICE connection breaks during channel negotiation.
         //      In that case channel negotiation does not need to finish. 
@@ -457,7 +471,7 @@ export class RtcConnector implements Connector<string> {
         session.flags.sendingOffer = false;
     }
 
-    
+
     async handleSignalMsg(msg: SignalMsg) {
         if (!this.peerConnection) {
             console.error('Received signal message but no peer connection exists');
