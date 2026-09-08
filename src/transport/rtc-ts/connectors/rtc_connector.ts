@@ -254,7 +254,9 @@ export class RtcConnector implements Connector<string> {
         this.startNewSession();
     }
     startNewSession() {
+        let restart = true;
         if (!this.peerConnection) {
+            restart = false;
             this.peerConnection = new RTCPeerConnection(this.config);
         }
         const newSession = new SessionLifeTime();
@@ -263,7 +265,7 @@ export class RtcConnector implements Connector<string> {
             const currentSession = this.sessions.get(this.currentSessionId);
             if (currentSession) {
                 newSession.dcState = currentSession.dcState;
-                currentSession.isAlive = true;
+                currentSession.isAlive = false;
             }
         }
         this.sessions.set(newSession.SessionId, newSession);
@@ -347,7 +349,7 @@ export class RtcConnector implements Connector<string> {
             this.addDebounceEvent(DebounceEvent.NegotiatingChannel);
             this.startNewChannel();
         }
-        // await this.negotiate(false);
+        return this.negotiate(restart, newSession);
     }
     startNewChannel() {
         if (!this.peerConnection || !this.currentSessionId) {
@@ -405,6 +407,40 @@ export class RtcConnector implements Connector<string> {
             this.nodeState = NodeState.Connecting;
             this.addDebounceEvent(DebounceEvent.ClosedChannel);
         };
+    }
+
+    private async negotiate(iceRestart: boolean, session: SessionLifeTime): Promise<void> {
+        const peer = this.peerConnection;
+        if (!peer || !session.isAlive) {
+            return;
+        }
+        session.flags.applyingLocalDescription = true;
+        let offer;
+        try {
+            offer = await peer.createOffer({ iceRestart });
+        } catch (e) {
+            console.error('Failed to create offer for ', session.SessionId, e);
+            return;
+        }
+        if (!session.isAlive) {
+            return;
+        }
+        try {
+            await peer.setLocalDescription(offer);
+        } catch (e) {
+            console.error('Failed to set local description for ', session.SessionId, e);
+            return;
+        }
+        session.flags.applyingLocalDescription = false;
+        if (!session.isAlive) return;
+        session.flags.sendingOffer = true;
+        session.flags.awaitingAnswer = true;
+        try {
+            await this.sendSignal({ type: 'offer', sdp: offer.sdp ?? '', neg_id: `${session.SessionId}` });
+        } catch (e) {
+            console.error('Failed to send offer signal for ', session.SessionId, e);
+        }
+        session.flags.sendingOffer = false;
     }
     async handleSignalMsg(msg: SignalMsg) {
         if (!this.peerConnection) {
@@ -610,19 +646,6 @@ export class RtcConnector implements Connector<string> {
                 this.cancelRestartTimer();
             }
         };
-    }
-
-    private async negotiate(iceRestart: boolean): Promise<void> {
-        const peer = this.peerConnection;
-        if (!peer || this.closed) return;
-        const negotiationId = ++this.nextNegotiationId;
-        this.remoteDescriptionNegotiation = undefined;
-        this.pendingRemoteCandidates = [];
-        const offer = await peer.createOffer({ iceRestart });
-        if (peer !== this.peerConnection || negotiationId !== this.nextNegotiationId) return;
-        await peer.setLocalDescription(offer);
-        if (peer !== this.peerConnection || negotiationId !== this.nextNegotiationId) return;
-        await this.sendSignal({ type: 'offer', sdp: offer.sdp ?? '', neg_id: `${negotiationId}` });
     }
 
     private async sendSignal(message: SignalMsg): Promise<void> {
