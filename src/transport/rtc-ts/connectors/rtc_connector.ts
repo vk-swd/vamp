@@ -120,7 +120,13 @@ export class RtcConnector implements Connector<string> {
     private readonly wsTransportHandler: TransportHandler<SignalMsg>;
 
     private nodeState: NodeState = NodeState.Connecting;
+
+    // Debouncer ===============
     private debounceEvents: Set<DebounceEvent> = new Set();
+    private debounceStartTime: number | undefined = undefined;
+    private debounceTimer: ReturnType<typeof setTimeout> | undefined = undefined;
+    // =========================
+
     constructor(
         tag: string,
         private channelName: string,
@@ -148,23 +154,59 @@ export class RtcConnector implements Connector<string> {
             });
     }
 
+    startDebounceIfFaster(delay: number) {
+        const now = Date.now();
+        if (!this.debounceTimer || (this.debounceStartTime && (now - this.debounceStartTime) > delay)) {
+            this.startDebounce(delay, now);
+        }
+    }
+    startDebounce(delay: number, now: number) {
+        clearTimeout(this.debounceTimer);
+        this.debounceStartTime = now;
+        this.debounceTimer = setTimeout(() => this.onDebounceTimeout(), delay);
+    }
     debounceEvent(event: DebounceEvent) {
+        if (this.debounceEvents.has(event)) {
+            // Ignore duplicates
+            return;
+        }
+        this.debounceEvents.add(event);
         switch (event) {
             case DebounceEvent.DisconnectedIce:
-                if (this.debounceEvents.has(DebounceEvent.DisconnectedIce)) {
-                    // Already handling disconnected ice
-                    break;
+                // if i wait for failed ice, then i dont need to reschedule anything
+                if (this.debounceEvents.has(DebounceEvent.FailedIce)) {
+                    return;
                 }
-                this.debounceEvents.add(DebounceEvent.DisconnectedIce);
+                // If the channel was closed, then ICE can restart too, 
+                // when timeout hits. But no need to reset the timer.
+                if (this.debounceEvents.has(DebounceEvent.ClosedChannel)) {
+                    return;
+                }
+                const DISCONNECTED_RESTART_INTERVAL = 5000;
+                this.startDebounceIfFaster(DISCONNECTED_RESTART_INTERVAL);
                 break;
             case DebounceEvent.FailedIce:
-                // TODO: handle failed ice
+                // There is no recovery, so the disconnected event will be ignored,
+                // and timer should restart to timeout sooner.
+                const FAILED_RESTART_INTERVAL = 1000;
+                this.startDebounceIfFaster(FAILED_RESTART_INTERVAL);
                 break;
             case DebounceEvent.ClosedChannel:
-                // TODO: handle closed channel
+                // If ICE didnt fail, it means remote peer closed channel,
+                // which he had no right to do and channel needs to be restored.
+                // But if ICE has already failed in some form, then when restart
+                // happens OR when the connection is restored, new channel will
+                // need to be recreated, part of restart or not.
+                const CLOSED_CHANNEL_INTERVAL = 1000;
+                this.startDebounceIfFaster(CLOSED_CHANNEL_INTERVAL);
                 break;
         }
-        // TODO: implement debounce logic based on the event type
+    }
+    private onDebounceTimeout() {
+        // It is possible, that debounce event happened during the decounce timeout routine.
+        // It might happen if ICE connection breaks during channel negotiation.
+        // It might happen if the channel gets closed during ICE restart negotiation.
+
     }
     async startPeerConnection(): Promise<void> {
         if (this.peerConnection) {
