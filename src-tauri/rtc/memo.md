@@ -148,7 +148,7 @@ The core principles are described in https://developer.mozilla.org/en-US/docs/We
    
 #### <a id="stale-answers-and-candidates">Stale answers and candidates</a>
 
-Even with measures against [message loss](#ack-messages) and [reordering](#unordered-messages) there are several unhappy paths (UPs) that might cause wrong answers or candidate messages be addressed to negotiations session:
+Even with measures against [message loss](#ack-messages) and [reordering](#unordered-messages) there is an unhappy path (UPs) that might cause wrong answers or candidate messages be addressed to negotiations session:
 
 ```mermaid
 sequenceDiagram
@@ -169,8 +169,9 @@ sequenceDiagram
     end
     end
 ```
-    
-<a id="negotiation_session_id">Negotiation session id</a> is introduced to make sure that session receives messages relevant to current sdp pair.
+And this path is addressed by the [negotiation session id](#negotiation_session_id) 
+#### <a id="negotiation_session_id">Negotiation session id</a> 
+This id is introduced to make sure that session receives messages relevant to current sdp pair.
 
 
 
