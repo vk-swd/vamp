@@ -155,7 +155,6 @@ RtcConnector
         sequenceDiagram
 
         participant p as Peer
-        participant dc as Data Channel
         participant d as debouce
         participant net
 

@@ -49,6 +49,7 @@ export class TransportHandler<TransportedType> {
                 private handler: (payload: TransportedType) => void) {
     }
     stop() {
+        this.abort_current_delivery();
         this.signal.abort();
     }
 
