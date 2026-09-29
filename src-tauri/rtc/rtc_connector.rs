@@ -170,10 +170,18 @@ impl RtcConnector {
             message_handler,
             |msg: Message| {
                 let Message::Text(raw) = msg else {
-                    return Err("expected text signalling message".into());
+                    let msg_type = match msg {
+                        Message::Binary(_) => "binary",
+                        Message::Close(_) => "close",
+                        Message::Ping(_) => "ping",
+                        Message::Pong(_) => "pong",
+                        Message::Frame(_) => "frame",
+                        _ => "unknown",
+                    };
+                    return Err(format!("expected text signalling message: {}", msg_type).into());
                 };
                 super::ws_node_handler::from_wire_msg(&raw)
-                    .ok_or_else(|| "invalid signalling message".into())
+                    .ok_or_else(|| format!("invalid signalling message: {}", raw).into())
             },
             move |msg: TransportMsg<SignalMsg>| {
                 to_wire_msg(session_id.clone(), Some(msg))

@@ -72,10 +72,10 @@ export class RtcConnector implements Connector<string> {
         private messageHandler: (frame: string) => void
     
     ) {
-        const wireRegistrationFrame: WireMsg<void> = { tag, message: null }
+        const wireRegistrationFrame: WireMsg<TransportMsg<SignalMsg>> = { tag, message: null };
         this.wsTransportHandler = new TransportHandler<SignalMsg>(
             (payload: TransportMsg<SignalMsg>) => {
-                const frame = JSON.stringify(payload);
+                const frame = JSON.stringify({...wireRegistrationFrame, message: payload });
                 this.wsConnector.send(frame);
             },
             async (payload: SignalMsg) => {
@@ -164,14 +164,10 @@ export class RtcConnector implements Connector<string> {
             this.deliveryState = undefined;
         }
 
-        // Going all in on a new negotiation might cause the old
-        // sdp pair to miss on some ice candidates that could help recover old connection
-        // or even establish it, but for simplicity this distinction of pending/current 
-        // SDPs is not handled for now.
-
         this.currentNegotiationId = crypto.randomUUID();
         const iceRestart = !hasConnection;
         if (!channelOpen) {
+            // mark to replace closed or uninitialised data channel
             this.startNewChannel();
         }
         let offer;
@@ -212,6 +208,9 @@ export class RtcConnector implements Connector<string> {
                 // TODO: see if it ever pops up and handle it then.
                 console.error('Error during rollback ', e);
             }
+            // If connection was fixed, this goes against (#recover_during_rollback)
+            // but it should not be a big deal, next debounce will just quit if
+            // everything truly recovered. Plus the data channel can still be broken.
             this.debounceFailed();
             return;
         }
@@ -224,7 +223,7 @@ export class RtcConnector implements Connector<string> {
         // after the timeout
         this.sendSignallingMessage(signal_msg, this.wsTransportHandler);
     }
-    async startPeerConnection(): Promise<void> {
+    startPeerConnection() {
         if (this.peerConnection) {
             console.warn('Peer connection already exists');
             return;
@@ -357,7 +356,9 @@ export class RtcConnector implements Connector<string> {
     getConnector(): Connector<string> {
         return this;
     }
-
+    isClosed(): boolean {
+        return this.state() === NodeState.Closed;
+    }
     close(): void {
         this.peerConnection?.close();
         this.channel?.close();

@@ -559,7 +559,7 @@ pub(crate) fn parse_incoming(message: &Message) -> MyRes<ParsedMessage> {
         _ => return Err(MyErr::from("unsupported websocket message")),
     };
 
-    let wire_message = serde_json::from_str::<WireMsg<serde_json::Value>>(&text).map_err(|e| MyErr::from(format!("invalid signalling message: {}", e)))?;
+    let wire_message = serde_json::from_str::<WireMsg<serde_json::Value>>(&text).map_err(|e| MyErr::from(format!("invalid signalling message: {}", text)))?;
     if wire_message.tag.is_empty() {
         return Err(MyErr::from("empty routing tag"));
     }

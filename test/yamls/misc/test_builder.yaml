@@ -1,0 +1,21 @@
+
+
+
+services:
+  test_builder:
+    image: node:24-slim
+    volumes:
+      - ${TEST_BUILDER_SRC}:/src
+      - ${REPO_ROOT}:/reference_files
+      - puppeteer_files:${SHARED_TEST_BROWSER_FOLDER}
+    environment:
+      - SHARED_TEST_BROWSER_FOLDER=${SHARED_TEST_BROWSER_FOLDER}
+    user: node
+    working_dir: /src
+    # stdin_open: true
+    # tty: true
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        npm install; npm run build

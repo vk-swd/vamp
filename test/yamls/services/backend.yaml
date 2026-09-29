@@ -13,7 +13,7 @@ services:
       - /bin/sh
       - -c
       - |
-        ip route add ${EDGE_SUBNET} via ${NAT_A_ADDR}
+        ip route add ${EDGE_SUBNET} via ${NAT_BACKEND_ADDR}
         useradd --system --shell /usr/sbin/nologin --no-create-home appuser
         chown -R appuser:appuser /rtc_client_test_dir
         exec gosu appuser sh -c "/rtc_client_test_dir/select_test > /logs/select_test.log 2>&1; tail -f /dev/null"
@@ -21,7 +21,7 @@ services:
       - COTURN_PORT=${COTURN_PORT}
       - COTURN_IP=${VPS_EDGE_IP}
       - VPS_EDGE_IP=${VPS_EDGE_IP}
-      - NAT_A_EDGE_IP=${NAT_A_EDGE_IP}
+      - NAT_BACKEND_EDGE_IP=${NAT_BACKEND_EDGE_IP}
       - SS_URL=ws://${VPS_EDGE_IP}:${SS_PORT}
       - STUN_CREDENTIALS=${STUN_CREDENTIALS}
       - RTC_SESSION_ID=${RTC_SESSION_ID}

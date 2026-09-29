@@ -28,7 +28,7 @@ RtcConnector
         co --x d: check iceconnectionstate<br>drop offer<br>exit debounce
         deactivate co
         ```
-        2. Cancel renegotiation and rollback pending local description if connection recovers during local SDP assignement
+        2. <a id="recover_during_rollback">Cancel renegotiation</a> and rollback pending local description if connection recovers during local SDP assignement
 
         ```mermaid
         sequenceDiagram

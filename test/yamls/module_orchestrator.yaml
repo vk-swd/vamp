@@ -1,0 +1,23 @@
+services:
+  sigturn:
+    depends_on:
+      vps_front:
+        condition: service_started
+
+  backend:
+    depends_on:
+      nat_backend:
+        condition: service_started
+      sigturn:
+        condition: service_started
+
+  browser:
+    depends_on:
+      nat_b1:
+        condition: service_started
+      nat_b2:
+        condition: service_started
+      backend:
+        condition: service_started
+      test_builder:
+        condition: service_completed_successfully

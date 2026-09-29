@@ -299,11 +299,11 @@ async fn notifyer_experimetn() {
 // - the relay candidate's address must be VPS_EDGE_IP, since that's the `external-ip`
 //   coturn is configured to advertise (see test/turn/turnserver.conf.template) and the
 //   address vps_front DNATs back to sigturn (see test/yamls/services/vps_front.yaml).
-// - the srflx candidate's address must be NAT_A_EDGE_IP, since that's the static address
+// - the srflx candidate's address must be NAT_BACKEND_EDGE_IP, since that's the static address
 //   nat_backend masquerades backend's outbound traffic to (see
 //   test/yamls/services/nat_backend.yaml).
 async fn test_ice_candidates_collection() {
-    let nat_a_edge_ip = std::env::var("NAT_A_EDGE_IP").expect("NAT_A_EDGE_IP env var not set (see test_net_env)");
+    let nat_backend_edge_ip = std::env::var("NAT_BACKEND_EDGE_IP").expect("NAT_BACKEND_EDGE_IP env var not set (see test_net_env)");
     let vps_edge_ip = std::env::var("VPS_EDGE_IP").expect("VPS_EDGE_IP env var not set (see test/yamls/services/backend.yaml)");
 
     let pc = new_default_peer_connection().await;
@@ -351,9 +351,9 @@ async fn test_ice_candidates_collection() {
     assert!(srflx_candidate.is_some(), "no server reflexive candidate collected");
     let (_, srflx_addr) = srflx_candidate.unwrap();
     assert_eq!(
-        srflx_addr, &nat_a_edge_ip,
-        "srflx candidate address {} does not match NAT_A_EDGE_IP {} (nat_backend's masquerade address)",
-        srflx_addr, nat_a_edge_ip
+        srflx_addr, &nat_backend_edge_ip,
+        "srflx candidate address {} does not match NAT_BACKEND_EDGE_IP {} (nat_backend's masquerade address)",
+        srflx_addr, nat_backend_edge_ip
     );
 
     let relay_candidate = candidates.iter().find(|(typ, _)| *typ == RTCIceCandidateType::Relay);

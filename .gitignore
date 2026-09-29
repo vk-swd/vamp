@@ -28,7 +28,7 @@ src-tauri/gen/
 .DS_Store
 Thumbs.db
 
-
+*sharedfolder
 *.lock
 *lock.json
 *.png

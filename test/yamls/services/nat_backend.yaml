@@ -7,14 +7,14 @@ services:
     extends:
       file: ./router_base.yaml
       service: router_base
-    container_name: ${NAT_A_NAME}
-    entrypoint: ["/bin/sh", "/configure_nat_node.sh", "${NAT_A_NIF}", "${NAT_A_EDGE_NIF}"]
+    container_name: ${NAT_BACKEND_NAME}
+    entrypoint: ["/bin/sh", "/configure_nat_node.sh", "${NAT_BACKEND_NIF}", "${NAT_BACKEND_EDGE_NIF}"]
     volumes:
       - ${REPO_ROOT}/configure_nat_node.sh:/configure_nat_node.sh
     networks:
       backend_net:
-        interface_name: ${NAT_A_NIF}
-        ipv4_address: ${NAT_A_ADDR}
+        interface_name: "${NAT_BACKEND_NIF}"
+        ipv4_address: ${NAT_BACKEND_ADDR}
       edge:
-        interface_name: ${NAT_A_EDGE_NIF}
-        ipv4_address: ${NAT_A_EDGE_IP}
+        interface_name: ${NAT_BACKEND_EDGE_NIF}
+        ipv4_address: ${NAT_BACKEND_EDGE_IP}

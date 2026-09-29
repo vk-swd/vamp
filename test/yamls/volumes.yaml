@@ -16,6 +16,12 @@ volumes:
       type: none
       o: bind
       device: ${REPO_ROOT}/test/browser
+  puppeteer_files:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${HOST_PPTR_FILES_FOLDER}
   log_folder:
     driver: local
     driver_opts:
