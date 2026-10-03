@@ -1,10 +1,10 @@
-import { SearchCriteria, TextIn, TagsIn, NumericBetween, NullCheck, TagsAll } from '../../db/tauriDb';
+import { SearchCriteria } from '@ts-src/db/tauriDb';
 // // ── mock @tauri-apps/api/core BEFORE any import that depends on it ────────────
 import {
   getTracks,
   TrackRow,
-} from '../../db/tauriDb';
-import { log } from '../../logger';
+} from '@ts-src/db/tauriDb';
+import { log } from '@ts-src/logger';
 
 import { useState, useEffect, useRef } from 'react';
 
@@ -53,7 +53,7 @@ export default function TestPage() {
       const expected = expectedResults(
         cursor, PAGE_SIZE, SEED_N, SEED_TAG_COUNT, SEED_SHIFTS, selectorForExpected,
       );
-      return getTracks(cursor, criteria ?? null, PAGE_SIZE).then(res => {
+      return getTracks(cursor.toString(), criteria ?? null, PAGE_SIZE).then(res => {
         if (!equal(res, expected)) {
           const error = `[${testName}] cursor=${cursor} FAILED! ${diffAt(res, expected)}`;
           log(error);
@@ -64,7 +64,7 @@ export default function TestPage() {
           setLogs(prev => prev.slice(0, -1).concat(`[${testName}] PASSED`));
           return;
         }
-        return runTestForPageAt(res[res.length - 1].id + 1);
+        return runTestForPageAt(Number(res[res.length - 1].id) + 1);
       });
     };
     return runTestForPageAt(1);
@@ -110,10 +110,10 @@ export default function TestPage() {
     return runPaginatedTest(`tags [${tagsToCheck.join(', ')}]`,
       [{
         column_name: 'tags',
-        criteria: [{ mode: 'tags_all', tag_ids: tagsToCheck } as TagsAll],
+        criteria: [{ mode: 'tags_all', tag_ids: tagsToCheck.map(String) }],
     }], (row: TrackRow, tags: string[], sources: string[]) => {
         const tagChecks = tagsToCheck.map(t => tags.includes(tagName(t)));
-        return tagChecks.every(Boolean) && checkTracks(row.id)
+        return tagChecks.every(Boolean) && checkTracks(Number(row.id))
       })
     .then(() => {
       const newSize = size - 1;
@@ -142,7 +142,7 @@ export default function TestPage() {
       .then(() => {
         criteria.current = [{
           column_name: 'tags',
-          criteria: [{ mode: 'tags_in', tag_ids: [1] } as TagsIn],
+          criteria: [{ mode: 'tags_in', tag_ids: ["1"] }],
         }];
         return runPaginatedTest(
           'tags_in:[1]',
@@ -155,7 +155,7 @@ export default function TestPage() {
       .then(() => {
         criteria.current = [{
           column_name: 'tags',
-          criteria: [{ mode: 'tags_in', tag_ids: [1, 2, 3] } as TagsIn],
+          criteria: [{ mode: 'tags_in', tag_ids: ["1", "2", "3"] }],
         }];
         return runPaginatedTest(
           'tags_in:[1,2,3]',
@@ -169,7 +169,7 @@ export default function TestPage() {
         const artists = ['A_2', 'A_3', 'A_4', 'A_5', 'A_6'];
         criteria.current = [{
           column_name: 'artist',
-          criteria: [{ mode: 'text_in', values: artists } as TextIn],
+          criteria: [{ mode: 'text_in', values: artists }],
         }];
         return runPaginatedTest(
           'artist_text_in',
@@ -182,7 +182,7 @@ export default function TestPage() {
       .then(() => {
         criteria.current = [{
           column_name: 'bitrate_kbps',
-          criteria: [{ mode: 'numeric_between', min: 155, max: 165 } as NumericBetween],
+          criteria: [{ mode: 'numeric_between', min: 155, max: 165 }],
         }];
         return runPaginatedTest(
           'bitrate_between_155_165',
@@ -195,7 +195,7 @@ export default function TestPage() {
       .then(() => {
         criteria.current = [{
           column_name: 'bitrate_kbps',
-          criteria: [{ mode: 'numeric_between', min: 200, max: 300 } as NumericBetween],
+          criteria: [{ mode: 'numeric_between', min: 200, max: 300 }],
         }];
         return runPaginatedTest(
           'bitrate_between_200_300_empty',
@@ -208,7 +208,7 @@ export default function TestPage() {
       .then(() => {
         criteria.current = [{
           column_name: 'tempo_bpm',
-          criteria: [{ mode: 'null_check', is_null: false } as NullCheck],
+          criteria: [{ mode: 'null_check', is_null: false }],
         }];
         return runPaginatedTest(
           'tempo_not_null',
@@ -223,14 +223,14 @@ export default function TestPage() {
       .then(() => {
         criteria.current = [{
           column_name: 'tags',
-          criteria: [{ mode: 'tags_in', tag_ids: [1] } as TagsIn],
+          criteria: [{ mode: 'tags_in', tag_ids: ["1"] }],
         }];
         const cursor2 = 1 + PAGE_SIZE; // 11
         const expected = expectedResults(
           cursor2, PAGE_SIZE, SEED_N, SEED_TAG_COUNT, SEED_SHIFTS,
           (_row, tags) => tags.includes(tagName(1)),
         );
-        return getTracks(cursor2, criteria.current, PAGE_SIZE).then(res => {
+        return getTracks(cursor2.toString(), criteria.current, PAGE_SIZE).then(res => {
           if (!equal(res, expected)) {
             const error = `[tags_in_page2] cursor=${cursor2} FAILED! ${diffAt(res, expected)}`;
             log(error);

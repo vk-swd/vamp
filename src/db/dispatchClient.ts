@@ -1,5 +1,8 @@
 import { callInvoke } from './tauriInvoke';
-import { WsResponse } from './generatedTypes';
+import { DataTransportMessage, RemoteRequest, RemoteResponse } from '../transport/generatedTypes';
+import { DataTransport } from '../transport/rtc-ts/data_transport';
+import { Command } from './generatedTypes';
+import { log } from '@ts-src/logger';
 // ─── Mode ─────────────────────────────────────────────────────────────────────
 // Set window.__TRANSPORT__ = 'ws' (e.g. in index.html) to route via WebSocket.
 // Undefined or any other value falls back to Tauri IPC invoke.
@@ -16,10 +19,50 @@ const WS_URL = 'ws://localhost:8090';
 type WsState = 'disconnected' | 'connecting' | 'connected' | 'failed';
 
 type PendingRequest = {
+  // TODO: Define result types.
   resolve: (value: unknown) => void;
   reject: (reason: unknown) => void;
 };
 
+interface Connection<TransportedMsg> {
+  send(data: TransportedMsg, signal?: AbortSignal): Promise<void>;
+  setMessageHandler(handler: (payload: TransportedMsg) => void): void;
+}
+
+class DispatchClient<ConnectionType extends Connection<DataTransportMessage<Command, TransportedMsg>>, TransportedMsg> {
+  nextId = 0;
+  connection: ConnectionType;
+  // TODO: clean up pending requests on timeout or some error condition.
+  // For now it is not as critical, as requests are serialised.
+  private pending = new Map<string, PendingRequest>();
+  constructor(connection: ConnectionType) {
+    this.connection = connection;
+    this.connection.setMessageHandler((payload: DataTransportMessage<Command, TransportedMsg>) => {
+      if (payload.type === 'response') {
+        const pending = this.pending.get(payload.id);
+        if (!pending) {
+          log(`Received response for unknown request ID ${JSON.stringify(payload)}`);
+          return;
+        }
+        this.pending.delete(payload.id);
+        if (payload.result.type === 'error') {
+          pending.reject(new Error(payload.result.message));
+        } else {
+          pending.resolve(payload.result.value);
+        }
+      }
+    });
+  }
+   /** Connect (if needed), send the message, and return a Promise that resolves
+   *  with the server's response value. Rejects on connection failure or server error. */
+  async send(cmd: Command): Promise<TransportedMsg> {
+    const id = String(this.nextId++);
+    return new Promise<TransportedMsg>((resolve, reject) => {
+      this.pending.set(id, { resolve: resolve as (v: unknown) => void, reject });
+      this.connection.send({ type: "request", id, cmd });
+    });
+  }
+}
 
 class WsDispatchClient {
   private ws: WebSocket | null = null;
@@ -53,10 +96,10 @@ class WsDispatchClient {
       };
 
       ws.onmessage = (event: MessageEvent) => {
-        const msg = JSON.parse(event.data as string) as WsResponse<any>;
+        const msg = JSON.parse(event.data as string) as RemoteResponse<any>;
         const pending = this.pending.get(msg.id);
         if (!pending) {
-          dispatch("LogFromUi", { message: `Received response for unknown request ID ${JSON.stringify(msg)}` });
+          log(`Received response for unknown request ID ${JSON.stringify(msg)}`);
           return;
         }
 
@@ -112,7 +155,7 @@ class WsDispatchClient {
 }
 
 const wsClient = new WsDispatchClient();
-
+// let rtcClient: DispatchClient<DataTransport<DataTransportMessage<any>>, any> | null = null;
 // ─── Dispatch ──────────────────────────────────────────────────────────────────
 
 /**
@@ -120,9 +163,14 @@ const wsClient = new WsDispatchClient();
  *
  * Routes via WebSocket when `window.__TRANSPORT__ === 'ws'`, otherwise via Tauri IPC invoke.
  */
-export function dispatch<T>(kind: string, payload: unknown = null): Promise<T> {
+export function dispatch<T>(cmd: Command): Promise<T> {
   if (window.__TRANSPORT__ === 'ws') {
-    return wsClient.send<T>(kind, payload);
+    // if(!rtcClient) {
+
+    //   rtcClient = new DispatchClient<DataTransport<DataTransportMessage<any>>, any>(
+    //     // new DataTransport());
+    // }
+    return wsClient.send<T>(cmd.kind, cmd.payload);
   }
-  return callInvoke<T>('app_dispatch', { cmd: { kind, payload } });
+  return callInvoke<T>('app_dispatch', cmd);
 }

@@ -34,11 +34,11 @@ impl crate::transport::ws_server::WsMessageHandler for WsMsgHandler {
             }
         };
 
-        let request = match serde_json::from_str::<crate::defines::WsRequest>(&text) {
+        let request = match serde_json::from_str::<crate::defines::RemoteRequest<crate::commands::dispatch::Command>>(&text) {
             Ok(request) => request,
             Err(error) => {
                 println!("[WS] failed to parse request: {}: {}", error, text);
-                let response = crate::defines::WsResponse::<serde_json::Value>::error(String::new(), format!("{}: {}", error, text));
+                let response = crate::defines::RemoteResponse::<serde_json::Value>::error(String::new(), format!("{}: {}", error, text));
                 let response_text = serde_json::to_string(&response)
                     .unwrap_or_else(|_| "{\"error\":\"serialization_error\"}".to_string());
                 return Message::Text(response_text.into());
@@ -47,8 +47,8 @@ impl crate::transport::ws_server::WsMessageHandler for WsMsgHandler {
         let id = request.id;
         let cmd = request.cmd;
         let response = match crate::commands::dispatch::dispatch_with_core(&self.app_core, cmd).await {
-            Ok(value) => crate::defines::WsResponse::ok(id, value),
-            Err(error) => crate::defines::WsResponse::error(id, error),
+            Ok(value) => crate::defines::RemoteResponse::ok(id, value),
+            Err(error) => crate::defines::RemoteResponse::error(id, error),
         };
         let response_text = serde_json::to_string(&response)
             .unwrap_or_else(|_| "{\"error\":\"serialization_error\"}".to_string());

@@ -1,5 +1,7 @@
 use std::path::PathBuf;
 
+use tauri::{Url, WebviewUrl};
+
 pub struct DbConfig {
     pub db_path: PathBuf,
     pub db_filename: String,
@@ -40,13 +42,4 @@ pub fn create_db_config() -> DbConfig {
             is_test: false,
         },
     }
-}
-
-pub fn create_window_config(port: u16) -> (usize, String) {
-    let window_idx = if std::env::var("TEST_DIR").is_ok() { 1 } else { 0 };
-    let mut url = format!("http://localhost:{}", port);
-    if window_idx == 1 {
-        url += "/src/test/dbTest/mockPage.html";
-    }
-    (window_idx, url)
 }

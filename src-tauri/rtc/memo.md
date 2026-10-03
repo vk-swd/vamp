@@ -39,7 +39,9 @@ flowchart LR
     rnh---|"Exchange commands"| op
     ss---|"Exchange SDPs"| op
     conws~~~ss
-    rc---|"Exchange SDPs"| ss
+    wnh---|"Exchange SDPs"| ss
+    classDef websocket fill:#dbeafe,stroke:#2563eb,color:#1e3a8a;
+    class wnh,wn,conws,sendws,recvws websocket;
 ```
 ## <a id="node">Node</a>
 This is an abstract/generic-ish asynchronious connection handler. It was decided to use once it became clear that the same processes were being used to construct a connection to some service wich would:
@@ -180,6 +182,13 @@ This id is introduced to make sure that session receives messages relevant to cu
 ## <a id="transporthandler">TransportHandler</a>
 * Transport handler is a generic wrapper around a [Node](#node) and it provides message [ordering](#unordered_signalling_messages_payload_seq_num) and [acknowledgements](#ack-messages). 
 * It was decided to be made generic to be used during signalling session and during datachannel commungcations, because:
+    * Despite datachannel working on top of reliable SCTP protocol with its own retransmits and ordering, the following problems remain:
+        1. RTCDataChannel: send() method does not provide means to wait for a message to be delivered, such as promised result or a callback.
+        2. There is no clean and reliable way in RTCDataChannel to confirm that the message even left the outgoing buffer. Polling buffersize would add complexity which would make the code less readeable and wouldnt guarantee that the message was actually delivered. bufferedAmount parameter only inditates quued messages that have not yet been passed to the system and docs don't explicitly guarantee that delivery results are communicated back in any way.
+        3. In webrtc-rs implementation you could poll Association's stats on number of bytes sent, but it is not a documented way to determine that message was delivered either.
+    >Side Note:
+    >Though ordering is not necessary for datachannel messages, it will be a kind of a package deal here since it does not produce much overhead, given the context.
+
     * Signalling server [does not provide message forwarding feedback](../signalling/memo.md#sec_no_forward_ack) and its design allows an unreliable delivery to another peer:
     ```mermaid
         sequenceDiagram
@@ -197,13 +206,8 @@ This id is introduced to make sure that session receives messages relevant to cu
             end
             ss -> p2: connection restored
     ```
-    * Despite datachannel working on top of reliable SCTP protocol with its own retransmits and ordering, the following problems remain:
-        1. RTCDataChannel: send() method does not provide means to wait for a message to be delivered, such as promised result or a callback.
-        2. There is no clean and reliable way in RTCDataChannel to confirm that the message even left the outgoing buffer. Polling buffersize would add complexity which would make the code less readeable and wouldnt guarantee that the message was actually delivered. bufferedAmount parameter only inditates quued messages that have not yet been passed to the system and docs don't explicitly guarantee that delivery results are communicated back in any way.
-        3. In webrtc-rs implementation you could poll Association's stats on number of bytes sent, but it is not a documented way to determine that message was delivered either.
-    >Side Note:
-    >Though ordering is not necessary for datachannel messages, it will be a kind of a package deal here since it does not produce much overhead, given the context.
-
+    
+    
 #### <a id="ack-messages">Ack messages</a>
 Ack messages were introduced for faster failure detection.
 

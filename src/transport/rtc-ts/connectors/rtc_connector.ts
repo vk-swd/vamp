@@ -70,7 +70,6 @@ export class RtcConnector implements Connector<string> {
         private ssUrl: string,
         private config: { iceServers: RTCIceServer[] },
         private messageHandler: (frame: string) => void
-    
     ) {
         const wireRegistrationFrame: WireMsg<TransportMsg<SignalMsg>> = { tag, message: null };
         this.wsTransportHandler = new TransportHandler<SignalMsg>(

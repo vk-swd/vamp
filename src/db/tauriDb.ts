@@ -2,7 +2,7 @@ import { dispatch } from './dispatchClient';
 import type {
   BigintId,
   CriteriaName, SearchCriteriaFiltered, TagAssignment,
-  NewTrack, TrackUpdate, SearchCriteria, SearchParam,
+  NewTrack, TrackUpdate, SearchCriteria, SearchParam
 } from './generatedTypes';
 export type {
   BigintId,
@@ -48,102 +48,102 @@ export type TrackWithSources = TrackRow & { sources: TrackSource[] };
 // All operations are routed through dispatchClient (invoke or WebSocket mode).
 // Tracks
 export const addTrack = (track: NewTrack): Promise<BigintId> =>
-  dispatch('AddTrack', track);
+  dispatch({ kind: 'AddTrack', payload: track });
 
 export const resetDatabase = (): Promise<void> =>
-  dispatch('ResetDatabase');
+  dispatch({ kind: 'ResetDatabase', payload: null });
 
 export const addTracks = (tracks: NewTrack[]): Promise<BigintId[]> =>
-  dispatch('AddTracks', tracks);
+  dispatch({ kind: 'AddTracks', payload: tracks });
 
 export const updateTrack = (id: BigintId, update: TrackUpdate): Promise<void> =>
-  dispatch('UpdateTrack', { id, update });
+  dispatch({ kind: 'UpdateTrack', payload: { id, update } });
 
 export const getTracks = (
   cursor: BigintId | null,
   criteria: SearchCriteria[] | null,
   limit: number,
 ): Promise<TrackRow[]> =>
-  dispatch('GetTracks', { cursor, criteria, limit });
+  dispatch({ kind: 'GetTracks', payload: { cursor, criteria, limit } });
 
 export const getTracksWithSources = (
   cursor: BigintId | null,
   criteria: SearchCriteria[] | null,
   limit: number,
 ): Promise<TrackWithSources[]> =>
-  dispatch('GetTracksWithSources', { cursor, criteria, limit });
+  dispatch({ kind: 'GetTracksWithSources', payload: { cursor, criteria, limit } });
 
 export const getTrack = (id: BigintId): Promise<TrackRow> =>
-  dispatch('GetTrack', { id });
+  dispatch({ kind: 'GetTrack', payload: { id } });
 
 export const getTracksFiltered = (
   cursor: BigintId | null,
   criteria: SearchCriteriaFiltered[] | null,
   limit: number,
 ): Promise<TrackRow[]> =>
-  dispatch('GetTracksFiltered', { cursor, criteria, limit });
+  dispatch({ kind: 'GetTracksFiltered', payload: { cursor, criteria, limit } });
 
 export const deleteTrack = (id: BigintId): Promise<void> =>
-  dispatch('DeleteTrack', { id });
+  dispatch({ kind: 'DeleteTrack', payload: { id } });
 
 // Listen history
 export const addListen = (trackId: BigintId, from: string, to: string): Promise<BigintId> =>
-  dispatch('AddListen', { track_id: trackId, from, to });
+  dispatch({ kind: 'AddListen', payload: { track_id: trackId, from, to } });
 
 export const getListensForTrack = (trackId: BigintId): Promise<ListenInfo[]> =>
-  dispatch('GetListensForTrack', { track_id: trackId });
+  dispatch({ kind: 'GetListensForTrack', payload: { track_id: trackId } });
 
 export const addListenedSeconds = (trackId: BigintId, seconds: number): Promise<void> =>
-  dispatch('AddListenedSeconds', { track_id: trackId, seconds });
+  dispatch({ kind: 'AddListenedSeconds', payload: { track_id: trackId, seconds } });
 
 // Tags
 export const addTag = (name: string): Promise<BigintId> =>
-  dispatch('AddTag', { name });
+  dispatch({ kind: 'AddTag', payload: { name } });
 
 export const editTag = (id: BigintId, name: string): Promise<void> =>
-  dispatch('EditTag', { id, name });
+  dispatch({ kind: 'EditTag', payload: { id, name } });
 
 export const deleteTag = (id: BigintId): Promise<void> =>
-  dispatch('DeleteTag', { id });
+  dispatch({ kind: 'DeleteTag', payload: { id } });
 
 export const getAllTags = (): Promise<Tag[]> =>
-  dispatch('GetAllTags');
+  dispatch({ kind: 'GetAllTags', payload: null });
 
 export const getTagsByPattern = (pattern: string): Promise<Tag[]> =>
-  dispatch('GetTags', { pattern });
+  dispatch({ kind: 'GetTags', payload: { pattern } });
 
 export const assignTag = (trackId: BigintId, tagId: BigintId): Promise<void> =>
-  dispatch('AssignTag', { track_id: trackId, tag_id: tagId });
+  dispatch({ kind: 'AssignTag', payload: { track_id: trackId, tag_id: tagId } });
 
 export const assignTags = async (assignments: TagAssignment[]): Promise<void> => 
-  dispatch('AssignTags', assignments);
+  dispatch({ kind: 'AssignTags', payload: assignments });
 
 export const removeTagFromTrack = (trackId: BigintId, tagId: BigintId): Promise<void> =>
-  dispatch('RemoveTag', { track_id: trackId, tag_id: tagId });
+  dispatch({ kind: 'RemoveTag', payload: { track_id: trackId, tag_id: tagId } });
 
 export const getTagsForTrack = (trackId: BigintId): Promise<Tag[]> =>
-  dispatch('GetTagsForTrack', { track_id: trackId });
+  dispatch({ kind: 'GetTagsForTrack', payload: { track_id: trackId } });
 
 // Track metadata
 export const addMeta = (trackId: BigintId, key: string, value: string): Promise<BigintId> =>
-  dispatch('AddMeta', { track_id: trackId, key, value });
+  dispatch({ kind: 'AddMeta', payload: { track_id: trackId, key, value } });
 
 export const updateMeta = (id: BigintId, value: string): Promise<void> =>
-  dispatch('UpdateMeta', { id, value });
+  dispatch({ kind: 'UpdateMeta', payload: { id, value } });
 
 export const deleteMeta = (id: BigintId): Promise<void> =>
-  dispatch('DeleteMeta', { id });
+  dispatch({ kind: 'DeleteMeta', payload: { id } });
 
 // Track sources
 export const addTrackSource = (trackId: BigintId, url: string): Promise<BigintId> =>
-  dispatch('AddTrackSource', { track_id: trackId, url });
+  dispatch({ kind: 'AddTrackSource', payload: { track_id: trackId, url } });
 
 export const removeTrackSource = (trackId: BigintId, url: string): Promise<void> =>
-  dispatch('RemoveTrackSource', { track_id: trackId, url });
+  dispatch({ kind: 'RemoveTrackSource', payload: { track_id: trackId, url } });
 
 export const editTrackSource = (trackId: BigintId, oldUrl: string, newUrl: string): Promise<void> =>
-  dispatch('EditTrackSource', { track_id: trackId, old_url: oldUrl, new_url: newUrl });
+  dispatch({ kind: 'EditTrackSource', payload: { track_id: trackId, old_url: oldUrl, new_url: newUrl } });
 
 export const getSourcesForTrack = (trackId: BigintId): Promise<TrackSource[]> =>
-  dispatch('GetSourcesForTrack', { track_id: trackId });
+  dispatch({ kind: 'GetSourcesForTrack', payload: { track_id: trackId } });
 

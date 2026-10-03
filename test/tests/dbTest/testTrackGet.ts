@@ -1,6 +1,6 @@
-import { BigintId, FilterSearchParam } from "../../db/generatedTypes";
-import { addTag, addTrack, addTracks, assignTag, assignTags, CriteriaName, getAllTags, getTracks, getTracksFiltered, SearchCriteriaFiltered, SearchParam, TagAssignment } from "../../db/tauriDb";
-import { log, test_bcknd_sleep } from "../../logger";
+import { BigintId, FilterSearchParam } from "@ts-src/db/generatedTypes";
+import { addTag, addTrack, addTracks, assignTag, assignTags, CriteriaName, getAllTags, getTracks, getTracksFiltered, SearchCriteriaFiltered, SearchParam, TagAssignment } from "@ts-src/db/tauriDb";
+import { log, test_bcknd_sleep } from "@ts-src/logger";
 import { expect } from "vitest";
 
 let globalCounter = 0;

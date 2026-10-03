@@ -2,6 +2,7 @@
 
 import { callInvoke } from "./db/tauriInvoke";
 import { dispatch } from "./db/dispatchClient";
+import { Command } from "./db/generatedTypes";
 
 
 function test_bcknd_sleep() {
@@ -13,7 +14,8 @@ function log(message: string) {
     if (window.__TRANSPORT__ === 'ws') {
         console.log(`WS log: ${msg}`);
     }
-    dispatch("LogFromUi", { message: msg });
+    const cmd: Command = { kind: "LogFromUi", payload: { message: msg } };
+    dispatch(cmd);
 }
 
 window.onerror = (msg, src, line, col, err) => {

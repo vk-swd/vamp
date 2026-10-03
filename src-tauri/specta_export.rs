@@ -14,13 +14,15 @@ fn export_bindings() {
     let types = Types::default()
     .register::<crate::db::filtered_schema::CriteriaName>()
     .register::<crate::db::filtered_schema::SearchCriteriaFiltered>()
-    .register::<crate::defines::WsRequest>()
-    .register::<crate::defines::WsResponse<String>>()
+    .register::<crate::commands::dispatch::Command>()
     ;
     let out_transport = std::env::var("SPECTA_OUT_TRANSPORT").expect("SPECTA_OUT_TRANSPORT env var must be set");
     let types_transport = Types::default()
     .register::<crate::rtc::transport_types::WireMsg<()>>()
     .register::<crate::rtc::ws_node_handler::SignalMsg>()
+    .register::<crate::defines::RemoteRequest<String>>()
+    .register::<crate::defines::RemoteResponse<String>>()
+    .register::<crate::defines::DataTransportMessage<String, String>>()
     ;
     Typescript::default()
         .export_to(&out, &types, specta_serde::PhasesFormat)

@@ -1,26 +1,27 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import cssInjectedByJsPlugin from "vite-plugin-css-injected-by-js";
+import { viteSingleFile } from "vite-plugin-singlefile";
+import path from "node:path";
 
 const host = process.env.TAURI_DEV_HOST;
+const page = process.env.PAGE!;
 
 export default defineConfig({
-  plugins: [react(), cssInjectedByJsPlugin()],
-  clearScreen: false,
+  plugins: [react(), cssInjectedByJsPlugin(), viteSingleFile()],
+  resolve: {
+    alias: {
+      "@ts-src": path.resolve(process.cwd(), "src"),
+    },
+  },
+  root: "pages",
   build: {
+    outDir: "../dist",
+    emptyOutDir: false,
     rollupOptions: {
-      // input: {
-      //   main: './index.html',
-      //   // Second entry: the in-webview DB integration test page.
-      //   // Open via Tauri dev server: http://localhost:1420/src/test/dbTest/mockPage.html
-      //   // dbTest: './src/test/dbTest/mockPage.html',
-      // },
-      input: './index.html',
-      output: {
-        format: "iife",
-        inlineDynamicImports: true,
-        entryFileNames: "bundle.js",
-      }
+      input: {
+        main: page
+      },
     },
   },
   server: {

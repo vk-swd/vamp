@@ -160,15 +160,3 @@ export type UpdateTrackArgs = {
 	id: BigintId,
 	update: TrackUpdate,
 };
-
-export type WsRequest = {
-	id: string,
-	cmd: Command,
-};
-
-export type WsResponse<T> = {
-	id: string,
-	result: WsResult<T>,
-};
-
-export type WsResult<T> = { type: "ok"; value: T } | { type: "error"; message: string };

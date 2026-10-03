@@ -77,7 +77,7 @@ export class TransportHandler<TransportedType> {
         }
     }
 
-    #send_and_wait_ack_repeated(msg: TransportMsg<TransportedType>, sn: number, timeout: number) {
+    private send_and_wait_ack_repeated(msg: TransportMsg<TransportedType>, sn: number, timeout: number) {
         if (this.awaited_delivery) {
             return { resend_task: Promise.reject(new Error('send already in progress')) };
         }
@@ -135,7 +135,7 @@ export class TransportHandler<TransportedType> {
         this.seq_num_out++;
         const sn = this.seq_num_out;
         let msg: TransportMsg<TransportedType> = { type: 'normal', sn, node_id: this.node_id_out, payload };
-        return this.#send_and_wait_ack_repeated(msg, sn, timeout);
+        return this.send_and_wait_ack_repeated(msg, sn, timeout);
     }
     async send_raw(payload: TransportMsg<TransportedType>): Promise<void> {
         try {
