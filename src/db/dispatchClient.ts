@@ -2,7 +2,6 @@ import { callInvoke } from './tauriInvoke';
 import { DataTransportMessage, RemoteRequest, RemoteResponse } from '../transport/generatedTypes';
 import { DataTransport } from '../transport/rtc-ts/data_transport';
 import { Command } from './generatedTypes';
-import { log } from '@ts-src/logger';
 // ─── Mode ─────────────────────────────────────────────────────────────────────
 // Set window.__TRANSPORT__ = 'ws' (e.g. in index.html) to route via WebSocket.
 // Undefined or any other value falls back to Tauri IPC invoke.
@@ -16,32 +15,31 @@ declare global {
 // const WS_URL = 'wss://192.168.0.106:8090';
 const WS_URL = 'ws://localhost:8090';
 
-type WsState = 'disconnected' | 'connecting' | 'connected' | 'failed';
-
 type PendingRequest = {
   // TODO: Define result types.
   resolve: (value: unknown) => void;
   reject: (reason: unknown) => void;
+  abortCtl: AbortController;
 };
 
 interface Connection<TransportedMsg> {
-  send(data: TransportedMsg, signal?: AbortSignal): Promise<void>;
+  send(data: TransportedMsg, signal?: AbortSignal): void;
   setMessageHandler(handler: (payload: TransportedMsg) => void): void;
 }
-
-class DispatchClient<ConnectionType extends Connection<DataTransportMessage<Command, TransportedMsg>>, TransportedMsg> {
+type TransportMessage<ResponseType> = DataTransportMessage<Command, ResponseType>;
+type TransportConnection<ResponseType> = Connection<TransportMessage<ResponseType>>;
+class DispatchClient<ResponseType> {
   nextId = 0;
-  connection: ConnectionType;
+  connection: TransportConnection<ResponseType>;
   // TODO: clean up pending requests on timeout or some error condition.
   // For now it is not as critical, as requests are serialised.
   private pending = new Map<string, PendingRequest>();
-  constructor(connection: ConnectionType) {
+  constructor(connection: TransportConnection<ResponseType>) {
     this.connection = connection;
-    this.connection.setMessageHandler((payload: DataTransportMessage<Command, TransportedMsg>) => {
+    this.connection.setMessageHandler((payload: TransportMessage<ResponseType>) => {
       if (payload.type === 'response') {
         const pending = this.pending.get(payload.id);
         if (!pending) {
-          log(`Received response for unknown request ID ${JSON.stringify(payload)}`);
           return;
         }
         this.pending.delete(payload.id);
@@ -55,122 +53,114 @@ class DispatchClient<ConnectionType extends Connection<DataTransportMessage<Comm
   }
    /** Connect (if needed), send the message, and return a Promise that resolves
    *  with the server's response value. Rejects on connection failure or server error. */
-  async send(cmd: Command): Promise<TransportedMsg> {
+  async send(cmd: Command): Promise<ResponseType> {
     const id = String(this.nextId++);
-    return new Promise<TransportedMsg>((resolve, reject) => {
-      this.pending.set(id, { resolve: resolve as (v: unknown) => void, reject });
-      this.connection.send({ type: "request", id, cmd });
+    const abortCtl = new AbortController();
+    console.log(`Sent message: ${id} ${this.nextId}, ${cmd.kind}`);
+    return new Promise<ResponseType>((resolve, reject) => {
+      this.pending.set(id, { resolve: (value: unknown) => {
+        console.log(`Resolving request with ID ${id}`);
+        resolve(value as ResponseType);
+      }, reject, abortCtl });
+      this.connection.send({ type: "request", id, cmd }, abortCtl.signal);
     });
   }
-}
-
-class WsDispatchClient {
-  private ws: WebSocket | null = null;
-  private state: WsState = 'disconnected';
-  /** Shared promise while a connection attempt is in progress. */
-  private connectingPromise: Promise<void> | null = null;
-  private nextId = 1;
-  private pending = new Map<string, PendingRequest>();
 
   private rejectAllPending(reason: string): void {
     for (const p of this.pending.values()) {
+      p.abortCtl.abort();
       p.reject(new Error(reason));
     }
     this.pending.clear();
   }
-
-  private connect(): Promise<void> {
-    if (this.state === 'connected') return Promise.resolve();
-    // Reuse an in-flight connection attempt so concurrent callers wait together.
-    if (this.connectingPromise) return this.connectingPromise;
-
-    this.state = 'connecting';
-    this.connectingPromise = new Promise<void>((resolve, reject) => {
-      const ws = new WebSocket(WS_URL);
-
-      ws.onopen = () => {
-        this.ws = ws;
-        this.state = 'connected';
-        this.connectingPromise = null;
-        resolve();
-      };
-
-      ws.onmessage = (event: MessageEvent) => {
-        const msg = JSON.parse(event.data as string) as RemoteResponse<any>;
-        const pending = this.pending.get(msg.id);
-        if (!pending) {
-          log(`Received response for unknown request ID ${JSON.stringify(msg)}`);
-          return;
-        }
-
-        this.pending.delete(msg.id);
-        if (msg.result.type === 'error') {
-          pending.reject(new Error(msg.result.message));
-        } else {
-          pending.resolve(msg.result.value);
-        }
-      };
-
-      ws.onerror = (e) => {
-        // onclose fires right after onerror; handled there.
-        this.state = 'failed';
-        this.ws = null;
-        this.connectingPromise = null;
-        const err = `WebSocket connection to ${WS_URL} failed`;
-        this.rejectAllPending(err);
-        reject(new Error(err));
-      };
-
-      ws.onclose = () => {
-        // If we were connected, move back to disconnected so the next send retries.
-        if (this.state === 'connected') {
-          this.state = 'disconnected';
-          this.ws = null;
-          this.rejectAllPending('WebSocket closed unexpectedly');
-        }
-      };
-    });
-    return this.connectingPromise;
-  }
-
-  /** Connect (if needed), send the message, and return a Promise that resolves
-   *  with the server's response value. Rejects on connection failure or server error. */
-  async send<T>(kind: string, payload: unknown): Promise<T> {
-    // 'failed' and 'disconnected' both require a fresh connection attempt.
-    if (this.state !== 'connected') {
-      await this.connect();
-    }
-    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
-      this.state = 'disconnected';
-      throw new Error('WebSocket is not open');
-    }
-    const id = String(this.nextId++);
-    return new Promise<T>((resolve, reject) => {
-      this.pending.set(id, { resolve: resolve as (v: unknown) => void, reject });
-      this.ws!.send(JSON.stringify({ id, cmd: { kind, payload: payload ?? null } }));
-    });
-  }
-
-  getState(): WsState { return this.state; }
 }
 
-const wsClient = new WsDispatchClient();
+class WSConnection<TransportedMsg> implements Connection<TransportedMsg> {
+  private ws: WebSocket | null = null;
+  private incomingBuffer: TransportedMsg[] = [];
+  private handler: ((msg: TransportedMsg) => void) | undefined = undefined;
+  private connectingPromise: { completion: Promise<void>, abortCtl: AbortController } | null = null;
+
+  constructor(private url: string) {}
+
+  connect(): Promise<void> {
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) return Promise.resolve();
+    if (this.connectingPromise) return this.connectingPromise.completion;
+    if (this.ws) {
+      this.close();
+    }
+    const abortCtl = new AbortController();
+    const ws = new WebSocket(this.url);
+    this.ws = ws;
+    abortCtl.signal.addEventListener('abort', () => {
+      ws.close();
+    });
+    this.connectingPromise = { completion: new Promise<void>((resolve, reject) => {
+      ws.onopen = () => {
+        resolve();
+      };
+      ws.onmessage = (event: MessageEvent) => {
+        let msg: TransportedMsg;
+        try {
+          msg = JSON.parse(event.data as string) as TransportedMsg;
+        } catch (e) {
+          console.error('Failed to parse WebSocket message', e);
+          return;
+        }
+        if (this.handler) {
+          this.handler(msg);
+        } else {
+          this.incomingBuffer.push(msg);
+        }
+      };
+      ws.onerror = (e) => {
+        reject(new Error(`WebSocket connection to ${this.url} failed`));
+      };
+    }), abortCtl };
+    return this.connectingPromise.completion;
+  }
+  send(msg: TransportedMsg, _?: AbortSignal): void {
+    this.ws!.send(JSON.stringify(msg));
+  }
+  setMessageHandler(handler: (msg: TransportedMsg) => void): void {
+    this.handler = handler;
+    while (this.incomingBuffer.length > 0) {
+      const msg = this.incomingBuffer.shift()!;
+      this.handler(msg);
+    }
+  }
+  close() {
+    if (this.connectingPromise) {
+      this.connectingPromise.abortCtl.abort();
+      this.connectingPromise = null;
+    }
+    if (this.ws) {
+      this.ws.close();
+      this.ws = null;
+    }
+  }
+}
+
+let wsClient: DispatchClient<any> | undefined = undefined;
 // let rtcClient: DispatchClient<DataTransport<DataTransportMessage<any>>, any> | null = null;
 // ─── Dispatch ──────────────────────────────────────────────────────────────────
 
+  const connector = new WSConnection<any>(WS_URL);
+  await connector.connect();
+  wsClient = new DispatchClient<any>(connector);
 /**
  * Route a command to the backend.
  *
  * Routes via WebSocket when `window.__TRANSPORT__ === 'ws'`, otherwise via Tauri IPC invoke.
  */
-export function dispatch<T>(cmd: Command): Promise<T> {
+export async function dispatch<T>(cmd: Command): Promise<T> {
   if (window.__TRANSPORT__ === 'ws') {
     // if(!rtcClient) {
 
     //   rtcClient = new DispatchClient<DataTransport<DataTransportMessage<any>>, any>(
     //     // new DataTransport());
     // }
-    return wsClient.send<T>(cmd.kind, cmd.payload);
+    return wsClient!.send(cmd);
   }
   return callInvoke<T>('app_dispatch', cmd);
 }

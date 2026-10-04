@@ -10,13 +10,12 @@ pub async fn app_dispatch(
     app: tauri::State<'_, Arc<AppCore>>,
     cmd: Option<crate::commands::dispatch::Command>,
 ) -> Result<serde_json::Value, String> {
-    if cmd.is_none() {
-        print!("No command provided\n");
+    let Some(cmd) = cmd else {
         return Ok(serde_json::json!({ "error": "No command provided" }));
-    } else {
-        print!("Command provided: {:?}\n", cmd);
-    }
-    crate::commands::dispatch::dispatch_with_core(&app, cmd.unwrap()).await
+    };
+    crate::commands::dispatch::dispatch_with_core(&app, cmd)
+        .await
+        .map_err(|error| error.to_string())
 }
 
 impl TauriHandle<tauri::Builder<tauri::Wry>> {

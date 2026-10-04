@@ -10,6 +10,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::commands::common::MyRes;
 use crate::commands::listen_guard::ArcListenGuard;
 use crate::db::{
     repository::ArcRepo,
@@ -191,7 +192,7 @@ pub enum Command {
 
 /// Execute a `Command` against the repository and return a JSON-serialised result.
 /// Called by both the Tauri IPC command and the WebSocket server.
-pub async fn execute(repo: &ArcRepo, guard: &ArcListenGuard, cmd: Command) -> Result<serde_json::Value, String> {
+pub async fn execute(repo: &ArcRepo, guard: &ArcListenGuard, cmd: Command) -> MyRes<serde_json::Value> {
     let value = match cmd {
         // ── Tracks ─────────────────────────────────────────────────────────
         Command::AddTrack(track) =>
@@ -318,7 +319,7 @@ pub async fn execute(repo: &ArcRepo, guard: &ArcListenGuard, cmd: Command) -> Re
         Command::ResetDatabase(()) => {
             // Needs write access to AppCore's repo lock; handled by dispatch_with_core
             // before execute() is ever called, so this arm should be unreachable.
-            return Err("ResetDatabase must be dispatched via dispatch_with_core".to_string());
+            return Err(std::io::Error::other("ResetDatabase must be dispatched via dispatch_with_core").into());
         },
         Command::PageSource(url) => {
             serde_json::Value::String("filler".to_string()) // TODO: implement page source fetching
@@ -336,7 +337,7 @@ pub async fn execute(repo: &ArcRepo, guard: &ArcListenGuard, cmd: Command) -> Re
 pub async fn dispatch_with_core(
     app_core: &std::sync::Arc<crate::app_core::AppCore>,
     cmd: Command,
-) -> Result<serde_json::Value, String> {
+) -> MyRes<serde_json::Value> {
     if matches!(cmd, Command::ResetDatabase(())) {
         app_core.reset_database().await?;
         return Ok(serde_json::Value::Null);
@@ -362,7 +363,7 @@ pub async fn dispatch(
     guard: tauri::State<'_, ArcListenGuard>,
     kind: String,
     payload: Option<serde_json::Value>,
-) -> Result<serde_json::Value, String> {
+) -> MyRes<serde_json::Value> {
     let payload = payload.unwrap_or(serde_json::Value::Null);
     let cmd: Command = serde_json::from_value(serde_json::json!({ "kind": kind, "payload": payload }))
          .map_err(|e| e.to_string())?;

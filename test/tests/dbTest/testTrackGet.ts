@@ -96,7 +96,6 @@ export async function Test1() {
     let counter = 0;
 
     // ── 1. Insert 1000 x 1000 records ─────────────────────────────────────
-    
     for (let a = 1; a <= ARTISTS; a++) {
         const eb = new Array<any>();
         for (let t = 1; t <= TRACKS_PER; t++) {
@@ -113,9 +112,7 @@ export async function Test1() {
             });
         }
         await addTracks(eb);
-        log(`Inserted artist ${a} (${counter} tracks total)`);
     }
-    
 
     for (let i = 1; i <= TAG_COUNT; i++) {
         await addTag(`t${i}`);
