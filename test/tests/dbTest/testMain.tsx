@@ -1,20 +1,16 @@
-import { initDb, Test1, Test2 } from './testTrackGet';
-import { resetDatabase } from '@ts-src/db/tauriDb';
-import { log } from '@ts-src/logger';
+import { getWsClient } from '@ts-src/db/dispatchClient';
+import { Test1 } from './testTrackGet';
+import { BrowserTestEnv } from '../rtc/commands';
 
 console.log("Starting DB tests...");
-// ipc://localhost/app_dispatch
-log("Initializing database tests...");
 (window as any).__TRANSPORT__ = 'ws';
 
-try {
-    // (window as any).__TRANSPORT__ = 'tauri';
-    await Test1();
-    log("Test1 succeeded for ws");
-    await resetDatabase();
-    await Test1();
-    log("Test1 succeeded for tauri");
-} catch (e) {
-    log(`Test1 failed: ${e}`);
-    throw e;
+
+window.testFn = async (env: BrowserTestEnv, ac?: AbortController) => {
+    try {
+        await getWsClient(env.WS_URL);
+        await Test1();
+    } catch (e) {
+        throw e;
+    }
 }

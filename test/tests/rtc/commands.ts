@@ -1,6 +1,6 @@
-import { RtcConnector } from '/reference_files/src/transport/rtc-ts/connectors/rtc_connector';
+import { RtcConnector } from "@ts-src/transport/rtc-ts/connectors/rtc_connector";
 
-type BrowserTestEnv = {
+export type BrowserTestEnv = {
   COTURN_IP?: string;
   COTURN_PORT?: string;
   WS_URL: string;

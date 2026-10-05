@@ -1,0 +1,44 @@
+# Browser (Puppeteer): has two network cards (Browser IF1/IF2) per the flowchart, one per NAT,
+# so a "carrier change" can be emulated by disabling one interface and enabling the other
+# instead of tearing down the whole container. Both are routed to the Edge subnet through their
+# respective NAT (nat_b1 / nat_b2); IF1 is the active default carrier at boot. Also attaches to
+# the Orc subnet directly for the orchestrator agent, matching the flowchart's dedicated "Orc IF".
+services:
+  browser_local:
+    image: browserpup
+    container_name: browser_local
+    network_mode: host
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        exec gosu pptruser sh -c "cp /pptr_test_dir/* ~/ && exec npm run test"
+    volumes:
+      - ${PUPPETEER_FILES_DIR}:/pptr_test_dir
+      - ${PAGE_OUT_DIR_ABS}/${PUPPETEER_PAGE_NAME}:/${PUPPETEER_PAGE_NAME}
+    environment:
+      - WS_URL=ws://127.0.0.1:${SS_PORT}
+      - STUN_CREDENTIALS=${STUN_CREDENTIALS}
+      - RTC_SESSION_ID=${RTC_SESSION_ID}
+      - PUPPETEER_PAGE_NAME=${PUPPETEER_PAGE_NAME}
+    depends_on:
+      - test
+
+  test:
+    image: sigturn_img
+    container_name: test_local
+    tty: true
+    stdin_open: true
+    network_mode: host
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        /testbin test_ws_server_stays_running --nocapture
+    working_dir: /rtc_client_test_dir
+    environment:
+      - SS_HOST=127.0.0.1
+      - SS_PORT=${SS_PORT}
+      - TEST_DIR=/rtc_client_test_dir
+    volumes:
+      - ${TEST_BIN}:/testbin

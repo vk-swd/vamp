@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "PAGE=./pages/index.html vite build && PAGE=./pages/testDbSearch.html vite build",
+    "build": "python3 vite_page_build.py",
     "preview": "vite preview",
     "tauri": "tauri",
     "build:server": "tsc -p tsconfig.server.json",

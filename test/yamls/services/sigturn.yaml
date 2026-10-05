@@ -38,5 +38,3 @@ services:
         ipv4_address: ${SIGTURN_IP}
       orc:
         ipv4_address: ${SIGTURN_ORC_IP}
-    depends_on:
-      - vps_front

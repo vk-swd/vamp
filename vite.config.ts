@@ -5,8 +5,9 @@ import { viteSingleFile } from "vite-plugin-singlefile";
 import path from "node:path";
 
 const host = process.env.TAURI_DEV_HOST;
+const outDir = process.env.PAGE_OUT_DIR_ABS;
 const page = process.env.PAGE!;
-
+console.log("Building page:", page, "at", outDir);
 export default defineConfig({
   plugins: [react(), cssInjectedByJsPlugin(), viteSingleFile()],
   resolve: {
@@ -16,7 +17,7 @@ export default defineConfig({
   },
   root: "pages",
   build: {
-    outDir: "../dist",
+    outDir: outDir,
     emptyOutDir: false,
     rollupOptions: {
       input: {

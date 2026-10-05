@@ -56,10 +56,8 @@ class DispatchClient<ResponseType> {
   async send(cmd: Command): Promise<ResponseType> {
     const id = String(this.nextId++);
     const abortCtl = new AbortController();
-    console.log(`Sent message: ${id} ${this.nextId}, ${cmd.kind}`);
     return new Promise<ResponseType>((resolve, reject) => {
       this.pending.set(id, { resolve: (value: unknown) => {
-        console.log(`Resolving request with ID ${id}`);
         resolve(value as ResponseType);
       }, reject, abortCtl });
       this.connection.send({ type: "request", id, cmd }, abortCtl.signal);
@@ -141,13 +139,27 @@ class WSConnection<TransportedMsg> implements Connection<TransportedMsg> {
   }
 }
 
-let wsClient: DispatchClient<any> | undefined = undefined;
+let wsClientPromise: Promise<DispatchClient<any>> | undefined;
+
+export async function getWsClient(url?: string): Promise<DispatchClient<any>> {
+  if (wsClientPromise) return await wsClientPromise;
+  if (!url) {
+    return Promise.reject(new Error('WebSocket URL is not provided'));
+  }
+  const connection = new WSConnection<any>(url ?? WS_URL);
+  try {
+    await connection.connect();
+  } catch (error) {
+    return Promise.reject(error);
+  }
+  wsClientPromise = Promise.resolve(new DispatchClient<any>(connection));
+  return wsClientPromise;
+
+}
 // let rtcClient: DispatchClient<DataTransport<DataTransportMessage<any>>, any> | null = null;
 // ─── Dispatch ──────────────────────────────────────────────────────────────────
 
-  const connector = new WSConnection<any>(WS_URL);
-  await connector.connect();
-  wsClient = new DispatchClient<any>(connector);
+  
 /**
  * Route a command to the backend.
  *
@@ -160,7 +172,7 @@ export async function dispatch<T>(cmd: Command): Promise<T> {
     //   rtcClient = new DispatchClient<DataTransport<DataTransportMessage<any>>, any>(
     //     // new DataTransport());
     // }
-    return wsClient!.send(cmd);
+    return (await getWsClient()).send(cmd);
   }
   return callInvoke<T>('app_dispatch', cmd);
 }

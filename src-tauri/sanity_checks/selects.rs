@@ -1,5 +1,5 @@
 
-use std::sync::Arc;
+use std::sync::{Arc, Once};
 
 use sea_query::Keyword::Null;
 use tokio::sync::{Mutex, Notify, mpsc};
@@ -25,6 +25,21 @@ use futures_util::{SinkExt, StreamExt};
 use serde_json::{json, Value};
 use tokio_tungstenite::{connect_async, MaybeTlsStream, WebSocketStream, tungstenite::Message};
 use uuid::Uuid;
+
+#[path = "../src/commands/mod.rs"]
+mod commands;
+#[path = "../src/db/mod.rs"]
+mod db;
+#[path = "../src/transport/mod.rs"]
+mod transport;
+#[path = "../src/app_core.rs"]
+mod app_core;
+#[path = "../src/app_ws_handler.rs"]
+mod app_ws_handler;
+#[path = "../src/db_config.rs"]
+mod db_config;
+#[path = "../../common/defines.rs"]
+pub mod defines;
 
 fn log(msg: &str) {
     let now_text: String = chrono::Local::now().format("%H:%M:%S%.3f").to_string();
@@ -144,11 +159,11 @@ async fn join_handle_test() {
 fn coturn_ice_servers_from_env() -> Vec<RTCIceServer> {
     let coturn_ip = std::env::var("COTURN_IP").expect("COTURN_IP env var not set (see test/yamls/services/backend.yaml)");
     let coturn_port = std::env::var("COTURN_PORT").expect("COTURN_PORT env var not set (see test_net_env)");
-    let stun_credentials = std::env::var("STUN_CREDENTIALS").expect("STUN_CREDENTIALS env var not set (see test/yamls/.env)");
+    let stun_credentials: String = std::env::var("STUN_CREDENTIALS").expect("STUN_CREDENTIALS env var not set (see test/yamls/.env)");
     let (stun_username, stun_credential) = stun_credentials
         .split_once(':')
         .expect("STUN_CREDENTIALS must be of the form username:password");
-
+    log(&format!("coturn ice server: {}:{}", coturn_ip, coturn_port));
     vec![RTCIceServer {
         urls: vec![format!("turn:{}:{}", coturn_ip, coturn_port)],
         username: stun_username.to_owned(),
@@ -173,7 +188,11 @@ async fn new_default_peer_connection() -> Arc<RTCPeerConnection> {
         ice_servers: coturn_ice_servers_from_env(),
         ..Default::default()
     };
-    Arc::new(api.new_peer_connection(conf).await.unwrap())
+    let con = match api.new_peer_connection(conf).await {
+        Ok(pc) => pc,
+        Err(e) => panic!("Failed to create peer connection: {}", e)
+    };
+    Arc::new(con)
 }
 
 async fn test_webrtc_fresh_rollback() {
@@ -541,15 +560,8 @@ async fn test_signalling_datachannel_handshake() {
 #[path = "../rtc/mod.rs"]
 mod rtc;
 
-#[tokio::main]
-pub async fn main() {
-    env_logger::init();
-    rustls::crypto::ring::default_provider()
-        .install_default()
-        .expect("failed to install rustls CryptoProvider");
 
-    println!("Hello, world!");
-    // test_ice_candidates_collection().await;
+async fn test_datachannel_connector() {
     let config = rtc::rtc_connector::RtcConnectorConfig {
         signalling_url: std::env::var("SS_URL").expect("SS_URL env var not set (see compose.yaml)"),
         session_id: std::env::var("RTC_SESSION_ID").expect("RTC_SESSION_ID env var not set (see test/yamls/services/backend.yaml)"),
@@ -564,13 +576,27 @@ pub async fn main() {
     let mut dc = match rtc_connector.wait_for_a_data_channel_connector(transport_handler).await {
         Ok(dc) => dc,
         Err(e) => {
-            log(&format!("failed to wait for data channel connector: {}", e));
-            return;
+            panic!("failed to wait for data channel connector: {}", e);
         }
     };
     dc.send_default(rtc::rtc_connector::DCMsg { msg: "hello".to_string() }).await.unwrap();
     log("sent 'hello' over data channel");
     notifier.notified().await;
     log("received reply over data channel, test passed");
-    // test_signalling_datachannel_handshake().await;
+}
+
+async fn test_ws_server_stays_running() {
+    let sshost = std::env::var("SS_HOST").expect("SS_HOST env var not set (see compose.yaml)");
+    let ssport = std::env::var("SS_PORT").expect("SS_PORT env var not set (see compose.yaml)");
+    let app_core = app_core::make_app_core().await.expect("failed to initialize app core");
+    let _ws_handle = app_ws_handler::make_ws_handle(format!("{}:{}", sshost, ssport).parse().unwrap(), app_core.clone()).await.expect("failed to start ws server");
+    std::future::pending::<()>().await;
+}
+#[tokio::main]
+pub async fn main() {
+    env_logger::try_init();
+    rustls::crypto::ring::default_provider()
+        .install_default()
+        .expect("failed to install rustls CryptoProvider");
+    test_ws_server_stays_running().await;
 }
